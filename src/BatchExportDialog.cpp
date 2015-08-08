@@ -22,12 +22,16 @@
 #include "Context.h"
 #include "Athlete.h"
 #include "RideCache.h"
+#include "HelpWhatsThis.h"
+#include "CsvRideFile.h"
 
 BatchExportDialog::BatchExportDialog(Context *context) : QDialog(context->mainWindow), context(context)
 {
     setAttribute(Qt::WA_DeleteOnClose);
     //setWindowFlags(windowFlags() | Qt::WindowStaysOnTopHint); // must stop using this flag!
-    setWindowTitle(tr("Ride Batch Export"));
+    setWindowTitle(tr("Activity Batch Export"));
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Activity_BatchExport));
 
     // make the dialog a resonable size
     setMinimumWidth(550);
@@ -79,6 +83,7 @@ BatchExportDialog::BatchExportDialog(Context *context) : QDialog(context->mainWi
     format = new QComboBox(this);
 
     const RideFileFactory &rff = RideFileFactory::instance();
+    format->addItem(tr("Export all data (CSV)"));
     foreach(QString suffix, rff.writeSuffixes()) format->addItem(rff.description(suffix));
     format->setCurrentIndex(appsettings->value(this, GC_BE_LASTFMT, "0").toInt());
 
@@ -168,7 +173,7 @@ BatchExportDialog::okClicked()
         appsettings->setValue(GC_BE_LASTDIR, dirName->text());
         appsettings->setValue(GC_BE_LASTFMT, format->currentIndex());
         exportFiles();
-        status->setText(QString(tr("%1 rides exported, %2 failed or skipped.")).arg(exports).arg(fails));
+        status->setText(QString(tr("%1 activities exported, %2 failed or skipped.")).arg(exports).arg(fails));
         ok->setText(tr("Finish"));
 
     } else if (ok->text() == "Abort" || ok->text() == tr("Abort")) {
@@ -188,7 +193,7 @@ void
 BatchExportDialog::exportFiles()
 {
     // what format to export as?
-    QString type = RideFileFactory::instance().writeSuffixes().at(format->currentIndex());
+    QString type = format->currentIndex() > 0 ? RideFileFactory::instance().writeSuffixes().at(format->currentIndex()-1) : "csv";
 
     // loop through the table and export all selected
     for(int i=0; i<files->invisibleRootItem()->childCount(); i++) {
@@ -238,7 +243,14 @@ BatchExportDialog::exportFiles()
 
                 current->setText(4, tr("Writing...")); QApplication::processEvents();
                 QFile out(filename);
-                bool success = RideFileFactory::instance().writeRideFile(context, ride, out, type);
+
+                bool success = false;
+                if (format->currentIndex() > 0)
+                    success = RideFileFactory::instance().writeRideFile(context, ride, out, type);
+                else {
+                    CsvFileReader writer;
+                    success = writer.writeRideFile(context, ride, out, CsvFileReader::gc);
+                }
 
                 if (success) {
                     exports++;

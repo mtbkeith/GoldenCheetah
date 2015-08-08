@@ -70,15 +70,18 @@ AboutPage::AboutPage(Context *context) : context(context)
                 "<p>Source code can be obtained from<br>"
                 "<a href=\"http://goldencheetah.org/\">"
                 "http://goldencheetah.org/</a>."
-                "<p>Ride files and other data are stored in<br>"
+                "<p>Activity files and other data are stored in<br>"
                 "<a href=\"%1\">%2</a>"
                 "<p>Trademarks used with permission<br>"
                 "TSS, NP, IF courtesy of <a href=\"http://www.peaksware.com\">"
                 "Peaksware LLC</a>.<br>"
-                "BikeScore, xPower courtesy of <a href=\"http://www.physfarm.com\">"
+                "BikeScore, xPower, SwimScore courtesy of <a href=\"http://www.physfarm.com\">"
                 "Physfarm Training Systems</a>.<br>"
                 "Virtual Speed courtesy of Tom Compton <a href=\"http://www.analyticcycling.com\">"
                 "AnalyticCycling</a>.<br>"
+                "<br>The core body temperature module was developed by the <br>"
+                "<a href=\"http://www.usariem.army.mil/\">U.S. Army Research Institute of Environmental Medicine</a>"
+                "<br> and is patent pending<br>"
                 "</center>"
                 )
                 .arg(QString(QUrl::fromLocalFile(context->athlete->home->root().absolutePath()).toEncoded()))
@@ -116,6 +119,8 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
 {
     QStringList contributors;
     contributors.append("Alejandro Martinez");
+    contributors.append("Alex Harsanyi");
+    contributors.append("Alexandre Prokoudine");
     contributors.append("Andrew Bryson");
     contributors.append("Andy Froncioni");
     contributors.append("Austin Roach");
@@ -137,6 +142,7 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Ilja Booij");
     contributors.append("Jaime Jofre");
     contributors.append("Jamie Kimberley");
+    contributors.append("Jan de Visser");
     contributors.append("Jim Ley");
     contributors.append("J&#246;rn Rischm&#252;ller");
     contributors.append("John Ehrlinger");
@@ -152,6 +158,7 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Luke NRG");
     contributors.append("Magnus Gille");
     contributors.append("Marc Boudreau");
+    contributors.append("Mark Buller");
     contributors.append("Mark Liversedge");
     contributors.append("Mark Rages");
     contributors.append("Michael Puchowicz");
@@ -161,6 +168,7 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Okano Takayoshi");
     contributors.append("Patrick McNerthney");
     contributors.append("Dr Phil Skiba");
+    contributors.append("Philip Willoughby");
     contributors.append("Rainer Clasen");
     contributors.append("Ralf Spenneberg");
     contributors.append("Robb Romans");
@@ -169,10 +177,14 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Ron Alford");
     contributors.append("Satoru Kurashiki");
     contributors.append("Sean Rhea");
+    contributors.append("Simon Brewer");
+    contributors.append("Stefan Schake");
+    contributors.append("Stephan Lips");
     contributors.append("Steven Gribble");
     contributors.append("Thomas Weichmann");
     contributors.append("Tilman Schmiedeberg");
     contributors.append("Walter B&#252;rki");
+    contributors.append("Yves Arrouye");
 
     QString contributorsTable = "<center><table><tr>";
     for (int i=0;i<contributors.count();i++){

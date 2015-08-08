@@ -19,6 +19,7 @@
 #include "LTMChartParser.h"
 #include "LTMSettings.h"
 #include "LTMTool.h"
+#include "Athlete.h"
 
 #include <QDate>
 #include <QDebug>
@@ -103,13 +104,20 @@ LTMChartParser::serialize(QString filename, QList<LTMSettings> charts)
 {
     // open file - truncate contents
     QFile file(filename);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly)) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(QObject::tr("Problem Saving Charts Configuration"));
+        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        msgBox.exec();
+        return;
+    };
     file.resize(0);
     QTextStream out(&file);
     out.setCodec("UTF-8");
 
     // begin document
-    out << "<charts>\n";
+    out << QString("<charts version=\"%1\">\n").arg(LTM_VERSION_NUMBER);
 
     // write out to file
     foreach (LTMSettings chart, charts) {
@@ -128,4 +136,92 @@ LTMChartParser::serialize(QString filename, QList<LTMSettings> charts)
 
     // close file
     file.close();
+}
+
+ChartTreeView::ChartTreeView(Context *context) : context(context)
+{
+    setDragDropMode(QAbstractItemView::InternalMove);
+    setDragDropOverwriteMode(true);
+#ifdef Q_OS_MAC
+    setAttribute(Qt::WA_MacShowFocusRect, 0);
+#endif
+
+}
+
+void
+ChartTreeView::dropEvent(QDropEvent* event)
+{
+    QTreeWidgetItem* target = (QTreeWidgetItem *)itemAt(event->pos());
+    int idxTo = indexFromItem(target).row();
+
+    // when dragging to past the last one, we get -1, so lets
+    // set the target row to the very last one
+    if (idxTo < 0) idxTo = invisibleRootItem()->childCount()-1;
+
+    int offsetFrom = 0;
+    int offsetTo = 0;
+
+    QList<int> idxToList;
+
+    foreach (QTreeWidgetItem *p, selectedItems()) {
+        int idxFrom = indexFromItem(p).row();
+
+        context->athlete->presets.move(idxFrom+offsetFrom, idxTo+offsetTo);
+
+        idxToList << idxTo+(idxFrom>idxTo?offsetTo:offsetFrom);
+
+        if (idxFrom<idxTo)
+            offsetFrom--;
+        else
+            offsetTo++;
+    }
+
+    // the default implementation takes care of the actual move inside the tree
+    //QTreeWidget::dropEvent(event);
+
+    // reset
+    context->notifyPresetsChanged();
+
+    clearSelection();
+    // xxx dgr removed because
+    // select it!
+    /*foreach (int idx, idxToList) {
+        invisibleRootItem()->child(idx)->setSelected(true);
+    }*/
+}
+
+QStringList 
+ChartTreeView::mimeTypes() const
+{
+    QStringList returning;
+    returning << "application/x-gc-charts";
+
+    return returning;
+}
+
+QMimeData *
+ChartTreeView::mimeData (const QList<QTreeWidgetItem *> items) const
+{
+    QMimeData *returning = new QMimeData;
+
+    // we need to pack into a byte array
+    QByteArray rawData;
+    QDataStream stream(&rawData, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_4_6);
+
+    // pack data 
+    stream << (quint64)(context); // where did this come from?
+    stream << items.count();
+    foreach (QTreeWidgetItem *p, items) {
+
+        // get the season this is for
+        int index = p->treeWidget()->invisibleRootItem()->indexOfChild(p);
+
+        // season[index] ...
+        stream << context->athlete->presets[index]; // name
+    }
+
+    // and return as mime data
+    returning->setData("application/x-gc-charts", rawData);
+    return returning;
 }

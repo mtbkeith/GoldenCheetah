@@ -38,25 +38,28 @@ bool RouteParser::endElement( const QString&, const QString&, const QString &qNa
     else if (qName == "id")
         route.setId(QUuid(buffer.trimmed()));
     else if(qName == "route") {
+        route.setMinLat(minLat);
+        route.setMaxLat(maxLat);
+        route.setMinLon(minLon);
+        route.setMaxLon(maxLon);
+
         routes.append(route);
     } else if(qName == "point") {
         route.addPoint(point);
-    } else if(qName == "ride") {
-        route.addRide(ride);
     } else if(qName == "lat") {
         point.lat = buffer.trimmed().toDouble();
+
+        if (minLat==180 || point.lat<minLat)
+            minLat = point.lat;
+        if (maxLat==-180 || point.lat>maxLat)
+            maxLat = point.lat;
     } else if(qName == "lon") {
         point.lon = buffer.trimmed().toDouble();
-    } else if(qName == "filename") {
-        ride.filename = buffer.trimmed();
-    } else if(qName == "date") {
-        ride.startTime = QDateTime::fromString(buffer.trimmed(), DATETIME_FORMAT);
-    } else if(qName == "start") {
-        ride.start = buffer.trimmed().toDouble();
-    } else if(qName == "stop") {
-        ride.stop = buffer.trimmed().toDouble();
-    } else if(qName == "precision") {
-        ride.precision = buffer.trimmed().toDouble();
+
+        if (minLon==180 || point.lon<minLon)
+            minLon = point.lon;
+        if (maxLon==-180 || point.lon>maxLon)
+            maxLon = point.lon;
     }
     return true;
 }
@@ -66,12 +69,13 @@ bool RouteParser::startElement( const QString&, const QString&, const QString &n
     buffer.clear();
     if(name == "route") {
         route = RouteSegment();
+        minLat = 180;
+        minLon = 180;
+        maxLat = -180;
+        maxLon = -180;
     } else if(name == "point") {
         point = RoutePoint();
-    } else if(name == "ride") {
-        ride = RouteRide();
     }
-
     return true;
 }
 
@@ -97,7 +101,14 @@ RouteParser::serialize(QString filename, QList<RouteSegment>routes)
 {
     // open file - truncate contents
     QFile file(filename);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly)) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(QObject::tr("Problem Saving Route Data"));
+        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        msgBox.exec();
+        return false;
+    };
     file.resize(0);
     QTextStream out(&file);
 
@@ -107,26 +118,18 @@ RouteParser::serialize(QString filename, QList<RouteSegment>routes)
     // write out to file
     foreach (RouteSegment route, routes) {
             // main attributes
-            qDebug() << "write route " << route.id().toString();
+            //qDebug() << "write route " << route.id().toString();
             out<<QString("\t<route>\n"
                   "\t\t<name>%1</name>\n"
                   "\t\t<id>%2</id>\n") .arg(route.getName())
                                            .arg(route.id().toString());
 
             out << "\t\t<points>\n";
-            qDebug() << "route->getPoints() " << route.getPoints().count();
+            //qDebug() << "route->getPoints() " << route.getPoints().count();
             foreach (RoutePoint point, route.getPoints() ) {
                 out << QString("\t\t\t<point><lat>%1</lat><lon>%2</lon></point>\n").arg(point.lat).arg(point.lon);
             }
             out << "\t\t</points>\n";
-
-            out << "\t\t<rides>\n";
-            qDebug() << "route->getRides() " << route.getRides().count();
-            foreach (RouteRide ride, route.getRides() ) {
-                out << QString("\t\t\t<ride><filename>%1</filename><date>%2</date><start>%3</start><stop>%4</stop><precision>%5</precision></ride>\n").arg(ride.filename).arg(ride.startTime.toString(DATETIME_FORMAT)).arg(ride.start).arg(ride.stop).arg(ride.precision);
-            }
-            out << "\t\t</rides>\n";
-
             out <<QString("\t</route>\n");
     }
 

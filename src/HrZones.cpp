@@ -24,7 +24,7 @@
 #include <QtAlgorithms>
 #include <qcolor.h>
 #include <assert.h>
-#include <math.h>
+#include <cmath>
 
 
 // the infinity endpoints are indicated with extreme date ranges
@@ -447,8 +447,7 @@ int HrZones::whichZone(int rnum, double value) const
     }
 
     // if we got here either it is negative, nan, inf or way high
-    if (value < 0 || isnan(value)) return 0;
-    else return range.zones.size()-1;
+    return -1;
 }
 
 void HrZones::zoneInfo(int rnum, int znum,
@@ -704,6 +703,13 @@ void HrZones::write(QDir home)
         QTextStream stream(&file);
         stream << strzones;
         file.close();
+    } else {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(tr("Problem Saving Heartrate Zones"));
+        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/hr.zones"));
+        msgBox.exec();
+        return;
     }
 }
 
@@ -872,6 +878,28 @@ HrZones::getFingerprint() const
         for (int j=0; j<ranges[i].zones.count(); j++) {
             x += ranges[i].zones[j].lo;
 
+        }
+    }
+    QByteArray ba = QByteArray::number(x);
+    return qChecksum(ba, ba.length());
+}
+
+quint16
+HrZones::getFingerprint(QDate forDate) const
+{
+    quint64 x = 0;
+
+    int i = whichRange(forDate);
+    if (i >= 0) {
+
+        // zone parameters...
+        x += ranges[i].lt;
+        x += ranges[i].restHr;
+        x += ranges[i].maxHr;
+
+        // each zone definition (manual edit/default changed)
+        for (int j=0; j<ranges[i].zones.count(); j++) {
+            x += ranges[i].zones[j].lo;
         }
     }
     QByteArray ba = QByteArray::number(x);

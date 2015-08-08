@@ -25,6 +25,7 @@
 #include "Settings.h"
 #include "Colors.h"
 #include "TabView.h"
+#include "HelpWhatsThis.h"
 
 #include <QtGui>
 #include <QString>
@@ -92,6 +93,8 @@ RideEditor::RideEditor(Context *context) : GcChartWindow(context), data(NULL), r
     toolbar->addAction(saveAct);
 
     toolbar->addSeparator();
+    HelpWhatsThis *helpToolbar = new HelpWhatsThis(toolbar);
+    toolbar->setWhatsThis(helpToolbar->getWhatsThisText(HelpWhatsThis::ChartRides_Editor));
 
     // undo and redo deliberately at a distance from the
     // save icon, since accidentally hitting the wrong
@@ -135,6 +138,9 @@ RideEditor::RideEditor(Context *context) : GcChartWindow(context), data(NULL), r
     table->setSelectionMode(QAbstractItemView::ContiguousSelection);
     table->installEventFilter(this);
 
+    HelpWhatsThis *helpTable = new HelpWhatsThis(table);
+    table->setWhatsThis(helpTable->getWhatsThisText(HelpWhatsThis::ChartRides_Editor));
+
     // prettify (and make anomalies more visible)
     table->setGridStyle(Qt::NoPen);
 
@@ -151,7 +157,7 @@ RideEditor::RideEditor(Context *context) : GcChartWindow(context), data(NULL), r
     connect(this, SIGNAL(rideItemChanged(RideItem*)), this, SLOT(rideSelected()));
     connect(context, SIGNAL(rideDirty(RideItem*)), this, SLOT(rideDirty()));
     connect(context, SIGNAL(rideClean(RideItem*)), this, SLOT(rideClean()));
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 
     // put find tool and anomaly list in the controls
     findTool = new FindDialog(this);
@@ -163,11 +169,11 @@ RideEditor::RideEditor(Context *context) : GcChartWindow(context), data(NULL), r
     connect(anomalyTool->anomalyList, SIGNAL(itemSelectionChanged()), this, SLOT(anomalySelected()));
 
     // set initial color config
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 }
 
 void
-RideEditor::configChanged() 
+RideEditor::configChanged(qint32) 
 {
     setProperty("color", GColor(CPLOTBACKGROUND));
 
@@ -225,6 +231,16 @@ RideEditor::whatColumns()
          << tr("Right TE")
          << tr("Left PS")
          << tr("Right PS")
+         << tr("Left Platform Center Offset")
+         << tr("Right Platform Center Offset")
+         << tr("Left Power Phase Start")
+         << tr("Left Power Phase End")
+         << tr("Right Power Phase Start")
+         << tr("Right Power Phase End")
+         << tr("Left Peak Power Phase Start")
+         << tr("Left Peak Power Phase End")
+         << tr("Right Peak Power Phase Start")
+         << tr("Right Peak Power Phase End")
          << tr("SmO2")
          << tr("tHb")
          << tr("Vertical Oscillation")
@@ -820,7 +836,17 @@ RideEditor::insColumn(QString name)
     if (name == tr("Left TE")) series = RideFile::lte;
     if (name == tr("Right TE")) series = RideFile::rte;
     if (name == tr("Left PS")) series = RideFile::lps;
-    if (name == tr("Right PS")) series = RideFile::rps;
+    if (name == tr("Right PS")) series = RideFile::rps;  
+    if (name == tr("Left Platform Center Offset")) series = RideFile::lpco;
+    if (name == tr("Right Platform Center Offset")) series = RideFile::rpco;
+    if (name == tr("Left Power Phase Start")) series = RideFile::lppb;
+    if (name == tr("Right Power Phase Start")) series = RideFile::rppb;
+    if (name == tr("Left Power Phase End")) series = RideFile::lppe;
+    if (name == tr("Right Power Phase End")) series = RideFile::rppe;
+    if (name == tr("Left Peak Power Phase Start")) series = RideFile::lpppb;
+    if (name == tr("Right Peak Power Phase Start")) series = RideFile::rpppb;
+    if (name == tr("Left Peak Power Phase End")) series = RideFile::lpppe;
+    if (name == tr("Right Peak Power Phase End")) series = RideFile::rpppe;
     if (name == tr("SmO2")) series = RideFile::smo2;
     if (name == tr("tHb")) series = RideFile::thb;
     if (name == tr("Vertical Oscillation")) series = RideFile::rvert;
@@ -1192,23 +1218,18 @@ RideEditor::intervalSelected()
         table->selectionModel()->clear();
 
         // highlight selection and jump to last
-        foreach(QTreeWidgetItem *x, context->athlete->allIntervalItems()->treeWidget()->selectedItems()) {
+        foreach(IntervalItem *interval, ride->intervalsSelected()) {
 
-            IntervalItem *current = (IntervalItem*)x;
+            // what is the first dataPoint index for this interval?
+            int start = ride->ride()->timeIndex(interval->start);
+            int end = ride->ride()->timeIndex(interval->stop);
 
-            if (current != NULL && current->isSelected() == true) {
-
-                // what is the first dataPoint index for this interval?
-                int start = ride->ride()->timeIndex(current->start);
-                int end = ride->ride()->timeIndex(current->stop);
-
-                // select all the rows
-                table->selectionModel()->clearSelection();
-                table->selectionModel()->setCurrentIndex(model->index(start,0), QItemSelectionModel::Select);
-                table->selectionModel()->select(QItemSelection(model->index(start,0),
-                                                                   model->index(end,model->columnCount()-1)),
-                                                                    QItemSelectionModel::Select);
-            }
+            // select all the rows
+            table->selectionModel()->clearSelection();
+            table->selectionModel()->setCurrentIndex(model->index(start,0), QItemSelectionModel::Select);
+            table->selectionModel()->select(QItemSelection(model->index(start,0),
+                                                               model->index(end,model->columnCount()-1)),
+                                                                QItemSelectionModel::Select);
         }
     }
 }
@@ -1473,7 +1494,14 @@ RideEditor::endCommand(bool undo, RideCommand *cmd)
         default:
             break;
     }
-    if (!inLUW) anomalyTool->check(); // refresh the anomalies...
+
+    // check for anomalies
+    if (!inLUW) {
+        anomalyTool->check();
+
+        // let everyone know we changed some data
+        ride->notifyRideDataChanged();
+    }
 }
 
 void

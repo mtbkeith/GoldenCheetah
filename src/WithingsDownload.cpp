@@ -19,6 +19,8 @@
 #include "WithingsDownload.h"
 #include "MainWindow.h"
 #include "Athlete.h"
+#include "RideCache.h"
+#include <QMessageBox>
 
 WithingsDownload::WithingsDownload(Context *context) : context(context)
 {
@@ -30,8 +32,12 @@ WithingsDownload::WithingsDownload(Context *context) : context(context)
 bool
 WithingsDownload::download()
 {
+    // account for trailing slash, remove it if it is there (it was the default in preferences)
+    QString server = appsettings->cvalue(context->athlete->cyclist, GC_WIURL, "http://wbsapi.withings.net").toString();
+    if (server.endsWith("/")) server=server.mid(0, server.length()-1);
+
     QString request = QString("%1/measure?action=getmeas&userid=%2&publickey=%3")
-                             .arg(appsettings->cvalue(context->athlete->cyclist, GC_WIURL, "http://wbsapi.withings.net").toString())
+                             .arg(server)
                              .arg(appsettings->cvalue(context->athlete->cyclist, GC_WIUSER, "").toString())
                              .arg(appsettings->cvalue(context->athlete->cyclist, GC_WIKEY, "").toString());
 
@@ -50,52 +56,46 @@ WithingsDownload::downloadFinished(QNetworkReply *reply)
 {
     QString text = reply->readAll();
     QStringList errors;
+
+    // parse it
     parser->parse(text, errors);
 
-    //main->metricDB->db()->connection().transaction();
-    newMeasures = 0;
-    allMeasures = parser->readings().count();
-    QDateTime olderDate;
+    int allMeasures = context->athlete->withings().count();
+    int receivedMeasures = parser->readings().count();
+    int newMeasures = receivedMeasures - allMeasures;
 
-    // get list of what we have
-    QList<SummaryMetrics> list = context->athlete->metricDB->getAllMeasuresFor(QDateTime(QDate(1900,01,01), QTime(0,0,0)),QDateTime::currentDateTime());
-
-    // start  a transaction
-    context->athlete->metricDB->db()->connection().transaction();
-
-    foreach (WithingsReading x, parser->readings()) {
-
-        // do we have it already ?
-        bool have = false;
-        foreach(SummaryMetrics m, list) {
-            if (m.getDateTime().date() == x.when.date()) have = true;
-        }
-
-        if (!have) {
-            newMeasures ++;
-            SummaryMetrics add;
-            add.setDateTime(x.when);
-            add.setText("Weight", QString("%1").arg(x.weightkg));
-            add.setText("Height", QString("%1").arg(x.sizemeter));
-            add.setText("Lean Mass", QString("%1").arg(x.leankg));
-            add.setText("Fat Mass", QString("%1").arg(x.fatkg));
-            add.setText("Fat Ratio", QString("%1").arg(x.fatpercent));
-
-            context->athlete->metricDB->importMeasure(&add);
-
-            if (olderDate.isNull() || x.when.date() <olderDate.date()) olderDate = x.when;
-        }
+    if (receivedMeasures == 0) {
+        newMeasures = 0;
     }
 
-    // commit the transaction
-    context->athlete->metricDB->db()->connection().transaction();
+    QString status = tr("No new measurements");
+    if (newMeasures > 0) status = QString(tr("%1 new measurements received.")).arg(newMeasures);
 
-    QString status = QString(tr("%1 new on %2 measurements received.")).arg(newMeasures).arg(allMeasures);
     QMessageBox::information(context->mainWindow, tr("Withings Data Download"), status);
 
+    // hacky for now, just refresh for all dates where we have withings data
+    // will go with SQL shortly.
     if (newMeasures) {
-        context->athlete->isclean = false;
-        context->athlete->metricDB->refreshMetrics(olderDate);
+
+        // if refresh is running cancel it !
+        context->athlete->rideCache->cancel();
+
+        // store in athlete
+        context->athlete->setWithings(parser->readings());
+
+        // now save data away if we actually got something !
+        // doing it here means we don't overwrite previous responses
+        // when we fail to get any data (e.g. errors / network problems)
+        QFile withingsJSON(QString("%1/withings.json").arg(context->athlete->home->cache().canonicalPath()));
+        if (withingsJSON.open(QFile::WriteOnly)) {
+
+            QTextStream stream(&withingsJSON);
+            stream << text;
+            withingsJSON.close();
+        }
+
+        // do a refresh, it will check if needed
+        context->athlete->rideCache->refresh();
     }
     return;
 }

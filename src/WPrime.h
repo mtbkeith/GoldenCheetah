@@ -28,15 +28,17 @@
 #include <QVector>
 #include <QThread>
 #include <qwt_spline.h> // smoothing
-#include <math.h>
+#include <cmath>
 
 struct Match {
     int start, stop, secs;       // all in whole seconds
     int cost;                   // W' depletion
+    bool exhaust;
 };
 
 class WPrime {
-
+	
+    Q_DECLARE_TR_FUNCTIONS(WPrime)
 
     public: 
 
@@ -68,6 +70,12 @@ class WPrime {
         QList<Match> matches;       // matches burned with associated cost
 
         int minForCP(int CP);
+
+        // zoning with supplied values to avoid using a new Zones type config
+        static QString summarize(int WPRIME, QVector<double> wtiz, QColor color);
+        static int zoneCount() { return 4; }
+        static QString zoneName(int i);
+        static QString zoneDesc(int i);
 
     private:
 

@@ -26,6 +26,8 @@
 #include "RideFile.h"
 #include "JsonRideFile.h"
 #include "Context.h"
+#include "DataProcessor.h"
+
 #include <QDebug>
 #include <QMessageBox>
 #include <QFileDialog>
@@ -38,7 +40,19 @@ GcUpgrade::upgradeConfirmedByUser(const QDir &home)
 
     // since the upgrade can fail / multiple times, don't rely on the "lastUpdated" version,
     // but track the "upgrade success" separately in the settings on user level
-    bool folderUpgradeSuccess =  appsettings->cvalue(home.dirName(), GC_UPGRADE_311_FOLDER_SUCCESS, false).toBool();
+    bool folderUpgradeSuccess =  appsettings->cvalue(home.dirName(), GC_UPGRADE_FOLDER_SUCCESS, false).toBool();
+
+    //  reset upgrade flag - in case flag is set "true" and subfolder "/activities" and /config do NOT exist
+    //  or - if they exists - do not contain any files, then something is wrong with the upgrade flag -
+    //  (potentially due to a not fitting data restore)
+    //  so let's reset the flag to "false" and run the upgrade again - this can never go wrong (if their is
+    //  nothing to be upgrade - upgrade a success anyway
+
+    AthleteDirectoryStructure newHome(home);
+    if (folderUpgradeSuccess && !newHome.upgradedDirectoriesHaveData()) {
+       folderUpgradeSuccess = false;
+       appsettings->setCValue(home.dirName(), GC_UPGRADE_FOLDER_SUCCESS, false);
+    }
 
     if (!folderUpgradeSuccess) {
 
@@ -50,7 +64,7 @@ GcUpgrade::upgradeConfirmedByUser(const QDir &home)
 
     }
 
-    return true; // if there is no upgrade need, just proceed
+    return true; // if there is no upgrade needed, just proceed
 }
 
 int 
@@ -190,7 +204,7 @@ GcUpgrade::upgrade(const QDir &home)
 
         // 4. Theme and Chrome Color
         QString theme = "Flat";
-        QColor chromeColor = QColor(Qt::darkGray);
+        QColor chromeColor = QColor(0xec,0xec,0xec);
 #ifdef Q_OS_MAC
         // Yosemite or earlier 
         if (QSysInfo::MacintoshVersion >= 12) {
@@ -216,9 +230,10 @@ GcUpgrade::upgrade(const QDir &home)
             QList<KeywordDefinition> keywordDefinitions;
             QList<FieldDefinition>   fieldDefinitions;
             QString colorfield;
+            QList<DefaultDefinition> defaultDefinitions;
 
             // read em in
-            RideMetadata::readXML(filename, keywordDefinitions, fieldDefinitions, colorfield);
+            RideMetadata::readXML(filename, keywordDefinitions, fieldDefinitions, colorfield, defaultDefinitions);
 
             bool updated=false;
 
@@ -298,7 +313,7 @@ GcUpgrade::upgrade(const QDir &home)
 
             if (updated) {
                 // write a new updated version
-                RideMetadata::serialize(filename, keywordDefinitions, fieldDefinitions, colorfield);
+                RideMetadata::serialize(filename, keywordDefinitions, fieldDefinitions, colorfield, defaultDefinitions);
             }
         }
 
@@ -323,7 +338,7 @@ GcUpgrade::upgrade(const QDir &home)
     }
 
     //----------------------------------------------------------------------
-    // 3.11 upgrade processing
+    // 3.2 (formerly 3.11) upgrade processing
     //----------------------------------------------------------------------
 
     if (last < VERSION311_BUILD) {
@@ -333,14 +348,18 @@ GcUpgrade::upgrade(const QDir &home)
     }
 
     //----------------------------------------------------------------------
-    // 3.11 new subfolder introduction and upgrade processing
+    // 3.2 new subfolder introduction and upgrade processing
     //----------------------------------------------------------------------
+
 
     // now the special "folder structure" upgrade - which is tracked separately on success
 
-    bool folderUpgradeSuccess =  appsettings->cvalue(home.dirName(), GC_UPGRADE_311_FOLDER_SUCCESS, false).toBool();
+    bool folderUpgradeSuccess =  appsettings->cvalue(home.dirName(), GC_UPGRADE_FOLDER_SUCCESS, false).toBool();
+
+    // now let's check if upgrade is necessary and do the job
     if (!folderUpgradeSuccess) {
 
+        // initials logs,...
         errorCount = 0;
         upgradeLog = new GcUpgradeLogDialog(home);
         upgradeLog->show();
@@ -392,8 +411,7 @@ GcUpgrade::upgrade(const QDir &home)
                 ok++;
             } else {
                 fail++;
-                upgradeLog->append(tr("-> Error moving file : ") + configFile);
-            }
+             }
         }
         errorCount += fail;
         upgradeLog->append(QString(tr("%1 configuration files moved to subdirectory: %2 - %3 failed" ))
@@ -412,7 +430,6 @@ GcUpgrade::upgrade(const QDir &home)
                 ok++;
             } else {
                 fail++;
-                upgradeLog->append(tr("-> Error moving file : ") + calFile);
             }
         }
         errorCount += fail;
@@ -431,7 +448,7 @@ GcUpgrade::upgrade(const QDir &home)
                 ok++;
             } else {
                 fail++;
-                upgradeLog->append(tr("-> Error moving file : ") + logFile);
+
             }
         }
         errorCount += fail;
@@ -452,7 +469,6 @@ GcUpgrade::upgrade(const QDir &home)
                 ok++;
             } else {
                 fail++;
-                upgradeLog->append(tr("-> Error moving file : ") + jsonFile);
             }
         }
         errorCount += fail;
@@ -460,24 +476,23 @@ GcUpgrade::upgrade(const QDir &home)
                   .arg(QString::number(ok)).arg(newHome.activities().dirName()).arg(QString::number(fail)),2);
 
 
-        // 3.6 keep the .BAK files and store in /imports()
+        // 3.6 keep the .BAK files and store in /fileBackup()
         QStringList bakFiles;
         bakFiles << "*.bak";
         upgradeLog->append(tr("Start copying of: Activity files (.BAK)..."),3);
         ok = 0; fail = 0;
         foreach (QString bakFile, newHome.root().entryList(bakFiles, QDir::Files)) {
             bool success = moveFile(QString("%1/%2").arg(newHome.root().canonicalPath()).arg(bakFile),
-                     QString("%1/%2").arg(newHome.imports().canonicalPath()).arg(bakFile));
+                     QString("%1/%2").arg(newHome.fileBackup().canonicalPath()).arg(bakFile));
             if (success) {
                 ok++;
             } else {
                 fail++;
-                upgradeLog->append(tr("-> Error moving file : ") + bakFile);
             }
         }
         errorCount += fail;
         upgradeLog->append(QString(tr("%1 activity backup (.BAK) files moved to subdirectory: %2 - %3 failed" ))
-                  .arg(QString::number(ok)).arg(newHome.imports().dirName()).arg(QString::number(fail)),2);
+                  .arg(QString::number(ok)).arg(newHome.fileBackup().dirName()).arg(QString::number(fail)),2);
 
         // 3.6 now sort the rest of the files (extension checks are re-use)
         MediaHelper mediaFile;
@@ -493,7 +508,6 @@ GcUpgrade::upgrade(const QDir &home)
                     ok++;
                 } else {
                     fail++;
-                    upgradeLog->append(tr("-> Error moving file : ") + otherFile);
                 }
             }
         }
@@ -504,8 +518,35 @@ GcUpgrade::upgrade(const QDir &home)
         // the conversion of all activities to .json is done in "lateUpgrade" - since the prerequisites
         // on the "context" setup are not fulfilled at this early stage
 
+
     }
 
+    // other 3.2 upgrade tasks, mostly cosmetic
+    if (last < VERSION32_BUILD) {
+
+        // trend plot matches ride plot, as newly introduced
+        // just do for first time we run 3.2 and set to ride plot
+        QColor color = GCColor::getColor(CRIDEPLOTBACKGROUND);
+        GCColor::setColor(CTRENDPLOTBACKGROUND, color);
+
+        // and update config
+        QString colorstring = QString("%1:%2:%3").arg(color.red())
+                                                 .arg(color.green())
+                                                 .arg(color.blue());
+        appsettings->setValue("COLORTRENDPLOTBACKGROUND", colorstring);
+
+        // and on non-Mac platforms we want flat look and feel
+        // by default now, the metal look is de-rigeur
+#ifndef Q_OS_MAC
+        color = QColor(0xe5,0xe5,0xe5);
+        colorstring = QString("%1:%2:%3").arg(color.red())
+                                         .arg(color.green())
+                                         .arg(color.blue());
+        appsettings->setValue("CCHROME", colorstring);
+        appsettings->setValue(GC_CHROME, "Flat");
+#endif
+
+    }
     return 0;
 }
 
@@ -514,8 +555,11 @@ int
 GcUpgrade::upgradeLate(Context *context)
 {
     // check the special "folder structure" upgrade - which is tracked separately on success
-    bool folderUpgradeSuccess =  appsettings->cvalue(context->athlete->home->root().dirName(), GC_UPGRADE_311_FOLDER_SUCCESS, false).toBool();
+    bool folderUpgradeSuccess =  appsettings->cvalue(context->athlete->home->root().dirName(), GC_UPGRADE_FOLDER_SUCCESS, false).toBool();
     if (!folderUpgradeSuccess) {
+
+        // switch off automatic Fix tools (
+        DataProcessorFactory::instance().setAutoProcessRule(false);
 
         // 1. convert the rest of activities to .json and move the converted ones to /imports
         // prepare the suffixes for check of the files
@@ -525,6 +569,10 @@ GcUpgrade::upgradeLate(Context *context)
 
         int ok = 0; int fail = 0; int okConvert = 0; int failConvert = 0;
         upgradeLog->append(tr("Start conversion of native activity files to GoldenCheetah .JSON format..."),3 );
+
+        // GC file Name format
+        QRegExp rx ("^((\\d\\d\\d\\d)_(\\d\\d)_(\\d\\d)_(\\d\\d)_(\\d\\d)_(\\d\\d))\\.(.+)$");
+        bool fileNameValid;
 
         foreach (QString activitiesFileName, context->athlete->home->root().entryList(QDir::Files)) {
 
@@ -537,48 +585,74 @@ GcUpgrade::upgradeLate(Context *context)
                     // We have an activity file which is NOT JSON or GC (since they have been moved already) - let's convert
                     QStringList errors;
                     QFile currentFile(fullFileName);
-                    RideFile *ride = RideFileFactory::instance().openRideFile(context, currentFile, errors);
 
-                    // did it parse ok ? (all files here were alrady parsed when importing)
-                    if (ride) {
-
-                        // serialize
-                        QString targetFileName = activitiesFileName;
-                        int dot = targetFileName.lastIndexOf(".");
-                        assert(dot >= 0);
-                        targetFileName.truncate(dot);
-                        targetFileName.append(".json");
-                        // add Source File Tag + New File Name
-                        ride->setTag("Source Filename", activitiesFileName);
-                        ride->setTag("Filename", targetFileName);
-                        JsonFileReader reader;
-                        QFile target(context->athlete->home->activities().canonicalPath() + "/" + targetFileName);
-                        reader.writeRideFile(context, ride, target);
-                        okConvert++;
-                        upgradeLog->append(tr("-> Information: Activity %1 - Successfully converted to .JSON").arg(activitiesFileName));
-
-                        // copy source file to the /imports folder (only if conversion was successful)
-                        bool success = moveFile(QString("%1/%2").arg(context->athlete->home->root().canonicalPath()).arg(activitiesFileName),
-                                                QString("%1/%2").arg(context->athlete->home->imports().canonicalPath()).arg(activitiesFileName));
-                        if (success) {
-                            ok++;
-                        } else {
-                            fail++;
-                            upgradeLog->append(tr("-> Error moving file : ") + activitiesFileName);
-                        }
+                    // Check if the filename is formattted according the GC filename format (since this format is used to determine
+                    // the ride start date and time
+                    fileNameValid = true;
+                    if (!rx.exactMatch(fullFileInfo.fileName())) {
+                        fileNameValid = false;
                     } else {
-                        failConvert++;
-                        upgradeLog->append(tr("-> Error: Activity %1 - Conversion errors: ").arg(activitiesFileName),2);
-                        foreach (QString error, errors) {
-                           upgradeLog->append(tr("......... message(s) of .JSON conversion): ") + error);
-                           upgradeLog->append("<br>");
+                        // format is fine, check if the file name really contains a valid date/time info
+                        QDate date(rx.cap(2).toInt(), rx.cap(3).toInt(),rx.cap(4).toInt());
+                        QTime time(rx.cap(5).toInt(), rx.cap(6).toInt(),rx.cap(7).toInt());
+
+                        if (!(date.isValid() && time.isValid())) {
+                            fileNameValid = false;
                         }
                     }
 
+                    // only process if the file name contains a valid date/time - otherwise user needs to check
+                    if (fileNameValid) {
 
-                    // clear
-                    delete ride;
+                        RideFile *ride = RideFileFactory::instance().openRideFile(context, currentFile, errors);
+
+                        // did it parse ok ? (all files here were alrady parsed when importing)
+                        if (ride) {
+
+                            // serialize
+                            QString targetFileName = activitiesFileName;
+                            int dot = targetFileName.lastIndexOf(".");
+                            assert(dot >= 0);
+                            targetFileName.truncate(dot);
+                            targetFileName.append(".json");
+                            // add Source File Tag + New File Name
+                            ride->setTag("Source Filename", activitiesFileName);
+                            ride->setTag("Filename", targetFileName);
+                            JsonFileReader reader;
+                            QFile target(context->athlete->home->activities().canonicalPath() + "/" + targetFileName);
+                            reader.writeRideFile(context, ride, target);
+                            okConvert++;
+                            upgradeLog->append(tr("-> Information: Activity %1 - Successfully converted to .JSON").arg(activitiesFileName));
+
+                            // copy source file to the /imports folder (only if conversion was successful)
+                            bool success = moveFile(QString("%1/%2").arg(context->athlete->home->root().canonicalPath()).arg(activitiesFileName),
+                                                    QString("%1/%2").arg(context->athlete->home->imports().canonicalPath()).arg(activitiesFileName));
+                            if (success) {
+                                ok++;
+                            } else {
+                                fail++;
+                            }
+                        } else {
+                            failConvert++;
+                            upgradeLog->append(tr("-> Error: Activity %1 - Conversion errors: ").arg(activitiesFileName),2);
+                            foreach (QString error, errors) {
+                                upgradeLog->append(tr("......... message(s) of .JSON conversion): ") + error);
+                                upgradeLog->append("<br>");
+                            }
+                        }
+
+                        // clear
+                        delete ride;
+
+                    } else {
+                        failConvert++;
+                        upgradeLog->append(tr("-> Error: Activity %1 - Invalid File Name (expected format 'YYYY_MM_DD_HH_MM_SS.%2')").arg(activitiesFileName).arg(fullFileInfo.suffix()),2);
+                    }
                 }
+
+            } else {
+                failConvert++;
+                upgradeLog->append(tr("-> Error: Activity %1 - Problem reading file").arg(activitiesFileName),2);
             }
         }
 
@@ -594,7 +668,7 @@ GcUpgrade::upgradeLate(Context *context)
         // Total Number of errors
         if (errorCount == 0) {
            upgradeLog->append(QString(tr("Summary: No errors detected - upgrade successful" )),3);
-           appsettings->setCValue(context->athlete->home->root().dirName(), GC_UPGRADE_311_FOLDER_SUCCESS, true);
+           appsettings->setCValue(context->athlete->home->root().dirName(), GC_UPGRADE_FOLDER_SUCCESS, true);
         } else {
             upgradeLog->append(QString(tr("Summary: %1 errors detected - please check log details before proceeding" ))
                   .arg(QString::number(errorCount)),3);
@@ -607,14 +681,16 @@ GcUpgrade::upgradeLate(Context *context)
                                           "successful - and had no more errors.</center>")),2);
 
             upgradeLog->append(QString(tr("<center><br>Latest information about possible upgrade problems and concepts to resolve them are available in the<br>"
-                                         "<a href= \"https://github.com/GoldenCheetah/GoldenCheetah/wiki/Upgrade_v3.11_Troubleshooting_Guide\" target=\"_blank\">"
-                                         "Upgrade v3.11 Troubleshooting Guide<a>")),1);
+                                         "<a href= \"https://github.com/GoldenCheetah/GoldenCheetah/wiki/Upgrade_v3.2_Troubleshooting_Guide\" target=\"_blank\">"
+                                         "Upgrade v3.2 Troubleshooting Guide<a>")),1);
 
             // document that upgrade failed at least one time
-            appsettings->setCValue(context->athlete->home->root().dirName(), GC_UPGRADE_311_FOLDER_SUCCESS, false);
+            appsettings->setCValue(context->athlete->home->root().dirName(), GC_UPGRADE_FOLDER_SUCCESS, false);
 
         }
 
+        // switch automatic Fix tools on again
+        DataProcessorFactory::instance().setAutoProcessRule(true);
 
         // show upgrade log
         upgradeLog->enableButtons();
@@ -638,18 +714,20 @@ GcUpgrade::moveFile(const QString &source, const QString &target) {
 
     // now the harder variant (copy & delete)
     if (r.copy(target))
-      {
+    {
         // try to remove - but if this fails, no problem, file has been copied at least
         if (!r.remove()) {
-            // just log, but not critical for the upgrade since the copy worked
-            upgradeLog->append(QString(tr("-> Information: Deletion of copied file %1 failed" )).arg(source));
+            // log, even though it's not very critical it needs to be cleaned up - so report as error
+            upgradeLog->append(QString(tr("-> Error: Deletion of copied file '%1' failed" )).arg(source),2);
+            return false;
+        } else {
+            // copy & remove worked fine - we are done
+            return true;
         }
-        // even if remove failed, the copy was successful - so GC is fine
-        return true;
-      }
+    }
 
-    // more required ?
-
+    // copying failed - so give up and report
+    upgradeLog->append((tr("-> Error moving file : ") + source),2);
     return false;
 
 }
@@ -719,26 +797,31 @@ GcUpgradeExecuteDialog::GcUpgradeExecuteDialog(QString athlete) : QDialog(NULL, 
     text->setTextFormat(Qt::RichText);
     text->setText(tr("<center><b>Backup your 'Athlete' data first!<br>"
                      "<b>Please read carefully before proceeding!</b></center> <br> <br>"
-                     "With Version 3.11 the 'Athlete' directory has been refactored "
-                     "by adding a set of subdirectory which hold the different types "
+                     "With Version 3.2 the 'Athlete' directory has been refactored "
+                     "by adding a set of subdirectories which hold the different types "
                      "of GoldenCheetah files.<br><br>"
                      "The new structure is:<br>"
-                     "-> Activity/Ride files: <samp>/activities</samp><br>"
+                     "-> Activity files: <samp>/activities</samp><br>"
                      "-> Configuration files: <samp>/config</samp><br>"
                      "-> Download files: <samp>/downloads</samp><br>"
                      "-> Import files: <samp>/imports</samp><br>"
+                     "-> Backups of Activity files: <samp>/bak</samp><br>"
                      "-> Workout related files: <samp>/workouts</samp><br>"
                      "-> Cache files: <samp>/cache</samp><br>"
                      "-> Calendar files: <samp>/calendar</samp><br>"
                      "-> Log files: <samp>/logs</samp><br>"
-                     "-> Temp files: <samp>/temp</samp><br><br>"
+                     "-> Temp files: <samp>/temp</samp><br>"
+                     "-> Temp for Activities: <samp>/tempActivities</samp><br>"
+                     "-> Train View recordings: <samp>/recordings</samp><br>"
+                     "-> Quarantined files: <samp>/quarantine</samp><br><br>"
+
                      "The upgrade process will create the new directory structure and move "
                      "the existing files to the new directories as needed. During the upgrade "
-                     "all activity/ride files will be converted to GoldenCheetah's native "
+                     "all activity files will be converted to GoldenCheetah's native "
                      "file format .JSON and moved to the <br><samp>/activities</samp> folder. The source files "
                      "are moved to the <samp>/imports</samp> folder.<br><br>"
-                     "Starting with version 3.11 all downloads from devices or imported "
-                     "activity/ride files will be converted to GoldenCheetah's file "
+                     "Starting with version 3.2 all downloads from devices or imported "
+                     "activity files will be converted to GoldenCheetah's file "
                      "format during import/download. The original files will be stored - depending on the source - "
                      "in <samp>/downloads</samp> or <br><samp>/imports</samp> folder.<br><br>"
                      "<center><b>Please make sure that you have done a backup of your athlete data "
@@ -747,9 +830,6 @@ GcUpgradeExecuteDialog::GcUpgradeExecuteDialog(QString athlete) : QDialog(NULL, 
                      ));
     scrollText = new QScrollArea();
     scrollText->setWidget(text);
-    vertical = scrollText->verticalScrollBar();
-    vertical->setTracking(false);
-    connect(vertical, SIGNAL(valueChanged(int)), this, SLOT(checkVerticalScroll(int)));
 
     toprow->addWidget(critical);
     toprow->addWidget(header);
@@ -758,8 +838,8 @@ GcUpgradeExecuteDialog::GcUpgradeExecuteDialog(QString athlete) : QDialog(NULL, 
 
     QHBoxLayout *lastRow = new QHBoxLayout;
 
-    proceedButton = new QPushButton(tr("Proceed with Upgrade"), this);
-    proceedButton->setEnabled(false);
+    proceedButton = new QPushButton(tr("Accept conditions and proceed with Upgrade"), this);
+    proceedButton->setEnabled(true);
     connect(proceedButton, SIGNAL(clicked()), this, SLOT(accept()));
     abortButton = new QPushButton(tr("Abort Upgrade"), this);
     abortButton->setDefault(true);
@@ -773,15 +853,6 @@ GcUpgradeExecuteDialog::GcUpgradeExecuteDialog(QString athlete) : QDialog(NULL, 
 
 }
 
-void
-GcUpgradeExecuteDialog::checkVerticalScroll(int value)
-{
-    if (value == vertical->maximum()) {
-        proceedButton->setEnabled(true);
-    }else {
-        proceedButton->setEnabled(false);
-    }
-}
 
 
 GcUpgradeLogDialog::GcUpgradeLogDialog(QDir homeDir) : QDialog(NULL, Qt::Dialog), home(homeDir)
@@ -803,7 +874,7 @@ GcUpgradeLogDialog::GcUpgradeLogDialog(QDir homeDir) : QDialog(NULL, Qt::Dialog)
     QLabel *header = new QLabel(this);
     header->setWordWrap(true);
     header->setTextFormat(Qt::RichText);
-    header->setText(tr("<h1>Upgrade log: GoldenCheetah v3.11</h1>"));
+    header->setText(tr("<h1>Upgrade log: GoldenCheetah v3.2</h1>"));
 
     toprow->addWidget(information);
     toprow->addWidget(header);

@@ -22,7 +22,7 @@
 #include <QSet>
 #include <stdio.h>
 #include <stdint.h>
-#include <math.h>
+#include <cmath>
 
 
 static int syncFileReaderRegistered =
@@ -132,7 +132,8 @@ struct SyncFileReaderState
         km += intSecs * kph / 3600.0;
         rideFile->setRecIntSecs(intSecs);
         rideFile->appendPoint(*secs, cad, hr, km, kph, nm, watts, alt, lng, lat, headwind, grade, temp, 0.0, 
-                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
 
         *secs = *secs + intSecs;
 
@@ -161,7 +162,7 @@ struct SyncFileReaderState
 
                 if ((record_training_flag & 0x01) == 0) {
                     // Only new lap
-                    rideFile->addInterval(last_interval_secs, secs, QString("%1").arg(interval));
+                    rideFile->addInterval(RideFileInterval::DEVICE, last_interval_secs, secs, QString("%1").arg(interval));
                     last_interval_secs = secs;
                     interval ++;
                 }

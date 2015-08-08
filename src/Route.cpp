@@ -20,6 +20,7 @@
 
 #include "Athlete.h"
 #include "MainWindow.h"
+#include "RideCache.h"
 #include "RideItem.h"
 #include "IntervalItem.h"
 #include "RouteParser.h"
@@ -40,8 +41,9 @@
  * RouteSegment
  *
  */
-RouteSegment::RouteSegment()
+RouteSegment::RouteSegment() : minLat(180), maxLat(-180), minLon(180), maxLon(-180)
 {
+
     _id = QUuid::createUuid(); // in case it isn't set yet
 }
 
@@ -60,6 +62,46 @@ RouteSegment::setName(QString _name)
     name = _name;
 }
 
+double
+RouteSegment::getMinLat() {
+    return minLat;
+}
+
+void
+RouteSegment::setMinLat(double _minLat) {
+    minLat = _minLat;
+}
+
+double
+RouteSegment::getMaxLat() {
+    return maxLat;
+}
+
+void
+RouteSegment::setMaxLat(double _maxLat) {
+    maxLat = _maxLat;
+}
+
+double
+RouteSegment::getMinLon() {
+    return minLon;
+}
+
+void
+RouteSegment::setMinLon(double _minLon) {
+    minLon = _minLon;
+}
+
+double
+RouteSegment::getMaxLon() {
+    return maxLon;
+}
+
+void
+RouteSegment::setMaxLon(double _maxLon) {
+    maxLon = _maxLon;
+}
+
 QList<RoutePoint> RouteSegment::getPoints() {
     return points;
 }
@@ -68,78 +110,32 @@ int
 RouteSegment::addPoint(RoutePoint _point)
 {
     points.append(_point);
+
+    // Update Min-Max
+    if (minLat==180 || _point.lat<minLat)
+        minLat = _point.lat;
+    if (maxLat==-180 || _point.lat>maxLat)
+        maxLat = _point.lat;
+    if (minLon==180 || _point.lon<minLon)
+        minLon = _point.lon;
+    if (maxLon==-180 || _point.lon>maxLon)
+        maxLon = _point.lon;
+
     return points.count();
 }
 
-QList<RouteRide> RouteSegment::getRides() {
-    return rides;
-}
-
-int
-RouteSegment::addRide(RouteRide _ride)
+void 
+RouteSegment::search(RideItem *item, RideFile*ride, QList<IntervalItem*>&here)
 {
-    rides.append(_ride);
-    return rides.count();
-}
-
-int
-RouteSegment::addRideForRideFile(const RideFile *ride, double start, double stop, double precision)
-{
-    qDebug() << "addRideForRideFile" << ride->getTag("Filename","");
-    RouteRide _route = RouteRide(ride->getTag("Filename",""), ride->startTime(), start, stop, precision);
-    rides.append(_route);
-    return rides.count();
-}
-
-bool
-RouteSegment::parseRideFileName(Context *context, const QString &name, QString *notesFileName, QDateTime *dt)
-{
-    static char rideFileRegExp[] = "^((\\d\\d\\d\\d)_(\\d\\d)_(\\d\\d)"
-                                   "_(\\d\\d)_(\\d\\d)_(\\d\\d))\\.(.+)$";
-    QRegExp rx(rideFileRegExp);
-    if (!rx.exactMatch(name))
-            return false;
-    //assert(rx.captureCount() == 8);
-    QDate date(rx.cap(2).toInt(), rx.cap(3).toInt(),rx.cap(4).toInt());
-    QTime time(rx.cap(5).toInt(), rx.cap(6).toInt(),rx.cap(7).toInt());
-    if ((! date.isValid()) || (! time.isValid())) {
-        QMessageBox::warning(context->mainWindow,
-                             tr("Invalid Ride File Name"),
-                             tr("Invalid date/time in filename:\n%1\nSkipping file...").arg(name));
-        return false;
-    }
-    *dt = QDateTime(date, time);
-    *notesFileName = rx.cap(1) + ".notes";
-    return true;
-}
-
-void
-RouteSegment::removeRideInRoute(RideFile* ride)
-{
-    for (int n=0; n< this->getRides().count();n++) {
-        const RouteRide* routeride = &getRides().at(n);
-        if (ride && routeride->startTime == ride->startTime()) {
-            rides.removeAt(n);
-        }
-    }
-}
-
-void
-RouteSegment::searchRouteInRide(RideFile* ride, bool freememory, QTextStream* out)
-{
-    //*out << "searchRouteInRide " << ride->startTime().toString() << "\r\n";
-
-    bool candidate = false; // This RideFile is candidate
-
     double minimumprecision = 0.100; //100m
     double maximumprecision = 0.010; //10m
     double precision = -1;
 
+    int found = 0;
     int diverge = 0;
     int lastpoint = -1; // Last point to match
     double start = -1, stop = -1; // Start and stop secs
 
-    //foreach (RoutePoint routepoint, this->getPoints()) {
     for (int n=0; n< this->getPoints().count();n++) {
         RoutePoint routepoint = this->getPoints().at(n);
 
@@ -170,7 +166,6 @@ RouteSegment::searchRouteInRide(RideFile* ride, bool freememory, QTextStream* ou
                     } else {
                         if (_dist<minimumprecision) {
                             start = 0; //try to start
-                            *out << "    Start point identified...";
                         }
                     }
                 }
@@ -208,7 +203,6 @@ RouteSegment::searchRouteInRide(RideFile* ride, bool freememory, QTextStream* ou
                         if (start == 0) {
                             start = point->secs;
                             precision = 0;
-                            *out << "start time " << start << "\r\n";
                         }
 
                         if (minimumdistance>precision)
@@ -217,130 +211,48 @@ RouteSegment::searchRouteInRide(RideFile* ride, bool freememory, QTextStream* ou
                         break;
                     }
                     else {
-                        *out << "    WARNING route diverge at " << point->secs << "(" << i <<") after " << (point->secs-start)<< "secs for " << minimumdistance << "km " << routepoint.lat << "-" << routepoint.lon << "/" << point->lat << "-" << point->lon << "\r\n";
                         diverge++;
                         if (diverge>2) {
-                            *out << "    STOP route diverge at " << point->secs << "(" << i <<") after " << (point->secs-start)<< "secs for " << minimumdistance << "km " << routepoint.lat << "-" << routepoint.lon << "/" << point->lat << "-" << point->lon << "\r\n";
                             start = -1; //try to restart
                             n = 0;
                         }
                         //present = true;
                     }
-
-
-
                 }
             }
-
         }
         stop = point->secs;
 
 
         if (!present) {
-            *out << "    Route not identified (distance " << precision << "km)\r\n";
             break;
+
         } else {
             if (n == this->getPoints().count()-1){
-                // OK
-                //Add the interval and continue search
-                *out << "    >>> Route identified in ride: " << name << " start: " << start << " stop: " << stop << " (distance " << precision << "km)\r\n";
-                this->addRideForRideFile(ride, start, stop, precision);
-                candidate = true;
-                *out << "    search again..." << "\r\n";
+
+                // Add the interval and continue search
+                IntervalItem *intervalItem = new IntervalItem(item, name,
+                                                              start, stop,
+                                                              ride->timeToDistance(start),
+                                                              ride->timeToDistance(stop),
+                                                              ++found,
+                                                              QColor(255,127,80),
+                                                              RideFileInterval::ROUTE);
+                intervalItem->route = id();
+                here << intervalItem;
+
+                // reset to restart find on next iteration
                 start = -1;
                 n=0;
-                //break;
+
+                // skip on a few samples to avoid finding the same
+                // segment again - this happens when a segment is very
+                // short and ends at lights or top of a hill.
+                lastpoint += 30;
             }
         }
-
-
     }
-
-    if (freememory && !candidate && ride) delete ride; // free memory - if needed
 }
-
-void
-RouteSegment::searchRouteInAllRides(Context* context)
-{
-    qDebug() << "searchRouteInAllRides()";
-
-    // log of progress
-    QFile log(context->athlete->home->logs().canonicalPath() + "/" + "routes.log");
-    log.open(QIODevice::ReadWrite);
-    QTextStream out(&log);
-
-    out << "SEARCH NEW ROUTE STARTS: " << QDateTime::currentDateTime().toString() + "\r\n";
-
-
-    QStringList filenames = RideFileFactory::instance().listRideFiles(context->athlete->home->activities());
-    QStringListIterator iterator(filenames);
-    QStringList errors;
-
-    // update statistics for ride files which are out of date
-    // showing a progress bar as we go
-    QTime elapsed;
-    elapsed.start();
-    QString title = tr("Searching route");
-    GProgressDialog *bar = NULL;
-
-    int processed=0;
-
-    while (iterator.hasNext()) {
-        QString name = iterator.next();
-        QFile file(context->athlete->home->activities().canonicalPath() + "/" + name);
-        out << "Opening ride: " << name;
-
-        RideFile *ride = NULL;
-
-        // update progress bar
-        long elapsedtime = elapsed.elapsed();
-        QString elapsedString = QString("%1:%2:%3").arg(elapsedtime/3600000,2)
-                                                .arg((elapsedtime%3600000)/60000,2,10,QLatin1Char('0'))
-                                                .arg((elapsedtime%60000)/1000,2,10,QLatin1Char('0'));
-
-        // create the dialog if we need to show progress for long running uodate
-        if ((elapsedtime > 2000) && bar == NULL) {
-            bar = new GProgressDialog(title, 0, filenames.count(), context->mainWindow->init, context->mainWindow);
-            bar->show(); // lets hide until elapsed time is > 2 seconds
-
-            // lets make sure it goes to the center!
-            QApplication::processEvents();
-        }
-
-        if (bar) {
-            QString title = tr("Searching route in all rides...\nElapsed: %1\n%2").arg(elapsedString).arg(name);
-            bar->setLabelText(title);
-            bar->setValue(++processed);
-        }
-        QApplication::processEvents();
-
-
-        ride = RideFileFactory::instance().openRideFile(context, file, errors);
-        if (ride->isDataPresent(RideFile::lat)) {
-            out << " with GPS datas " << "\r\n";
-            searchRouteInRide(ride, true, &out);
-        }
-        else
-            out << " no GPS datas " << "\r\n";
-
-        if (bar && bar->wasCanceled()) {
-            out << "SEARCH NEW ROUTE CANCELED: " << QDateTime::currentDateTime().toString() + "\r\n";
-            break;
-        }
-    }
-
-    // now zap the progress bar
-    if (bar) delete bar;
-
-    // stop logging
-    out << "SEARCH NEW ROUTE ENDS: " << QDateTime::currentDateTime().toString() + "\r\n";
-
-    QMessageBox::information(context->mainWindow, tr("Route"), tr("This route '%1' was found %2 times in %3 rides.").arg(this->getName()).arg(this->getRides().count()).arg(processed));
-
-    log.close();
-}
-
-
 
 
 //  This function converts decimal degrees to radians
@@ -370,8 +282,6 @@ RouteSegment::distance(double lat1, double lon1, double lat2, double lon2) {
 
 
 
-
-
 /*
  * Routes (list of RouteSegment)
  *
@@ -382,11 +292,23 @@ Routes::Routes(Context *context, const QDir &home)
 {
     this->home = home;
     this->context = context;
-
-    connect(context, SIGNAL(rideAdded(RideItem*)), this, SLOT(addRide(RideItem*)));
-    connect(context, SIGNAL(rideDeleted(RideItem*)), this, SLOT(deleteRide(RideItem*)));
-
     readRoutes();
+}
+
+Routes::~Routes()
+{
+    writeRoutes();
+}
+
+quint16
+Routes::getFingerprint() const
+{
+    // all the QUuids will suffice
+    QByteArray ba;
+    foreach(RouteSegment segment, routes) ba += segment.id().toByteArray();
+
+    // we spot other things separately
+    return qChecksum(ba, ba.length());
 }
 
 void
@@ -414,13 +336,15 @@ Routes::newRoute(QString name)
 }
 
 void
-Routes::updateRoute(int index, QString name)
+Routes::deleteRoute(QUuid identifier)
 {
-    routes[index].setName(name);
-
-    // save changes away
-    writeRoutes();
-
+    // find via Identifier then delete
+    for(int i=0; i<routes.count(); i++) {
+        if (routes.at(i).id() == identifier) {
+            deleteRoute(i);
+            return;
+        }
+    }
 }
 
 void
@@ -438,64 +362,43 @@ Routes::writeRoutes()
 
     QString file = QString(home.canonicalPath() + "/routes.xml");
     RouteParser::serialize(file, routes);
-
-    routesChanged(); // signal!
-}
-
-// add a ride (after import / download)
-void
-Routes::addRide(RideItem* ride)
-{
-    searchRoutesInRide(ride->ride());
-    writeRoutes();
-}
-
-// delete a ride
-void
-Routes::deleteRide(RideItem* ride)
-{
-    removeRideInRoutes(ride->ride());
 }
 
 void
-Routes::removeRideInRoutes(RideFile* ride)
+Routes::search(RideItem *item, RideFile*ride, QList<IntervalItem*>&here)
 {
-    for (int routecount=0;routecount<routes.count();routecount++) {
-        RouteSegment *route = &routes[routecount];
-        route->removeRideInRoute(ride);
+    if (ride) {
+
+        // search all segments
+        for (int routecount=0;routecount<routes.count();routecount++) {
+            RouteSegment *segment = &routes[routecount];
+
+            // The third decimal place is worth up to 110 m
+            if (ride->getMinPoint(RideFile::lat).toDouble()<segment->getMinLat()+0.001 &&
+                ride->getMaxPoint(RideFile::lat).toDouble()>segment->getMaxLat()-0.001 &&
+                ride->getMinPoint(RideFile::lon).toDouble()<segment->getMinLon()+0.001 &&
+                ride->getMaxPoint(RideFile::lon).toDouble()>segment->getMaxLon()-0.001   )
+
+            segment->search(item, ride, here);
+        }
     }
 }
 
 void
-Routes::searchRoutesInRide(RideFile* ride)
-{   
-    // log of progress
-    QFile log(context->athlete->home->logs().canonicalPath() + "/" + "routes2.log");
-    log.open(QIODevice::ReadWrite);
-    QTextStream out(&log);
+Routes::createRouteFromInterval(IntervalItem *activeInterval) 
+{
 
-    out << "SEARCH ROUTES IN NEW FILE STARTS: " << QDateTime::currentDateTime().toString() << "\r\n";
+    // if refresh is running cancel it now, as we're adding
+    // a new route to search, so will need to restart
+    context->athlete->rideCache->cancel();
 
-    for (int routecount=0;routecount<routes.count();routecount++) {
-        RouteSegment *route = &routes[routecount];
-        out << "search route " << route->getName() << "(" << route->id().toString() << ")" << (routecount+1) << "/" << routes.count() << "\r\n";
-        route->searchRouteInRide(ride, false, &out);
-    }
-
-    // stop logging
-    out << "SEARCH ROUTES IN NEW FILE ENDS: " << QDateTime::currentDateTime().toString() << "\r\n";
-    log.close();
-}
-
-void
-Routes::createRouteFromInterval(IntervalItem *activeInterval) {
     // create a new route
     int index = context->athlete->routes->newRoute("route");
     RouteSegment *route = &context->athlete->routes->routes[index];
 
     QRegExp watts("\\([0-9]* *watts\\)");
 
-    QString name = activeInterval->text(0).trimmed();
+    QString name = activeInterval->name; //activeInterval->text(0).trimmed();
     if (name.contains(watts))
         name = name.left(name.indexOf(watts)).trimmed();
 
@@ -507,7 +410,7 @@ Routes::createRouteFromInterval(IntervalItem *activeInterval) {
     // Construct the route with interval gps data
     double dist = 0, lastLat = 0, lastLon = 0;
 
-    foreach (RideFilePoint *point, activeInterval->ride->dataPoints()) {
+    foreach (RideFilePoint *point, activeInterval->rideItem()->ride()->dataPoints()) {
         if (point->secs >= activeInterval->start && point->secs < activeInterval->stop) {
             if (lastLat != 0 && lastLon != 0 &&
                 point->lat != 0 && point->lon != 0 &&
@@ -529,9 +432,9 @@ Routes::createRouteFromInterval(IntervalItem *activeInterval) {
         }
     }
 
-    // Search this route in all rides
-    route->searchRouteInAllRides(context);
+    // update on disk
+    context->athlete->routes->writeRoutes();
 
-    // Save routes
-    writeRoutes();
+    // now go and refresh !
+    context->athlete->rideCache->refresh();
 }

@@ -68,6 +68,13 @@ class ANTMessage {
         static ANTMessage open(const unsigned char channel);
         static ANTMessage close(const unsigned char channel);
 
+        // tacx vortex command message is a single broadcast ant message
+        static ANTMessage tacxVortexSetFCSerial(const uint8_t channel, const uint16_t setVortexId);
+        static ANTMessage tacxVortexStartCalibration(const uint8_t channel, const uint16_t vortexId);
+        static ANTMessage tacxVortexStopCalibration(const uint8_t channel, const uint16_t vortexId);
+        static ANTMessage tacxVortexSetCalibrationValue(const uint8_t channel, const uint16_t vortexId, const uint8_t calibrationValue);
+        static ANTMessage tacxVortexSetPower(const uint8_t channel, const uint16_t vortexId, const uint16_t power);
+
         // kickr command channel messages all sent as broadcast data
         // over the command channel as type 0x4E
         static ANTMessage kickrErgMode(const unsigned char channel, ushort usDeviceId, ushort usWatts, bool bSimSpeed);
@@ -109,7 +116,8 @@ class ANTMessage {
         uint8_t data_page, calibrationID, ctfID;
         uint16_t srmOffset, srmSlope, srmSerial;
         uint8_t eventCount;
-        uint8_t pedalPower;
+        bool pedalPowerContribution; // power - if true, right pedal power % of contribution is filled in "pedalPower"
+        uint8_t pedalPower; // power - if pedalPowerContribution is true, % contribution of right pedal
         uint16_t measurementTime, wheelMeasurementTime, crankMeasurementTime;
         uint8_t heartrateBeats, instantHeartrate; // heartrate
         uint16_t slope, period, torque; // power
@@ -120,6 +128,13 @@ class ANTMessage {
         bool utcTimeRequired; // moxy
         uint8_t moxyCapabilities; //moxy
         double tHb, oldsmo2, newsmo2; //moxy
+        uint8_t leftTorqueEffectiveness, rightTorqueEffectiveness; // power - TE&PS
+        uint8_t leftOrCombinedPedalSmoothness, rightPedalSmoothness; // power - TE&PS
+        // tacx vortex fields - only what we care about now, for more check decoding
+        uint16_t vortexId, vortexSpeed, vortexPower, vortexCadence;
+        uint8_t vortexCalibration, vortexCalibrationState, vortexPage;
+        uint8_t vortexUsingVirtualSpeed;
+
 
     private:
         void init();

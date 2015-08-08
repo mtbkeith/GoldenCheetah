@@ -166,11 +166,14 @@
  * power         calibration_fail    None,channel,0x01,0xAF,uint8:autozero_status,None,None,None,uint16_le:calibration_data
  * power         torque_support      None,channel,0x01,0x12,uint8:sensor_configuration,sint16_le:raw_torque,
  *                                                     sint16_le:offset_torque,None
- * power         standard_power      0x4e,channel,0x10,uint8_diff:event_count,None,uint8:instant_cadence,
+ * power         standard_power      0x4e,channel,0x10,uint8_diff:event_count,uint8:pedal_power,uint8:instant_cadence,
  *                                                     uint16_le_diff:sum_power,uint16_le:instant_power
  * power         wheel_torque        0x4e,channel,0x11,uint8_diff:event_count,uint8:wheel_rev,uint8:instant_cadence,
  *                                                     uint16_le_diff:wheel_period,uint16_le_diff:torque
  * power         crank_torque        0x4e,channel,0x12,uint8_diff:event_count,uint8:crank_rev,uint8:instant_cadence,
+ *                                                     uint16_le_diff:crank_period,uint16_le_diff:torque
+ * power         te_and_ps           0x4e,channel,0x13,uint8_diff:event_count,uint8:left_torque_effectivness, uint8:right_torque_effectiveness,
+ *                                                     uint8:left_pedal_smoothness, uint8:right_pedal_smoothness
  *                                                     uint16_le_diff:crank_period,uint16_le_diff:torque
  * power         crank_SRM           0x4e,channel,0x20,uint8_diff:event_count,uint16_be:slope,uint16_be_diff:crank_period,
  *                                                     uint16_be_diff:torque
@@ -351,6 +354,7 @@ ANTMessage::ANTMessage(ANT *parent, const unsigned char *message) {
             //   0x10 - Standard Power Only - sent every 2 seconds, but not SRMs
             //   0x11 - Wheel torque (Powertap)
             //   0x12 - Crank Torque (Quarq)
+            //   0x13 - Torque Efficiency and Pedal Smoothness - optional extension to 0x10 Standard Power or 0x11/0x12 Wheel/Crank Torque
             //   0x20 - Crank Torque Frequency (SRM)
             //   0x50 - Manufacturer UD
             //   0x52 - Battery Voltage
@@ -395,7 +399,8 @@ ANTMessage::ANTMessage(ANT *parent, const unsigned char *message) {
                 case ANT_STANDARD_POWER: // 0x10 - standard power
 
                     eventCount = message[5];
-                    pedalPower = message[6]; // left/right 0xFF = not used
+                    pedalPowerContribution = (( message[6] != 0xFF ) && ( message[6]&0x80) ) ; // left/right is defined if NOT 0xFF (= no Pedal Power) AND BIT 7 is set
+                    pedalPower = (message[6]&0x7F); // right pedalPower % - stored in bit 0-6
                     instantCadence = message[7];
                     sumPower = message[8] + (message[9]<<8);
                     instantPower = message[10] + (message[11]<<8);
@@ -415,6 +420,15 @@ ANTMessage::ANTMessage(ANT *parent, const unsigned char *message) {
                     instantCadence = message[7];
                     period = message[8] + (message[9]<<8);
                     torque = message[10] + (message[11]<<8);
+                    break;
+
+                case ANT_TE_AND_PS_POWER: // 0x13 - torque efficiency and pedal smoothness - extension to standard power
+
+                    eventCount = message[5];
+                    leftTorqueEffectiveness = message[6];
+                    rightTorqueEffectiveness = message[7];
+                    leftOrCombinedPedalSmoothness = message[8];
+                    rightPedalSmoothness = message[9];
                     break;
 
                 case ANT_CRANKSRM_POWER: // 0x20 - crank torque (SRM)
@@ -505,6 +519,51 @@ ANTMessage::ANTMessage(ANT *parent, const unsigned char *message) {
                 newsmo2 = 0.1f * double (((message[10] & 0xc0)>>6) + (message[11]<<2));
                 break;
 
+            case ANTChannel::CHANNEL_TYPE_TACX_VORTEX:
+            {
+                const uint8_t* const payload = message + 4;
+                vortexPage = payload[0];
+
+                switch (vortexPage)
+                {
+                case TACX_VORTEX_DATA_SPEED:
+                    vortexUsingVirtualSpeed = (payload[1] >> 7) == 1;
+                    vortexPower = payload[2] | ((payload[1] & 7) << 8); // watts
+                    vortexSpeed = payload[4] | ((payload[3] & 3) << 8); // cm/s
+                    // 0, 1, 2, 3 = none, running, new, failed
+                    vortexCalibrationState = (payload[1] >> 5) & 3;
+                    // unclear if this is set to anything
+                    vortexCadence = payload[7];
+                    break;
+
+                case TACX_VORTEX_DATA_SERIAL:
+                    // unk0 .. unk2 make up the serial number of the trainer
+                    //uint8_t unk0 = payload[1];
+                    //uint8_t unk1 = payload[2];
+                    //uint32_t unk2 = payload[3] << 16 | payload[4] << 8 || payload[5];
+                    // various flags, only known one is for virtual speed used
+                    //uint8_t alarmStatus = payload[6] << 8 | payload[7];
+                    break;
+
+                case TACX_VORTEX_DATA_VERSION:
+                {
+                    //uint8_t major = payload[4];
+                    //uint8_t minor = payload[5];
+                    //uint8_t build = payload[6] << 8 | payload[7];
+                    break;
+                }
+
+                case TACX_VORTEX_DATA_CALIBRATION:
+                    // one byte for calibration, tacx treats this as signed
+                    vortexCalibration = payload[5];
+                    // duplicate of ANT deviceId, I think, necessary for issuing commands
+                    vortexId = payload[6] << 8 | payload[7];
+                    break;
+                }
+
+                break;
+            }
+
             default:
                 break;
             }
@@ -586,6 +645,10 @@ void ANTMessage::init()
     srmOffset = srmSlope = srmSerial = 0;
     calibrationID = ctfID = 0;
     autoZeroStatus = autoZeroEnable = 0;
+    pedalPowerContribution = false;
+    pedalPower = 0;
+    leftTorqueEffectiveness = rightTorqueEffectiveness = 0;
+    leftOrCombinedPedalSmoothness = rightPedalSmoothness = 0;
 }
 
 ANTMessage ANTMessage::resetSystem()
@@ -676,6 +739,39 @@ ANTMessage ANTMessage::open(const unsigned char channel)
 ANTMessage ANTMessage::close(const unsigned char channel)
 {
     return ANTMessage(1, ANT_CLOSE_CHANNEL, channel);
+}
+
+ANTMessage ANTMessage::tacxVortexSetFCSerial(const uint8_t channel, const uint16_t setVortexId)
+{
+    return ANTMessage(9, ANT_BROADCAST_DATA, channel, 0x10, setVortexId >> 8, setVortexId & 0xFF,
+                      0x55, // coupling request
+                      0x7F, 0, 0, 0);
+}
+
+ANTMessage ANTMessage::tacxVortexStartCalibration(const uint8_t channel, const uint16_t vortexId)
+{
+    return ANTMessage(9, ANT_BROADCAST_DATA, channel, 0x10, vortexId >> 8, vortexId & 0xFF,
+                      0, 0xFF /* signals calibration start */, 0, 0, 0);
+}
+
+ANTMessage ANTMessage::tacxVortexStopCalibration(const uint8_t channel, const uint16_t vortexId)
+{
+    return ANTMessage(9, ANT_BROADCAST_DATA, channel, 0x10, vortexId >> 8, vortexId & 0xFF,
+                      0, 0x7F /* signals calibration stop */, 0, 0, 0);
+}
+
+ANTMessage ANTMessage::tacxVortexSetCalibrationValue(const uint8_t channel, const uint16_t vortexId, const uint8_t calibrationValue)
+{
+    return ANTMessage(9, ANT_BROADCAST_DATA, channel, 0x10, vortexId >> 8, vortexId & 0xFF,
+                      0, 0x7F, calibrationValue, 0, 0);
+}
+
+ANTMessage ANTMessage::tacxVortexSetPower(const uint8_t channel, const uint16_t vortexId, const uint16_t power)
+{
+    return ANTMessage(9, ANT_BROADCAST_DATA, channel, 0x10, vortexId >> 8, vortexId & 0xFF,
+                      0xAA, // power request
+                      0, 0, // no calibration related data
+                      power >> 8, power & 0xFF);
 }
 
 // kickr broadcast commands, lifted largely from the Wahoo SDK example: KICKRDemo/WFAntBikePowerCodec.cs

@@ -86,6 +86,11 @@ void Season::setType(int _type)
     type = _type;
 }
 
+bool Season::LessThanForStarts(const Season &a, const Season &b)
+{
+	return a.start.toJulianDay() < b.start.toJulianDay();
+}
+
 /*----------------------------------------------------------------------
  * EDIT SEASON DIALOG
  *--------------------------------------------------------------------*/
@@ -280,6 +285,13 @@ Seasons::readSeasons()
     season.setId(QUuid("{00000000-0000-0000-0000-000000000003}"));
     seasons.append(season);
 
+    season.setName(tr("Last Month"));
+    season.setType(Season::temporary);
+    season.setStart(QDate(today.year(), today.month(),1).addMonths(-1));
+    season.setEnd(QDate(today.year(), today.month(),1).addDays(-1));
+    season.setId(QUuid("{00000000-0000-0000-0000-000000000013}"));
+    seasons.append(season);
+
     season.setName(tr("This Week"));
     season.setType(Season::temporary);
     // from Mon-Sun
@@ -289,6 +301,14 @@ Seasons::readSeasons()
     season.setStart(wstart);
     season.setEnd(wend);
     season.setId(QUuid("{00000000-0000-0000-0000-000000000004}"));
+    seasons.append(season);
+
+    season.setName(tr("Last Week"));
+    season.setType(Season::temporary);
+    // from Mon-Sun
+    season.setStart(wstart.addDays(-7));
+    season.setEnd(wend.addDays(-7));
+    season.setId(QUuid("{00000000-0000-0000-0000-000000000014}"));
     seasons.append(season);
 
     season.setName(tr("Last 7 days"));
@@ -395,6 +415,24 @@ Seasons::writeSeasons()
     SeasonParser::serialize(file, seasons);
 
     seasonsChanged(); // signal!
+}
+
+Season 
+Seasons::seasonFor(QDate date)
+{
+    foreach(Season season, seasons)
+        if (date >= season.start && date <= season.end)
+            return season;
+
+    // if not found just return an all dates season
+    Season returning; // just retun an all dates
+    returning.setName(tr("All Dates"));
+    returning.setType(Season::temporary);
+    returning.setStart(QDate::currentDate().addYears(-50));
+    returning.setEnd(QDate::currentDate().addYears(50));
+    returning.setId(QUuid("{00000000-0000-0000-0000-000000000001}"));
+
+    return returning;
 }
 
 SeasonTreeView::SeasonTreeView(Context *context) : context(context)

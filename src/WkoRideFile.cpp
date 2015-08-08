@@ -22,7 +22,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <algorithm> // for std::sort
-#include "math.h"
+#include "cmath"
 
 static int wkoFileReaderRegistered = RideFileFactory::instance().registerReader(
                                      "wko", "WKO+ Files", new WkoFileReader());
@@ -179,7 +179,7 @@ WkoParser::WkoParser(QFile &file, QStringList &errors, QList<RideFile*>*rides)
             add.stop = datapoints.at(references.at(i)->stop)->secs + results->recIntSecs()-.001;
         else continue;
 
-        results->addInterval(add.start, add.stop, add.name);
+        results->addInterval(RideFileInterval::DEVICE, add.start, add.stop, add.name);
     }
 
     // free up temporary storage for range post processing
@@ -489,8 +489,10 @@ WkoParser::parseRawData(WKO_UCHAR *fb)
                     results->appendPoint((double)rtime/1000, cad, hr, km,
                             kph, nm, watts, alt, lon, lat, wind, slope, temp, 0.0, 
                             0.0,0.0,0.0,0.0, // vector pedal torque eff and smoothness not supported in WKO (?)
+                            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                             0.0,0.0,
                             0.0,0.0,0.0, // running dynamics
+                            0.0, // tcore
                             0);
             }
 

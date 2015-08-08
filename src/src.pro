@@ -21,7 +21,7 @@ LIBS += -lm $${LIBZ_LIBS}
 #            5.2.0 or higher
 #
 ## common modules
-QT += xml sql network script svg
+QT += xml sql network script svg concurrent
 
 lessThan(QT_MAJOR_VERSION, 5) {
 
@@ -46,18 +46,21 @@ CONFIG(debug, debug|release) {
     QMAKE_CXXFLAGS += -DGC_DEBUG
 }
 
-!isEmpty( LIBOAUTH_INSTALL ) {
-    isEmpty( LIBOAUTH_INCLUDE ) { LIBOAUTH_INCLUDE += $${LIBOAUTH_INSTALL}/include }
-    isEmpty( LIBOAUTH_LIBS ) {
-        LIBOAUTH_LIBS = $${LIBOAUTH_INSTALL}/lib/liboauth.a \
-                        -lcurl -lcrypto -lz
+
+# KQOAuth .pro in default creates different libs for release and debug
+!isEmpty( KQOAUTH_INSTALL ) {
+    isEmpty( KQOAUTH_INCLUDE ) { KQOAUTH_INCLUDE += $${KQOAUTH_INSTALL}/src }
+    isEmpty( KQOAUTH_LIBS ) {
+        #KQOAUTH_LIBS = $${KQOAUTH_INSTALL}/lib/libkqoauth0.a
+        KQOAUTH_LIBS = -lkqoauth
     }
-    INCLUDEPATH += $${LIBOAUTH_INCLUDE}
-    LIBS        += $${LIBOAUTH_LIBS}
-    DEFINES     += GC_HAVE_LIBOAUTH
-    SOURCES     += OAuthDialog.cpp TwitterDialog.cpp
-    HEADERS     += OAuthDialog.h TwitterDialog.h
+    INCLUDEPATH += $${KQOAUTH_INCLUDE}
+    LIBS        += $${KQOAUTH_LIBS}
+    DEFINES     += GC_HAVE_KQOAUTH
+    SOURCES     += TwitterDialog.cpp
+    HEADERS     += TwitterDialog.h
 }
+
 
 !isEmpty( D2XX_INCLUDE ) {
     INCLUDEPATH += $${D2XX_INCLUDE}
@@ -65,6 +68,9 @@ CONFIG(debug, debug|release) {
     HEADERS     += D2XX.h
     SOURCES     += D2XX.cpp
     DEFINES     += GC_HAVE_D2XX
+    unix {
+        LIBS    += -ldl
+    }
 }
 
 !isEmpty( SRMIO_INSTALL ) {
@@ -97,7 +103,7 @@ CONFIG(debug, debug|release) {
                       $${KML_INSTALL}/lib/libkmlengine.a \
                       $${KML_INSTALL}/lib/libkmlbase.a
     }
-    INCLUDEPATH += $${KML_INCLUDE} $${BOOST_INCLUDE}
+    INCLUDEPATH += $${KML_INCLUDE}  $${BOOST_INCLUDE}
     LIBS        += $${KML_LIBS}
     DEFINES     += GC_HAVE_KML
     SOURCES     += KmlRideFile.cpp
@@ -150,15 +156,20 @@ CONFIG(debug, debug|release) {
     }
 }
 
-!isEmpty( CLUCENE_LIBS ) {
-    INCLUDEPATH += $${CLUCENE_INCLUDE}
-    LIBS        += $${CLUCENE_LIBS}
-    DEFINES     += GC_HAVE_LUCENE
-    HEADERS     += Lucene.h DataFilter.h SearchBox.h NamedSearch.h SearchFilterBox.h
-    SOURCES     += Lucene.cpp DataFilter.cpp SearchBox.cpp NamedSearch.cpp SearchFilterBox.cpp
-    YACCSOURCES += DataFilter.y
-    LEXSOURCES  += DataFilter.l
+# libsamplerate available ?
+!isEmpty( SAMPLERATE_INSTALL ) {
+    isEmpty( SAMPLERATE_INCLUDE ) { SAMPLERATE_INCLUDE = $${SAMPLERATE_INSTALL}/include }
+    isEmpty( SAMPLERATE_LIBS )    { SAMPLERATE_LIBS    = $${SAMPLERATE_INSTALL}/lib/libsamplerate.a }
+    INCLUDEPATH += $${SAMPLERATE_INCLUDE}
+    LIBS        += $${SAMPLERATE_LIBS}
+    DEFINES     += GC_HAVE_SAMPLERATE
 }
+
+# FreeSearch replaces deprecated lucene
+HEADERS     += DataFilter.h SearchBox.h NamedSearch.h SearchFilterBox.h FreeSearch.h
+SOURCES     += DataFilter.cpp SearchBox.cpp NamedSearch.cpp SearchFilterBox.cpp FreeSearch.cpp
+YACCSOURCES += DataFilter.y
+LEXSOURCES  += DataFilter.l
 
 # Mac specific build for
 # Segmented mac style button
@@ -262,6 +273,7 @@ HEADERS += \
         Aerolab.h \
         AerolabWindow.h \
         AllPlot.h \
+        AllPlotInterval.h \
         AllPlotWindow.h \
         AllPlotSlopeCurve.h \
         AnalysisSidebar.h \
@@ -297,7 +309,6 @@ HEADERS += \
         CriticalPowerWindow.h \
         CsvRideFile.h \
         DataProcessor.h \
-        DBAccess.h \
         DaysScaleDraw.h \
         Device.h \
         DeviceTypes.h \
@@ -332,17 +343,19 @@ HEADERS += \
         GpxParser.h \
         GpxRideFile.h \
         HelpWindow.h \
+        HelpWhatsThis.h \
         HistogramWindow.h \
         HomeWindow.h \
         HrZones.h \
         HrPwPlot.h \
         HrPwWindow.h \
+        IndendPlotMarker.h \
         IntervalItem.h \
-        IntervalSidebar.h \
         IntervalSummaryWindow.h \
         IntervalTreeView.h \
         JouleDevice.h \
         JsonRideFile.h \
+        LapsEditor.h \
         Library.h \
         LibraryParser.h \
         LogTimeScaleDraw.h \
@@ -363,13 +376,13 @@ HEADERS += \
         ManualRideFile.h \
         MergeActivityWizard.h \
         MetadataWindow.h \
-        MetricAggregator.h \
         MoxyDevice.h \
         MUPlot.h \
         MUPool.h \
         MUWidget.h \
         NewCyclistDialog.h \
         NullController.h \
+        OAuthDialog.h \
         PaceZones.h \
         Pages.h \
         PDModel.h \
@@ -391,6 +404,7 @@ HEADERS += \
         RealtimePlot.h \
         RideAutoImportConfig.h \
         RideCache.h \
+        RideCacheModel.h \
         RideEditor.h \
         RideFile.h \
         RideFileCache.h \
@@ -403,15 +417,11 @@ HEADERS += \
         RideNavigator.h \
         RideNavigatorProxy.h \
         RideWindow.h \
-        IntervalNavigator.h \
-        IntervalNavigatorProxy.h \
         SaveDialogs.h \
         SmallPlot.h \
         RideSummaryWindow.h \
         Route.h \
-        RouteItem.h \
         RouteParser.h \
-        RouteWindow.h \
         ScatterPlot.h \
         ScatterWindow.h \
         Season.h \
@@ -420,6 +430,7 @@ HEADERS += \
         Settings.h \
         ShareDialog.h \
         SpecialFields.h \
+        Specification.h \
         SpinScanPlot.h \
         SpinScanPolarPlot.h \
         SpinScanPlotWindow.h \
@@ -430,8 +441,8 @@ HEADERS += \
         SmfRideFile.h \
         SrdRideFile.h \
         SrmRideFile.h \
-        StressCalculator.h \
-        SummaryMetrics.h \
+        Statistic.h \
+        PMCData.h \
         SummaryWindow.h \
         SyncRideFile.h \
         Tab.h \
@@ -455,16 +466,21 @@ HEADERS += \
         WorkoutPlotWindow.h \
         WorkoutWizard.h \
         WPrime.h \
-        ZeoDownload.h \
         Zones.h \
         ZoneScaleDraw.h \
         ../qtsolutions/json/mvjson.h
 
-YACCSOURCES += JsonRideFile.y WithingsParser.y
-LEXSOURCES  += JsonRideFile.l WithingsParser.l
+LEXSOURCES  += JsonRideFile.l WithingsParser.l RideDB.l
+YACCSOURCES += JsonRideFile.y WithingsParser.y RideDB.y
 
 #-t turns on debug, use with caution
 #QMAKE_YACCFLAGS = -t -d
+
+# code that is pending later releases and not compiled in currently
+DEFERRES += RouteWindow.h \
+            RouteWindow.cpp \
+            RouteItem.h \
+            RouteItem.cpp
 
 SOURCES += \
         AboutDialog.cpp \
@@ -474,6 +490,7 @@ SOURCES += \
         Aerolab.cpp \
         AerolabWindow.cpp \
         AllPlot.cpp \
+        AllPlotInterval.cpp \
         AllPlotWindow.cpp \
         AllPlotSlopeCurve.cpp \
         AnalysisSidebar.cpp \
@@ -487,6 +504,7 @@ SOURCES += \
         BatchExportDialog.cpp \
         BestIntervalDialog.cpp \
         BikeScore.cpp \
+        aBikeScore.cpp \
         BinRideFile.cpp \
         Bin2RideFile.cpp \
         BingMap.cpp \
@@ -496,6 +514,7 @@ SOURCES += \
         ChartSettings.cpp \
         ChooseCyclistDialog.cpp \
         Coggan.cpp \
+        aCoggan.cpp \
         Colors.cpp \
         ColorButton.cpp \
         CommPort.cpp \
@@ -512,7 +531,6 @@ SOURCES += \
         CsvRideFile.cpp \
         DanielsPoints.cpp \
         DataProcessor.cpp \
-        DBAccess.cpp \
         Device.cpp \
         DeviceTypes.cpp \
         DeviceConfiguration.cpp \
@@ -533,6 +551,7 @@ SOURCES += \
         FixElevation.cpp \
         FixGaps.cpp \
         FixGPS.cpp \
+        FixMoxy.cpp \
         FixPower.cpp \
         FixSpikes.cpp \
         FixTorque.cpp \
@@ -555,17 +574,19 @@ SOURCES += \
         GpxParser.cpp \
         GpxRideFile.cpp \
         HelpWindow.cpp \
+        HelpWhatsThis.cpp \
         HistogramWindow.cpp \
         HomeWindow.cpp \
         HrTimeInZone.cpp \
         HrZones.cpp \
         HrPwPlot.cpp \
         HrPwWindow.cpp \
+        IndendPlotMarker.cpp \
         IntervalItem.cpp \
-        IntervalSidebar.cpp \
         IntervalSummaryWindow.cpp \
         IntervalTreeView.cpp \
         JouleDevice.cpp \
+        LapsEditor.cpp \
         LeftRightBalance.cpp \
         Library.cpp \
         LibraryParser.cpp \
@@ -586,17 +607,18 @@ SOURCES += \
         ManualRideFile.cpp \
         MergeActivityWizard.cpp \
         MetadataWindow.cpp \
-        MetricAggregator.cpp \
         MoxyDevice.cpp \
         MUPlot.cpp \
         MUWidget.cpp \
         NewCyclistDialog.cpp \
         NullController.cpp \
+        OAuthDialog.cpp \
         PaceTimeInZone.cpp \
         PaceZones.cpp \
         Pages.cpp \
         PDModel.cpp \
         PeakPower.cpp \
+        PeakPace.cpp \
         PfPvPlot.cpp \
         PfPvWindow.cpp \
         PolarRideFile.cpp \
@@ -615,6 +637,7 @@ SOURCES += \
         ReferenceLineDialog.cpp \
         RideAutoImportConfig.cpp \
         RideCache.cpp \
+        RideCacheModel.cpp \
         RideEditor.cpp \
         RideFile.cpp \
         RideFileCache.cpp \
@@ -627,11 +650,8 @@ SOURCES += \
         RideNavigator.cpp \
         RideSummaryWindow.cpp \
         RideWindow.cpp \
-        IntervalNavigator.cpp \
         Route.cpp \
-        RouteItem.cpp \
         RouteParser.cpp \
-        RouteWindow.cpp \
         SaveDialogs.cpp \
         ScatterPlot.cpp \
         ScatterWindow.cpp \
@@ -642,6 +662,7 @@ SOURCES += \
         ShareDialog.cpp \
         SmallPlot.cpp \
         SpecialFields.cpp \
+        Specification.cpp \
         SpinScanPlot.cpp \
         SpinScanPolarPlot.cpp \
         SpinScanPlotWindow.cpp \
@@ -652,10 +673,12 @@ SOURCES += \
         SmfRideFile.cpp \
         SrdRideFile.cpp \
         SrmRideFile.cpp \
-        StressCalculator.cpp \
-        SummaryMetrics.cpp \
+        Statistic.cpp \
+        SustainMetric.cpp \
+        PMCData.cpp \
         SummaryWindow.cpp \
         SyncRideFile.cpp \
+        SwimScore.cpp \
         Tab.cpp \
         TabView.cpp \
         TacxCafRideFile.cpp \
@@ -681,7 +704,6 @@ SOURCES += \
         WorkoutPlotWindow.cpp \
         WorkoutWizard.cpp \
         WPrime.cpp \
-        ZeoDownload.cpp \
         Zones.cpp \
         main.cpp \
         ../qtsolutions/json/mvjson.cpp
@@ -725,3 +747,6 @@ OTHER_FILES += \
     web/MapWindow.html \
     web/StreetViewWindow.html \
     web/Window.css
+
+HEADERS += $${LOCALHEADERS}
+SOURCE += $${LOCALSOURCE}

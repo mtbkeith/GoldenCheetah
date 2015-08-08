@@ -22,8 +22,17 @@
 #include "GoldenCheetah.h"
 
 #include "RideMetric.h"
+#include "WithingsParser.h"
+
+#include <QString>
+#include <QMap>
+#include <QVector>
 
 class RideFile;
+class RideFileCache;
+class RideCache;
+class RideCacheModel;
+class IntervalItem;
 class Context;
 
 Q_DECLARE_METATYPE(RideItem*)
@@ -37,10 +46,25 @@ class RideItem : public QObject
 
     protected:
 
-        RideFile *ride_;
+        friend class ::RideCache;
+        friend class ::RideCacheModel;
+        friend class ::IntervalItem;
 
+        // ridefile
+        RideFile *ride_;
+        RideFileCache *fileCache_;
+
+        // precomputed metrics
+        QVector<double> metrics_;
+
+        // metadata (used by navigator)
+        QMap<QString,QString> metadata_;
+
+        // got any intervals
+        QList<IntervalItem*> intervals_;
         QStringList errors_;
-        Context *context; // to notify widgets when date/time changes
+
+        unsigned long metaCRC();
 
     public slots:
         void modified();
@@ -55,36 +79,102 @@ class RideItem : public QObject
 
     public:
 
+        Context *context; // to notify widgets when date/time changes
         bool isdirty;     // ride data has changed and needs saving
         bool isstale;     // metric data is out of date and needs recomputing
         bool isedit;      // is being edited at the moment
+        bool skipsave;    // on exit we don't save the state to force rebuild at startup
 
+        // set from another, e.g. during load of rideDB.json
+        void setFrom(RideItem&);
+
+        // set metric values e.g. when working with intervals
+        void setFrom(QHash<QString, RideMetricPtr>);
+
+        // add interval e.g. during load of rideDB.json
+        void addInterval(IntervalItem interval);
+        void clearIntervals() { intervals_.clear(); } // does NOT delete them
+
+        // new Interval created and needs to be reflected in ridefile
+        IntervalItem * newInterval(QString name, double start, double stop, double startKM, double stopKM);
+
+        // access the metric value
+        double getForSymbol(QString name, bool useMetricUnits=true);
+
+        // as a well formatted string
+        QString getStringForSymbol(QString name, bool useMetricUnits=true);
+
+        // access the metadata
+        QString getText(QString name, QString fallback) { return metadata_.value(name, fallback); }
+
+        // get at the first class data
         QString path;
         QString fileName;
         QDateTime dateTime;
+        QString present;
+        QColor color;
+        bool isRun,isSwim;
+        bool samples; // has samples data
+
+        // context the item was updated to
+        unsigned long fingerprint; // zones
+        unsigned long metacrc, crc, timestamp; // file content
+        int dbversion; // metric version
+        double weight; // what weight was used ?
+
+        // access to the cached data !
+        WithingsReading withings;
+        RideFile *ride(bool open=true);
+        RideFileCache *fileCache();
+        QVector<double> &metrics() { return metrics_; }
         const QStringList errors() { return errors_; }
+        double getWeight(int type=0);
+
+        // when retrieving interval lists we can provide criteria too
+        QList<IntervalItem*> &intervals()  { return intervals_; }
+        QList<IntervalItem*> intervalsSelected() const;
+        QList<IntervalItem*> intervals(RideFileInterval::intervaltype) const;
+        QList<IntervalItem*> intervalsSelected(RideFileInterval::intervaltype) const;
+        bool removeInterval(IntervalItem *x);
+        void moveInterval(int from, int to);
+
+        // metadata
+        QMap<QString, QString> &metadata() { return metadata_; }
 
         // ride() will open the ride if it isn't already when open=true
         // if we pass false then it will just return ride_ so we can
         // traverse currently open rides when config changes
-        RideFile *ride(bool open=true);
+        void close();
+        bool isOpen();
 
         // create and destroy
+        RideItem();
         RideItem(RideFile *ride, Context *context);
         RideItem(QString path, QString fileName, QDateTime &dateTime, Context *context);
         RideItem(RideFile *ride, QDateTime &dateTime, Context *context);
-        void freeMemory();
+
+        ~RideItem();
 
         // state
         void setDirty(bool);
         bool isDirty() { return isdirty; }
+        bool checkStale(); // check if we need to refresh
         bool isStale() { return isstale; }
-        bool isRun() { return ride_ ? ride_->isRun() : false; }
+
+        // refresh when stale
+        void refresh();
 
         // get/set
         void setRide(RideFile *);
         void setFileName(QString, QString);
         void setStartTime(QDateTime);
+
+        // sorting
+        bool operator<(RideItem right) const { return dateTime < right.dateTime; }
+        bool operator>(RideItem right) const { return dateTime < right.dateTime; }
+
+    private:
+        void updateIntervals();
 };
 
 #endif // _GC_RideItem_h

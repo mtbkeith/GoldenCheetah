@@ -63,8 +63,13 @@ class WebBridge : public QObject
         Context *context;
         GoogleMapControl *gm;
 
+        RideFilePoint* point;
+        int selection;
+
+        QList<RideFilePoint*> searchPoint(double lat, double lng);
+
     public:
-        WebBridge(Context *context, GoogleMapControl *gm) : context(context), gm(gm) {}
+        WebBridge(Context *context, GoogleMapControl *gm) : context(context), gm(gm), selection(0) {}
 
     public slots:
         Q_INVOKABLE void call(int count);
@@ -82,6 +87,9 @@ class WebBridge : public QObject
         Q_INVOKABLE void toggleInterval(int);
         Q_INVOKABLE void hoverInterval(int);
         Q_INVOKABLE void clearHover();
+        Q_INVOKABLE void hoverPath(double lat, double lng);
+        Q_INVOKABLE void clickPath(double lat, double lng);
+        Q_INVOKABLE void mouseup();
 
         void intervalsChanged() { emit drawIntervals(); }
 
@@ -100,11 +108,15 @@ class GoogleMapControl : public GcChartWindow
         bool first;
 
     public slots:
+        void forceReplot();
         void rideSelected();
         void createMarkers();
         void drawShadedRoute();
         void zoomInterval(IntervalItem*);
-        void configChanged();
+        void configChanged(qint32);
+
+        void drawTempInterval(IntervalItem *current);
+        void clearTempInterval();
 
     private:
         Context *context;
@@ -128,6 +140,7 @@ class GoogleMapControl : public GcChartWindow
 
     protected:
         bool event(QEvent *event);
+        bool stale;
 };
 
 #endif

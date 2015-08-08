@@ -79,6 +79,7 @@ private:
     Q_PROPERTY(double heightFactor READ heightFactor WRITE setHeightFactor NOTIFY heightFactorChanged USER true)
 
     // can be resized
+    Q_PROPERTY(int style READ style WRITE setStyle USER true NOTIFY styleChanged)
     Q_PROPERTY(bool resizable READ resizable WRITE setResizable USER true)
     Q_PROPERTY(bool gripped READ gripped WRITE setGripped)
 
@@ -97,6 +98,7 @@ private:
     double _heightFactor;
     bool _resizable;
     bool _gripped;
+    int _style;
 
     enum drag { None, Close, Flip, Move, Left, Right, Top, Bottom, TLCorner, TRCorner, BLCorner, BRCorner };
     typedef enum drag DragState;
@@ -113,6 +115,7 @@ signals:
     void titleChanged(QString);
     void subtitleChanged(QString);
     void rideItemChanged(RideItem*);
+    void styleChanged(int);
     void heightFactorChanged(double);
     void widthFactorChanged(double);
     void colorChanged(QColor);
@@ -168,6 +171,9 @@ public:
     void moveEvent(QMoveEvent *); // we trap move events to ungrab during resize
     void setGripped(bool);
     bool gripped() const;
+
+    int style() const { return _style; }
+    void setStyle(int x) { if (_style != x) {_style = x; emit styleChanged(x); }}
 
     GcWinID type() const { return _type; }
     void setType(GcWinID x) { _type = x; } // only really used by the window registry

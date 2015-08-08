@@ -18,6 +18,7 @@
 
 #include "ScatterPlot.h"
 #include "ScatterWindow.h"
+#include "Statistic.h"
 #include "IntervalItem.h"
 #include "Context.h"
 #include "Context.h"
@@ -97,6 +98,8 @@ pointType(const RideFilePoint *point, int type, int side, bool metric, double cr
         case MODEL_GEAR : return point->gear;
         case MODEL_SMO2 : return point->smo2;
         case MODEL_THB : return point->thb;
+        case MODEL_HHB : return point->hhb;
+        case MODEL_O2HB : return point->o2hb;
     }
     return 0; // ? unknown channel ?
 }
@@ -152,6 +155,8 @@ QString ScatterPlot::describeType(int type, bool longer, bool metric)
             case MODEL_GEAR :  return (tr("Gear Ratio"));
             case MODEL_SMO2 :  return (tr("Muscle Oxygen"));
             case MODEL_THB :  return (tr("Haemoglobin Mass"));
+            case MODEL_HHB :  return (tr("Deoxygenated Haemoglobin"));
+            case MODEL_O2HB :  return (tr("Oxygenated Haemoglobin"));
         }
         return (tr("Unknown"));; // ? unknown channel ?
     } else {
@@ -184,6 +189,8 @@ QString ScatterPlot::describeType(int type, bool longer, bool metric)
             case MODEL_GEAR :  return (tr("Gear"));
             case MODEL_SMO2 :  return (tr("SmO2"));
             case MODEL_THB :  return (tr("tHb"));
+            case MODEL_O2HB :  return (tr("O2Hb"));
+            case MODEL_HHB :  return (tr("HHb"));
         }
         return (tr("None")); // ? unknown channel ?
     }
@@ -213,13 +220,13 @@ ScatterPlot::ScatterPlot(Context *context) : context(context)
     sd->enableComponent(QwtScaleDraw::Backbone, false);
     setAxisScaleDraw(QwtPlot::yLeft, sd);
 
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
-    connect(context, SIGNAL(intervalHover(RideFileInterval)), this, SLOT(intervalHover(RideFileInterval)));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
+    connect(context, SIGNAL(intervalHover(IntervalItem*)), this, SLOT(intervalHover(IntervalItem*)));
 
     // lets watch the mouse move...
     new mouseTracker(this);
 
-    configChanged(); // use latest colors etc
+    configChanged(CONFIG_APPEARANCE | CONFIG_GENERAL); // use latest wheelsize/cranklength and colors
 }
 
 void ScatterPlot::setData (ScatterSettings *settings)
@@ -259,15 +266,22 @@ void ScatterPlot::setData (ScatterSettings *settings)
     }
     intervalCurves.clear();
 
+    // clear out any label
+    foreach(QwtPlotMarker *c, labels) {
+        c->detach();
+        delete c;
+    }
+    labels.clear();
+
     // count the currently selected intervals
     QVector<int> intervals;
     QMap<int,int> displaySequence;
 
-    for (int child=0; child<context->athlete->allIntervalItems()->childCount(); child++) {
-        IntervalItem *current = dynamic_cast<IntervalItem *>(context->athlete->allIntervalItems()->child(child));
-        if ((current != NULL) && current->isSelected()) {
+    for (int child=0; child<settings->ride->intervals().count(); child++) {
+        IntervalItem *current = settings->ride->intervals().at(child);
+        if (current->selected) {
             intervals.append(child);
-            displaySequence.insert(current->displaySequence, intervals.count()-1);
+            displaySequence.insert(current->displaySequence, child);
         }
     }
 
@@ -311,13 +325,9 @@ void ScatterPlot::setData (ScatterSettings *settings)
                 double xv = pointType(point, settings->x, side, context->athlete->useMetricUnits, cranklength);
                 double yv = pointType(point, settings->y, side, context->athlete->useMetricUnits, cranklength);
 
-                // skip zeroes? - special logic for Model Gear, since there value between 0.01 and 1 happen and are relevant
-                if ((settings->x != MODEL_GEAR && settings->y != MODEL_GEAR)
-                     && settings->ignore && (int(xv) == 0 || int(yv) == 0)) continue;
-                if ((settings->x == MODEL_GEAR)
-                     && settings->ignore && (xv == 0.0f || int(yv) == 0)) continue;
-                if ((settings->y == MODEL_GEAR)
-                     && settings->ignore && (int(xv) == 0 || yv == 0.0f)) continue;
+                // skip values ? Like zeroes...
+                if (skipValues(xv, yv, settings))
+                    continue;
 
                 // add it
                 x <<xv;
@@ -336,9 +346,9 @@ void ScatterPlot::setData (ScatterSettings *settings)
             if (intervals.count() > 0) {
 
                 // interval data in here
-                QVector<QVector<double> > xvals(intervals.count()); // array of curve x arrays
-                QVector<QVector<double> > yvals(intervals.count()); // array of curve x arrays
-                QVector<int> points(intervals.count());             // points in eac curve
+                QVector<QVector<double> > xvals(settings->ride->intervals().count()); // array of curve x arrays
+                QVector<QVector<double> > yvals(settings->ride->intervals().count()); // array of curve x arrays
+                QVector<int> points(settings->ride->intervals().count());             // points in eac curve
 
                 // extract interval data
                 foreach(const RideFilePoint *point, settings->ride->ride()->dataPoints()) {
@@ -349,11 +359,10 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     if (!(settings->ignore && (x == 0 && y ==0))) {
 
                         // which interval is it in?
-                        for (int idx=0; idx<intervals.count(); idx++) {
+                        for (int idx=0; idx<settings->ride->intervals().count(); idx++) {
 
-                            IntervalItem *current = dynamic_cast<IntervalItem *>(context->athlete->allIntervalItems()->child(intervals[idx]));
-
-                            if (point->secs+settings->ride->ride()->recIntSecs() > current->start && point->secs< current->stop) {
+                            IntervalItem *current = settings->ride->intervals().at(idx);
+                            if (current->selected && point->secs+settings->ride->ride()->recIntSecs() > current->start && point->secs< current->stop) {
                                 xvals[idx].append(x);
                                 yvals[idx].append(y);
                                 points[idx]++;
@@ -369,7 +378,7 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     int idx = order.value();
 
                     QColor intervalColor;
-                    intervalColor.setHsv((255/context->athlete->allIntervalItems()->childCount()) * (intervals[idx]), 255,255);
+                    intervalColor.setHsv((255/settings->ride->intervals().count()) * idx, 255,255);
                     // left / right are darker lighter
                     if (side) intervalColor = intervalColor.lighter(50);
 
@@ -386,13 +395,26 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     ic->setRenderHint(QwtPlotItem::RenderAntialiased);
                     ic->setSamples(xvals[idx].constData(), yvals[idx].constData(), points[idx]);
                     ic->attach(this);
-
                     intervalCurves.append(ic);
+
+                    // show as a line too, if not framed
+#if 0 // a bit ugly tbh
+                    if (!settings->frame) {
+                        QwtPlotCurve *icl = new QwtPlotCurve();
+                        icl->setStyle(QwtPlotCurve::Lines);
+                        icl->setPen(QPen(intervalColor, Qt::SolidLine));
+                        icl->setRenderHint(QwtPlotItem::RenderAntialiased);
+                        icl->setSamples(xvals[idx].constData(), yvals[idx].constData(), points[idx]);
+                        icl->attach(this);
+                        intervalCurves.append(icl);
+                    }
+#endif
                 }
             }
 
             // setup the framing curve
             if (intervals.count() == 0 || settings->frame) {
+                smooth(x, y, points, settings->smoothing);
 
                 if (side) {
 
@@ -410,6 +432,10 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     curve2->setZ(-1);
                     curve2->attach(this);
 
+                    if (settings->trendLine>0)  {
+                        addTrendLine(x, y, points, Qt::cyan);
+                    }
+
                 } else {
 
                     QwtSymbol *sym = new QwtSymbol;
@@ -425,6 +451,10 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     curve->setSamples(x.constData(), y.constData(), points);
                     curve->setZ(-1);
                     curve->attach(this);
+
+                    if (settings->trendLine>0)  {
+                        addTrendLine(x, y, points, Qt::red);
+                    }
                 }
             }
         }
@@ -436,7 +466,10 @@ void ScatterPlot::setData (ScatterSettings *settings)
                 // CREATE COMPARE CURVES
                 //
 
-                for (int i=0; i< context->compareIntervals.count(); i++) {
+                int i=0;
+                if (settings->compareMode > 0)
+                    i++;
+                for (; i< context->compareIntervals.count(); i++) {
                     CompareInterval interval = context->compareIntervals.at(i);
 
                     if (interval.checked == false)
@@ -450,20 +483,39 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     // extract interval data
                     foreach(const RideFilePoint *point, interval.data->dataPoints()) {
 
-                        double x = pointType(point, settings->x, side, context->athlete->useMetricUnits, cranklength);
-                        double y = pointType(point, settings->y, side, context->athlete->useMetricUnits, cranklength);
+                        double x;
+                        double y;
+                        if (settings->compareMode == 1) {
+                            const RideFilePoint *refPoint = context->compareIntervals.at(0).data->dataPoints().at(context->compareIntervals.at(0).data->timeIndex(point->secs));
+                            x = pointType(refPoint, settings->x, side, context->athlete->useMetricUnits, cranklength);
+                            y = pointType(point, settings->y, side, context->athlete->useMetricUnits, cranklength);
+                        }
+                        else if (settings->compareMode == 2) {
+                            const RideFilePoint *refPoint = context->compareIntervals.at(0).data->dataPoints().at(context->compareIntervals.at(0).data->timeIndex(point->secs));
+                            x = pointType(point, settings->x, side, context->athlete->useMetricUnits, cranklength);
+                            y = pointType(refPoint, settings->y, side, context->athlete->useMetricUnits, cranklength);
+                        }
+                        else {
+                            x = pointType(point, settings->x, side, context->athlete->useMetricUnits, cranklength);
+                            y = pointType(point, settings->y, side, context->athlete->useMetricUnits, cranklength);
+                        }
+
+
+                        // skip values ?
+                        if (skipValues(x, y, settings))
+                            continue;
 
                         if (y > maxY) maxY = y;
                         if (y < minY) minY = y;
                         if (x > maxX) maxX = x;
                         if (x < minX) minX = x;
 
-                        if (!(settings->ignore && (x == 0 && y ==0))) {
-                            xval.append(x);
-                            yval.append(y);
-                            nbPoints++;
-                        }
+                        xval.append(x);
+                        yval.append(y);
+                        nbPoints++;
                     }
+
+                    smooth(xval, yval, nbPoints, settings->smoothing);
 
                     QColor intervalColor = interval.color;
                     // left / right are darker lighter
@@ -484,6 +536,10 @@ void ScatterPlot::setData (ScatterSettings *settings)
                     ic->attach(this);
 
                     intervalCurves.append(ic);
+
+                    if (settings->trendLine>0)  {
+                        addTrendLine(xval, yval, nbPoints, intervalColor);
+                    }
                 }
             }
         }
@@ -534,7 +590,7 @@ void ScatterPlot::mouseMoved()
 {
     if (!isVisible()) return;
 
-    if (ride && ride->ride() && ride->ride()->intervals().count() >= intervalMarkers.count()) {
+    if (ride && ride->ride() && ride->intervals().count() >= intervalMarkers.count()) {
 
         // where is the mouse ?
         QPoint pos = QCursor::pos();
@@ -549,7 +605,7 @@ void ScatterPlot::mouseMoved()
             int dy = mpos.y() - pos.y();
 
             if ((dx > -6 && dx < 6) && (dy > -6 && dy < 6))
-                context->notifyIntervalHover(ride->ride()->intervals()[index]);
+                context->notifyIntervalHover(ride->intervals()[index]);
 
             index++;
         }
@@ -558,7 +614,7 @@ void ScatterPlot::mouseMoved()
 }
 
 void
-ScatterPlot::intervalHover(RideFileInterval ri)
+ScatterPlot::intervalHover(IntervalItem *ri)
 {
     if (!isVisible()) return;
     if (context->isCompareIntervals) return;
@@ -576,6 +632,9 @@ ScatterPlot::intervalHover(RideFileInterval ri)
         delete hover2;
         hover2 = NULL;
     }
+
+    // null so just clear hover
+    if (!ri) return;
 
     // how many curves do we need ?
     if (xseries == MODEL_LRBALANCE || xseries == MODEL_TE || xseries == MODEL_PS ||
@@ -598,7 +657,7 @@ ScatterPlot::intervalHover(RideFileInterval ri)
             double y = pointType(p1, xseries, side, context->athlete->useMetricUnits, cranklength);
             double x = pointType(p1, yseries, side, context->athlete->useMetricUnits, cranklength);
 
-            if (p1->secs < ri.start || p1->secs > ri.stop) continue;
+            if (p1->secs < ri->start || p1->secs > ri->stop) continue;
 
             xArray << x;
             yArray << y;
@@ -607,8 +666,8 @@ ScatterPlot::intervalHover(RideFileInterval ri)
         // which interval is it or how many ?
         int count = 0;
         int ours = 0;
-        foreach(RideFileInterval p, ride->ride()->intervals()) {
-            if (p.start == ri.start && p.stop == ri.stop) ours = count;
+        foreach(IntervalItem *p, ride->intervals()) {
+            if (p->start == ri->start && p->stop == ri->stop) ours = count;
             count++;
         }
 
@@ -666,7 +725,7 @@ ScatterPlot::refreshIntervalMarkers(ScatterSettings *settings)
     // do we have a ride with intervals to refresh ?
     int count=0;
 
-    if (settings->ride && settings->ride->ride() && settings->ride->ride()->dataPoints().count() && (count = settings->ride->ride()->intervals().count())) {
+    if (settings->ride && settings->ride->ride() && settings->ride->ride()->dataPoints().count() && (count = settings->ride->intervals().count())) {
 
         // accumulating...
         QVector<saccum> intervalAccumulator(count);
@@ -685,10 +744,10 @@ ScatterPlot::refreshIntervalMarkers(ScatterSettings *settings)
             // accumulate values for each interval here ....
             for(int i=0; i < count; i++) {
 
-                RideFileInterval v = settings->ride->ride()->intervals()[i];
+                IntervalItem *v = settings->ride->intervals()[i];
 
                 // in our interval ?
-                if (point->secs >= v.start && point->secs <= v.stop) {
+                if (point->secs >= v->start && point->secs <= v->stop) {
                     intervalAccumulator[i].x += x;
                     intervalAccumulator[i].y += y;
                     intervalAccumulator[i].count++;
@@ -725,7 +784,7 @@ ScatterPlot::refreshIntervalMarkers(ScatterSettings *settings)
 }
 
 void
-ScatterPlot::configChanged()
+ScatterPlot::configChanged(qint32)
 {
     // setColors bg
     setCanvasBackground(GColor(CPLOTBACKGROUND));
@@ -753,4 +812,172 @@ ScatterPlot::setAxisTitle(int axis, QString label)
     title.setFont(stGiles);
     QwtPlot::setAxisFont(axis, stGiles);
     QwtPlot::setAxisTitle(axis, title);
+}
+
+void
+ScatterPlot::addTrendLine(QVector<double> xval, QVector<double> yval, int nbPoints, QColor intervalColor)
+{
+    QwtPlotCurve *trend = new QwtPlotCurve();
+
+    // cosmetics
+    QPen cpen = QPen(intervalColor.darker(200));
+    cpen.setWidth(2); // double thickness for trend lines
+    cpen.setStyle(Qt::SolidLine);
+    trend->setPen(cpen);
+    if (appsettings->value(this, GC_ANTIALIAS, true).toBool()==true)
+        trend->setRenderHint(QwtPlotItem::RenderAntialiased);
+    trend->setBaseline(0);
+    trend->setYAxis(yLeft);
+    trend->setStyle(QwtPlotCurve::Lines);
+
+    // perform linear regression
+    Statistic regress(xval.data(), yval.data(), nbPoints);
+    double xtrend[2], ytrend[2];
+    xtrend[0] = 0.0;
+    ytrend[0] = regress.getYforX(0.0);
+    // point 2 is at far right of chart, not the last point
+    // since we may be forecasting...
+    xtrend[1] = regress.maxX;
+    ytrend[1] = regress.getYforX(regress.maxX);
+    trend->setSamples(xtrend,ytrend, 2);
+
+    trend->attach(this);
+
+    intervalCurves.append(trend);
+
+    // make that mark -- always above with topN
+    QwtPlotMarker *label = new QwtPlotMarker();
+    QString labelString = regress.label();
+    QwtText text(labelString);
+    text.setColor(intervalColor.darker(200));
+    label->setLabel(text);
+    label->setValue(xtrend[1]*0.8, ytrend[1]*0.9);
+    label->setYAxis(yLeft);
+    label->setSpacing(6); // not px but by yaxis value !? mad.
+    label->setLabelAlignment(Qt::AlignTop | Qt::AlignCenter);
+
+    // and attach
+    label->attach(this);
+    labels << label;
+}
+
+void
+ScatterPlot::smooth(QVector<double> &xval, QVector<double> &yval, int count, int applySmooth)
+{
+    if (applySmooth<2 || count < applySmooth)
+        return;
+
+    QVector<double> smoothX(count);
+    QVector<double> smoothY(count);
+
+    for (int i=0; i<count; i++) {
+        smoothX[i] = xval.value(i);
+        smoothY[i] = yval.value(i);
+    }
+
+    // initialise rolling average
+    double rXtot = 0;
+    double rYtot = 0;
+
+    for (int i=applySmooth; i>0 && count-i >=0; i--) {
+        rXtot += smoothX[count-i];
+        rYtot += smoothY[count-i];
+    }
+
+    // now run backwards setting the rolling average
+    for (int i=count-1; i>=applySmooth; i--) {
+        int hereX = smoothX[i];
+        smoothX[i] = rXtot / applySmooth;
+        rXtot -= hereX;
+        rXtot += smoothX[i-applySmooth];
+
+        int hereY = smoothY[i];
+        smoothY[i] = rYtot / applySmooth;
+        rYtot -= hereY;
+        rYtot += smoothY[i-applySmooth];
+    }
+
+    // Finish with smaller rolling average
+    for (int i=applySmooth-1; i>0; i--) {
+        int hereX = smoothX[i];
+        smoothX[i] = rXtot / (i+2);
+        rXtot -= hereX;
+
+        int hereY = smoothY[i];
+        smoothY[i] = rYtot / (i+2);
+        rYtot -= hereY;
+    }
+
+    xval = smoothX;
+    yval = smoothY;
+}
+
+void
+ScatterPlot::resample(QVector<double> &xval, QVector<double> &yval, int &count, double recInterval, int applySmooth)
+{
+    if (recInterval >= applySmooth)
+        return;
+
+
+    int newcount=0;
+    QVector<double> newxval;
+    QVector<double> newyval;
+
+    if (applySmooth > recInterval) {
+        double totalX = 0.0;
+        double totalY = 0.0;
+
+        int j=0;
+
+        for (int i = 0; i < count; i++) {
+            j++;
+
+            if (j<applySmooth) {
+                totalX += xval.at(i)*recInterval;
+                totalY += yval.at(i)*recInterval;
+            }
+            else {
+                double part = recInterval-j+applySmooth;
+                totalX += xval.at(i)*part;
+                totalY += yval.at(i)*part;
+
+                double smoothX = totalX/applySmooth;
+                double smoothY = totalY/applySmooth;
+
+                newxval.append(smoothX);
+                newyval.append(smoothY);
+                newcount++;
+
+                j=0;
+                totalX = xval.at(i)*(recInterval-part);
+                totalY = yval.at(i)*(recInterval-part);
+            }
+        }
+    }
+
+    count = newcount;
+    xval = newxval;
+    yval = newyval;
+}
+
+bool
+ScatterPlot::skipValues(double xv, double yv, ScatterSettings *settings) {
+
+    // skip zeroes? - special logic for Model Gear, since there value between 0.01 and 1 happen and are relevant
+    if ((settings->x != MODEL_GEAR && settings->y != MODEL_GEAR)
+         && settings->ignore && (int(xv) == 0 || int(yv) == 0)) return true;
+
+    // Model Gear
+    if ((settings->x == MODEL_GEAR)
+         && settings->ignore && (xv == 0.0f || int(yv) == 0)) return true;
+    if ((settings->y == MODEL_GEAR)
+         && settings->ignore && (int(xv) == 0 || yv == 0.0f)) return true;
+
+    // Temp 0 values are relevant
+    if ((settings->x == MODEL_TEMP && xv == RideFile::NoTemp) || (settings->y == MODEL_TEMP && yv == RideFile::NoTemp)) return true;
+
+    // LR Balance : if skip 0% skip also 100%
+    if ((settings->x == MODEL_LRBALANCE && settings->ignore && xv == 100) || (settings->y == MODEL_LRBALANCE && settings->ignore && yv == 100)) return true;
+
+    return false;
 }

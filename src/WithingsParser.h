@@ -30,6 +30,13 @@
 // The Wihings WIFI scale and website API documentation can be
 // found here http://www.withings.com/en/api/bodyscale
 //
+
+#define WITHINGS_WEIGHT     0
+#define WITHINGS_FATKG      1
+#define WITHINGS_FATPERCENT 2
+#define WITHINGS_LEANKG     3
+#define WITHINGS_HEIGHT     4
+
 class WithingsReading {
 
 public:
@@ -48,6 +55,11 @@ public:
             leankg,         // lean mass in Kilograms
             fatpercent,     // body fat as a percentage of weight
             sizemeter;      // height ?
+
+    // used by qSort()
+    bool operator< (WithingsReading right) const {
+        return (when < right.when);
+    }
 };
 
 class WithingsParser
@@ -58,4 +70,5 @@ class WithingsParser
     private:
         QList<WithingsReading> _readings;
 };
+
 #endif

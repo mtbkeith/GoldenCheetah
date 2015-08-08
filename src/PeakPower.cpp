@@ -17,10 +17,150 @@
  */
 
 #include "RideMetric.h"
+#include "RideItem.h"
 #include "BestIntervalDialog.h"
 #include "Zones.h"
-#include <math.h>
+#include <cmath>
 #include <QApplication>
+
+class PeakPercent : public RideMetric {
+
+    Q_DECLARE_TR_FUNCTIONS(PeakPercent)
+    double maxp;
+    double minp;
+
+    public:
+
+    PeakPercent() : maxp(0.0), minp(10000)
+    {
+        setType(RideMetric::Average);
+        setSymbol("peak_percent");
+        setInternalName("MMP Percentage");
+        setName(tr("MMP Percentage"));
+        setMetricUnits(tr("%"));
+        setPrecision(1); // e.g. 99.9%
+        setImperialUnits(tr("%"));
+
+    }
+
+     bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P"); }
+
+    void compute(const RideFile *ride, const Zones *zones, int zoneRange,
+                 const HrZones *, int,
+                 const QHash<QString,RideMetric*> &deps,
+                 const Context *) {
+
+        if (ride->dataPoints().isEmpty() || !ride->areDataPresent()->watts) {
+
+            // no data or no power data
+            setValue(0.0);
+
+        } else {
+
+            int ap = deps.value("average_power")->value(true);
+            int duration = deps.value("workout_time")->value(true);
+
+            if (duration>120) {
+
+                // get W' and CP parameters for 2 parameter model
+                double CP = 250;
+                double WPRIME = 22000;
+
+                if (zones) {
+
+                    // if range is -1 we need to fall back to a default value
+                    CP = zoneRange >= 0 ? zones->getCP(zoneRange) : 250;
+                    WPRIME = zoneRange >= 0 ? zones->getWprime(zoneRange) : 22000;
+
+                    // did we override CP in metadata ?
+                    int oCP = ride->getTag("CP","0").toInt();
+                    if (oCP) CP=oCP;
+                }
+
+                // work out waht actual TTE is for this value
+                int joules = ap * duration;
+                double tc = (joules - WPRIME) / CP;
+                setValue(100.0f * tc / double(duration));
+
+            } else {
+                setValue(0); // not for < 2m
+            }
+        }
+    }
+    RideMetric *clone() const { return new PeakPercent(*this); }
+};
+
+class PowerZone : public RideMetric {
+
+    Q_DECLARE_TR_FUNCTIONS(PowerZone)
+    double maxp;
+    double minp;
+
+    public:
+
+    PowerZone() : maxp(0.0), minp(10000)
+    {
+        setType(RideMetric::Average);
+        setSymbol("power_zone");
+        setInternalName("Power Zone");
+        setName(tr("Power Zone"));
+        setMetricUnits(tr(""));
+        setPrecision(1); // e.g. 99.9%
+        setImperialUnits(tr(""));
+
+    }
+
+    //QString toString(bool useMetricUnits) const {
+        //if (value() == 0) return QString("N/A");
+        //else return ;
+    //}
+
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P"); }
+
+    void compute(const RideFile *ride, const Zones *zones, int zoneRange,
+                 const HrZones *, int,
+                 const QHash<QString,RideMetric*> &deps,
+                 const Context *) {
+
+        if (!zones || ride->dataPoints().isEmpty() || !ride->areDataPresent()->watts) {
+
+            // no data or no power data
+            setValue(0);
+
+        } else {
+
+            double ap = deps.value("average_power")->value(true);
+            double percent=0;
+
+            // if range is -1 we need to fall back to a default value
+            int zone = zoneRange >= 0 ? zones->whichZone(zoneRange, ap) + 1 : 0;
+
+            // ok, how far up  the zone was this?
+            if (zoneRange >= 0 && zone) {
+
+                // get zone info
+                QString name, description;
+                int low, high;
+                zones->zoneInfo(zoneRange, zone-1, name, description, low, high);
+
+                // use Pmax as upper bound, this is used
+                // for the limit of upper zone ALWAYS
+                if (high > zones->getPmax(zoneRange)) 
+                    high = zones->getPmax(zoneRange);
+
+                // how far in?
+                percent = double(ap-low) / double(high-low);
+
+                // avoid rounding up !
+                if (percent >0.9f && percent <1.00f) percent = 0.9f;
+            }
+
+            // we want 4.1 as zone, for 10% into zone 4
+            setValue(double(zone) + percent);
+        }
+    }
+    RideMetric *clone() const { return new PowerZone(*this); }
+};
 
 class FatigueIndex : public RideMetric {
     Q_DECLARE_TR_FUNCTIONS(FatigueIndex)
@@ -566,6 +706,13 @@ class PeakPowerHr60m : public PeakPowerHr {
 };
 
 static bool addAllPeaks() {
+
+    QVector<QString> deps;
+    deps.clear();
+    deps.append("average_power");
+    deps.append("workout_time");
+    RideMetricFactory::instance().addMetric(PeakPercent(), &deps);
+    RideMetricFactory::instance().addMetric(PowerZone(), &deps);
     RideMetricFactory::instance().addMetric(FatigueIndex());
     RideMetricFactory::instance().addMetric(PacingIndex());  
 

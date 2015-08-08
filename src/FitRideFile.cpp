@@ -17,6 +17,7 @@
  */
 
 #include "FitRideFile.h"
+#include "Settings.h"
 #include <QSharedPointer>
 #include <QMap>
 #include <QSet>
@@ -25,7 +26,10 @@
 #include <QTime>
 #include <stdio.h>
 #include <stdint.h>
+#include <time.h>
 #include <limits>
+
+#define FIT_DEBUG false // debug traces
 
 #define RECORD_TYPE 20
 
@@ -54,7 +58,18 @@ struct FitDefinition {
 // introduced into the file format
 typedef qint64 fit_value_t;
 #define NA_VALUE std::numeric_limits<fit_value_t>::max()
+typedef std::string fit_string_value;
 
+enum fitValueType { SingleValue, DoubleValue, StringValue };
+typedef enum fitValueType FitValueType;
+
+struct FitValue
+{
+    FitValueType type;
+    fit_value_t v;
+    fit_value_t v2;
+    fit_string_value s;
+};
 
 struct FitFileReaderState
 {
@@ -73,6 +88,9 @@ struct FitFileReaderState
     int last_event_type;
     int last_event;
     int last_msg_type;
+    QVariant isGarminSmartRecording;
+    QVariant GarminHWM;
+
 
     FitFileReaderState(QFile &file, QStringList &errors) :
         file(file), errors(errors), rideFile(NULL), start_time(0),
@@ -90,6 +108,22 @@ struct FitFileReaderState
             throw TruncatedRead();
         if (count)
             (*count) += size;
+    }
+
+    fit_string_value read_text(int len, int *count = NULL)
+    {
+        char c;
+        fit_string_value res = "";
+        for (int i = 0; i < len; ++i) {
+            if (file.read(&c, 1) != 1)
+                throw TruncatedRead();
+            if (count)
+                *count += 1;
+
+            if (c != 0)
+                res += c;
+        }
+        return res;
     }
 
     fit_value_t read_int8(int *count = NULL) {
@@ -206,11 +240,11 @@ struct FitFileReaderState
         return i == 0x00000000 ? NA_VALUE : i;
     }
 
-    void decodeFileId(const FitDefinition &def, int, const std::vector<fit_value_t> values) {
+    void decodeFileId(const FitDefinition &def, int, const std::vector<FitValue> values) {
         int i = 0;
         int manu = -1, prod = -1;
         foreach(const FitField &field, def.fields) {
-            fit_value_t value = values[i++];
+            fit_value_t value = values[i++].v;
 
             if( value == NA_VALUE )
                 continue;
@@ -235,57 +269,105 @@ struct FitFileReaderState
                 case 1561: rideFile->setDeviceType("Garmin Edge 510"); break;
                 case 1567: rideFile->setDeviceType("Garmin Edge 810"); break;
                 case 1623: rideFile->setDeviceType("Garmin FR620"); break;
+                case 1765: rideFile->setDeviceType("Garmin Fenix3"); break;
                 case 1836: rideFile->setDeviceType("Garmin Edge 1000"); break;
                 case 1967: rideFile->setDeviceType("Garmin Fenix2"); break;
                 case 20119: rideFile->setDeviceType("Garmin Training Center"); break;
                 case 65534: rideFile->setDeviceType("Garmin Connect Website"); break;
                 default: rideFile->setDeviceType(QString("Garmin %1").arg(prod));
             }
-        }
-        else  if (manu == 38) {
+
+        } else if (manu == 6 ) {
+
+            // SRM powercontrol now uses FIT files from PC8
+            switch (prod) {
+
+            case 6: rideFile->setDeviceType("SRM PC6");break;
+            case 7: rideFile->setDeviceType("SRM PC7");break;
+            case 8: rideFile->setDeviceType("SRM PC8");break;
+            default: rideFile->setDeviceType("SRM Powercontrol");break;
+            }
+
+        } else  if (manu == 38) {
             switch (prod) {
                 case 1: rideFile->setDeviceType("o_synce navi2coach"); break;
                 default: rideFile->setDeviceType(QString("o_synce %1").arg(prod));
             }
-        }
-        else {
+        } else if (manu == 70) {
+
+            // does not set product at this point
+           rideFile->setDeviceType("Sigmasport ROX");
+
+        } else if (manu == 76) {
+
+            // Moxy
+            rideFile->setDeviceType("Moxy Monitor");
+
+        } else if (manu == 260) {
+            // Zwift!
+            rideFile->setDeviceType("Zwift");
+
+        } else {
+
             rideFile->setDeviceType(QString("Unknown FIT Device %1:%2").arg(manu).arg(prod));
         }
         rideFile->setFileFormat("FIT (*.fit)");
     }
 
-    void decodeSession(const FitDefinition &def, int, const std::vector<fit_value_t> values) {
+    void decodeSession(const FitDefinition &def, int, const std::vector<FitValue> values) {
         int i = 0;
         foreach(const FitField &field, def.fields) {
-            fit_value_t value = values[i++];
+            fit_value_t value = values[i++].v;
 
             if( value == NA_VALUE )
                 continue;
 
-            //printf("decodeSession  field %d: %d bytes, num %d, type %d\n", i, field.size, field.num, field.type );
+            switch (field.num) {
+                case 5: // sport field
+                    switch (value) {
+                        case 1: // running:
+                            rideFile->setTag("Sport","Run");
+                            break;
+                        default: // if we can't work it out, assume bike
+                        case 2: // cycling
+                            rideFile->setTag("Sport","Bike");
+                            break;
+                        case 5: // swimming
+                            rideFile->setTag("Sport","Swim");
+                            break;
+                    }
+                    break;
+                default: ; // do nothing
+            }
+
+            if (FIT_DEBUG) {
+                printf("decodeSession  field %d: %d bytes, num %d, type %d\n", i, field.size, field.num, field.type );
+            }
         }
     }
 
-    void decodeDeviceInfo(const FitDefinition &def, int, const std::vector<fit_value_t> values) {
+    void decodeDeviceInfo(const FitDefinition &def, int, const std::vector<FitValue> values) {
         int i = 0;
         foreach(const FitField &field, def.fields) {
-            fit_value_t value = values[i++];
+            fit_value_t value = values[i++].v;
 
             if( value == NA_VALUE )
                 continue;
 
-            //printf("decodeDeviceInfo  field %d: %d bytes, num %d, type %d\n", i, field.size, field.num, field.type );
+            if (FIT_DEBUG) {
+                printf("decodeDeviceInfo  field %d: %d bytes, num %d, type %d\n", i, field.size, field.num, field.type );
+            }
         }
     }
 
-    void decodeEvent(const FitDefinition &def, int, const std::vector<fit_value_t> values) {
+    void decodeEvent(const FitDefinition &def, int, const std::vector<FitValue> values) {
         int time = -1;
         int event = -1;
         int event_type = -1;
         qint16 data16 = -1;
         int i = 0;
         foreach(const FitField &field, def.fields) {
-            fit_value_t value = values[i++];
+            fit_value_t value = values[i++].v;
 
             if( value == NA_VALUE )
                 continue;
@@ -343,12 +425,15 @@ struct FitFileReaderState
                     break;
             }
         }
-        // printf("event type %d\n", event_type);
+
+        if (FIT_DEBUG) {
+            printf("event type %d\n", event_type);
+        }
         last_event = event;
         last_event_type = event_type;
     }
 
-    void decodeLap(const FitDefinition &def, int time_offset, const std::vector<fit_value_t> values) {
+    void decodeLap(const FitDefinition &def, int time_offset, const std::vector<FitValue> values) {
         time_t time = 0;
         if (time_offset > 0)
             time = last_time + time_offset;
@@ -358,7 +443,7 @@ struct FitFileReaderState
         time_t this_start_time = 0;
         ++interval;
         foreach(const FitField &field, def.fields) {
-            fit_value_t value = values[i++];
+            fit_value_t value = values[i++].v;
 
             if( value == NA_VALUE )
                 continue;
@@ -380,24 +465,37 @@ struct FitFileReaderState
         }
 
         if (rideFile->dataPoints().count()) // no samples means no laps..
-            rideFile->addInterval(this_start_time - start_time, time - start_time, QString(QObject::tr("Lap %1")).arg(interval));
+            rideFile->addInterval(RideFileInterval::DEVICE, this_start_time - start_time, time - start_time, QString(QObject::tr("Lap %1")).arg(interval));
     }
 
-    void decodeRecord(const FitDefinition &def, int time_offset, const std::vector<fit_value_t> values) {
+    void decodeRecord(const FitDefinition &def, int time_offset, const std::vector<FitValue> values) {
         time_t time = 0;
         if (time_offset > 0)
             time = last_time + time_offset;
         double alt = 0, cad = 0, km = 0, hr = 0, lat = 0, lng = 0, badgps = 0, lrbalance = 0;
         double kph = 0, temperature = RideFile::NoTemp, watts = 0, slope = 0;
         double leftTorqueEff = 0, rightTorqueEff = 0, leftPedalSmooth = 0, rightPedalSmooth = 0;
+
+        double leftPedalCenterOffset = 0;
+        double rightPedalCenterOffset = 0;
+        double leftTopDeathCenter = 0;
+        double rightTopDeathCenter = 0;
+        double leftBottomDeathCenter = 0;
+        double rightBottomDeathCenter = 0;
+        double leftTopPeakPowerPhase = 0;
+        double rightTopPeakPowerPhase = 0;
+        double leftBottomPeakPowerPhase = 0;
+        double rightBottomPeakPowerPhase = 0;
+
         double rvert = 0, rcad = 0, rcontact = 0;
         double smO2 = 0, tHb = 0;
-        bool run=false;
+        //bool run=false;
 
         fit_value_t lati = NA_VALUE, lngi = NA_VALUE;
         int i = 0;
         foreach(const FitField &field, def.fields) {
-            fit_value_t value = values[i++];
+            fit_value_t value = values[i].v;
+            fit_value_t value2 = values[i++].v2;
 
             if( value == NA_VALUE )
                 continue;
@@ -423,7 +521,7 @@ struct FitFileReaderState
                         hr = value;
                         break;
                 case 4: // CADENCE
-                        if (run)
+                        if (rideFile->getTag("Sport", "Bike") == "Run")
                             rcad = value;
                         else
                             cad = value;
@@ -462,9 +560,10 @@ struct FitFileReaderState
                          rvert = value / 100.0f;
                          break;
 
-                case 40: // IS RUNNING ACTIVITY?
-                         run = true;
-                         break;
+                //case 40: // ACTIVITY_TYPE
+                //         // TODO We should know/test value for run
+                //         run = true;
+                //         break;
 
                 case 41: // GROUND CONTACT TIME
                          rcontact = value / 10.0f;
@@ -472,33 +571,55 @@ struct FitFileReaderState
 
                 case 43: // LEFT_TORQUE_EFFECTIVENESS
                          leftTorqueEff = value / 2.0;
-                         //qDebug() << "LEFT_TORQUE_EFFECTIVENESS" << leftTorqueEff;
                          break;
                 case 44: // RIGHT_TORQUE_EFFECTIVENESS
                          rightTorqueEff = value / 2.0;
-                         //qDebug() << "RIGHT_TORQUE_EFFECTIVENESS" << rightTorqueEff;
                          break;
                 case 45: // LEFT_PEDAL_SMOOTHNESS
                          leftPedalSmooth = value / 2.0;
-                         //qDebug() << "LEFT_PEDAL_SMOOTHNESS" << leftPedalSmooth;
                          break;
                 case 46: // RIGHT_PEDAL_SMOOTHNESS
                          rightPedalSmooth = value / 2.0;
-                         //qDebug() << "RIGHT_PEDAL_SMOOTHNESS" << rightPedalSmooth;
                          break;
                 case 47: // COMBINED_PEDAL_SMOOTHNES
                          //qDebug() << "COMBINED_PEDAL_SMOOTHNES" << value;
                          break;
-
                 case 53: // RUNNING CADENCE FRACTIONAL VALUE
                          break;
-
                 case 54: // tHb
                         tHb= value/100.0f;
                         break;
                 case 57: // SMO2
                         smO2= value/10.0f;
                         break;
+                case 61: // ? GPS Altitude ?
+                        break;
+                case 66: // ??
+                        break;
+                case 67: // ? Left Platform Center Offset ?
+                        leftPedalCenterOffset = value;
+                        break;
+                case 68: // ? Right Platform Center Offset ?
+                        rightPedalCenterOffset = value;
+                        break;
+                case 69: // ? Left Power Phase ?
+                        leftTopDeathCenter = round(value * 360.0/256);
+                        leftBottomDeathCenter = round(value2 * 360.0/256);
+                        break;
+                case 70: // ? Left Peak Phase  ?
+                        leftTopPeakPowerPhase = round(value * 360.0/256);
+                        leftBottomPeakPowerPhase = round(value2 * 360.0/256);
+                        break;
+                case 71: // ? Right Power Phase ?
+                        rightTopDeathCenter = round(value * 360.0/256);
+                        rightBottomDeathCenter = round(value2 * 360.0/256);
+                        break;
+                case 72: // ? Right Peak Phase  ?
+                        rightTopPeakPowerPhase = round(value * 360.0/256);
+                        rightBottomPeakPowerPhase = round(value2 * 360.0/256);
+                        break;
+
+
                 default: 
                          unknown_record_fields.insert(field.num);
             }
@@ -543,10 +664,12 @@ struct FitFileReaderState
         double nm = 0;
         double headwind = 0.0;
         int interval = 0;
-        if ((last_msg_type == RECORD_TYPE) && (last_time != 0) && (time > last_time + 1)) {
-            // Evil smart recording.  Linearly interpolate missing points.
+        // if there are data points && a time difference > 1sec && smartRecording processing is requested at all
+        if ((!rideFile->dataPoints().empty()) && (last_time != 0) &&
+             (time > last_time + 1) && (isGarminSmartRecording.toInt() != 0)) {
+            // Handle smart recording if configured in preferences.  Linearly interpolate missing points.
             RideFilePoint *prevPoint = rideFile->dataPoints().back();
-            int deltaSecs = (int) (secs - prevPoint->secs);
+            double deltaSecs = (secs - prevPoint->secs);
             //assert(deltaSecs == secs - prevPoint->secs); // no fractional part -- don't CRASH FFS, be graceful
             // This is only true if the previous record was of type record:
             //assert(deltaSecs == time - last_time); -- don't CRASH FFS, be graceful
@@ -571,19 +694,28 @@ struct FitFileReaderState
             double deltaRightTE = rightTorqueEff - prevPoint->rte;
             double deltaLeftPS = leftPedalSmooth - prevPoint->lps;
             double deltaRightPS = rightPedalSmooth - prevPoint->rps;
+            double deltaLeftPedalCenterOffset = leftPedalCenterOffset - prevPoint->lpco;
+            double deltaRightPedalCenterOffset = rightPedalCenterOffset - prevPoint->rpco;
+            double deltaLeftTopDeathCenter = leftTopDeathCenter - prevPoint->lppb;
+            double deltaRightTopDeathCenter = rightTopDeathCenter - prevPoint->rppb;
+            double deltaLeftBottomDeathCenter = leftBottomDeathCenter - prevPoint->lppe;
+            double deltaRightBottomDeathCenter = rightBottomDeathCenter - prevPoint->rppe;
+            double deltaLeftTopPeakPowerPhase = leftTopPeakPowerPhase - prevPoint->lpppb;
+            double deltaRightTopPeakPowerPhase = rightTopPeakPowerPhase - prevPoint->rpppb;
+            double deltaLeftBottomPeakPowerPhase = leftBottomPeakPowerPhase - prevPoint->lpppe;
+            double deltaRightBottomPeakPowerPhase = rightBottomPeakPowerPhase - prevPoint->rpppe;
             double deltaSmO2 = smO2 - prevPoint->smo2;
             double deltaTHb = tHb - prevPoint->thb;
             double deltarvert = rvert - prevPoint->rvert;
             double deltarcad = rcad - prevPoint->rcad;
             double deltarcontact = rcontact - prevPoint->rcontact;
 
-            // only smooth for less than 30 minutes
-            // we don't want to crash / stall on bad
+            // only smooth the maximal smart recording gap defined in preferences - we don't want to crash / stall on bad
             // or corrupt files
-            if (deltaSecs > 0 && deltaSecs < (60*30)) {
+            if (deltaSecs > 0 && deltaSecs < GarminHWM.toInt()) {
 
                 for (int i = 1; i < deltaSecs; i++) {
-                    double weight = 1.0 * i / deltaSecs;
+                    double weight = i /deltaSecs;
                     rideFile->appendPoint(
                         prevPoint->secs + (deltaSecs * weight),
                         prevPoint->cad + (deltaCad * weight),
@@ -603,21 +735,35 @@ struct FitFileReaderState
                         prevPoint->rte + (deltaRightTE * weight),
                         prevPoint->lps + (deltaLeftPS * weight),
                         prevPoint->rps + (deltaRightPS * weight),
+                        prevPoint->lpco + (deltaLeftPedalCenterOffset * weight),
+                        prevPoint->rpco + (deltaRightPedalCenterOffset * weight),
+                        prevPoint->lppb + (deltaLeftTopDeathCenter * weight),
+                        prevPoint->rppb + (deltaRightTopDeathCenter * weight),
+                        prevPoint->lppe + (deltaLeftBottomDeathCenter * weight),
+                        prevPoint->rppe + (deltaRightBottomDeathCenter * weight),
+                        prevPoint->lpppb + (deltaLeftTopPeakPowerPhase * weight),
+                        prevPoint->rpppb + (deltaRightTopPeakPowerPhase * weight),
+                        prevPoint->lpppe + (deltaLeftBottomPeakPowerPhase * weight),
+                        prevPoint->rpppe + (deltaRightBottomPeakPowerPhase * weight),
                         prevPoint->smo2 + (deltaSmO2 * weight),
                         prevPoint->thb + (deltaTHb * weight),
                         prevPoint->rvert + (deltarvert * weight),
                         prevPoint->rcad + (deltarcad * weight),
                         prevPoint->rcontact + (deltarcontact * weight),
+                        0.0, // tcore
                         interval);
                 }
-                prevPoint = rideFile->dataPoints().back();
             }
         }
 
         if (km < 0.00001f) km = last_distance;
         rideFile->appendPoint(secs, cad, hr, km, kph, nm, watts, alt, lng, lat, headwind, slope, temperature,
                      lrbalance, leftTorqueEff, rightTorqueEff, leftPedalSmooth, rightPedalSmooth,
-                     smO2, tHb, rvert, rcad, rcontact, interval);
+                     leftPedalCenterOffset, rightPedalCenterOffset,
+                     leftTopDeathCenter, rightTopDeathCenter, leftBottomDeathCenter, rightBottomDeathCenter,
+                     leftTopPeakPowerPhase, rightTopPeakPowerPhase, leftBottomPeakPowerPhase, rightBottomPeakPowerPhase,
+                     smO2, tHb, rvert, rcad, rcontact, 0.0, interval);
+
         last_time = time;
         last_distance = km;
     }
@@ -637,9 +783,12 @@ struct FitFileReaderState
             def.is_big_endian = read_uint8(&count);
             def.global_msg_num = read_uint16(def.is_big_endian, &count);
             int num_fields = read_uint8(&count);
-            //printf("definition: local type=%d global=%d arch=%d fields=%d\n",
-            //       local_msg_type, def.global_msg_num, def.is_big_endian,
-            //       num_fields );
+
+            if (FIT_DEBUG)  {
+                printf("definition: local type=%d global=%d arch=%d fields=%d\n",
+                       local_msg_type, def.global_msg_num, def.is_big_endian,
+                       num_fields );
+            }
 
             for (int i = 0; i < num_fields; ++i) {
                 def.fields.push_back(FitField());
@@ -649,8 +798,11 @@ struct FitFileReaderState
                 field.size = read_uint8(&count);
                 int base_type = read_uint8(&count);
                 field.type = base_type & 0x1f;
-                //printf("  field %d: %d bytes, num %d, type %d\n",
-                //       i, field.size, field.num, field.type );
+
+                if (FIT_DEBUG)  {
+                    printf("  field %d: %d bytes, num %d, type %d, size %d\n",
+                           i, field.size, field.num, field.type, field.size );
+                }
             }
         }
         else {
@@ -672,43 +824,78 @@ struct FitFileReaderState
                 return count;
             }
             const FitDefinition &def = local_msg_types[local_msg_type];
-            //printf( "message local=%d global=%d\n", local_msg_type,
-            //    def.global_msg_num );
 
-            std::vector<fit_value_t> values;
+            if (FIT_DEBUG)  {
+                printf( "read_record message local=%d global=%d\n", local_msg_type,
+                    def.global_msg_num );
+            }
+
+            std::vector<FitValue> values;
             foreach(const FitField &field, def.fields) {
-                fit_value_t v;
+                FitValue value;
                 int size;
+
                 switch (field.type) {
-                    case 0: v = read_uint8(&count); size = 1; break;
-                    case 1: v = read_int8(&count); size = 1;  break;
-                    case 2: v = read_uint8(&count); size = 1;  break;
-                    case 3: v = read_int16(def.is_big_endian, &count); size = 2;  break;
-                    case 4: v = read_uint16(def.is_big_endian, &count); size = 2;  break;
-                    case 5: v = read_int32(def.is_big_endian, &count); size = 4;  break;
-                    case 6: v = read_uint32(def.is_big_endian, &count); size = 4;  break;
-                    //case 7: // String
+                    case 0: value.type = SingleValue; value.v = read_uint8(&count); size = 1; break;
+                    case 1: value.type = SingleValue; value.v = read_int8(&count); size = 1;  break;
+                    case 2: value.type = SingleValue; value.v = read_uint8(&count); size = 1;
+                        // Multi-values ?
+                        if (field.size>size) {
+                            value.type = DoubleValue;
+                            value.v2 = read_uint8(&count);
+                            size = 2;
+                        }
+                        break;
+                    case 3: value.type = SingleValue; value.v = read_int16(def.is_big_endian, &count); size = 2;  break;
+                    case 4: value.type = SingleValue; value.v = read_uint16(def.is_big_endian, &count); size = 2;
+                        // Multi-values ?
+                        if (field.size>size) {
+                            value.type = DoubleValue;
+                            value.v2 = read_uint16(def.is_big_endian, &count);
+                            size = 4;
+                        }
+                        break;
+                    case 5: value.type = SingleValue; value.v = read_int32(def.is_big_endian, &count); size = 4;  break;
+                    case 6: value.type = SingleValue; value.v = read_uint32(def.is_big_endian, &count); size = 4;  break;
+                    case 7: value.type = StringValue; value.s = read_text(field.size, &count); size = field.size; break;
+
+
                     //case 8: // FLOAT32
                     //case 9: // FLOAT64
-                    case 10: v = read_uint8z(&count); size = 1; break;
-                    case 11: v = read_uint16z(def.is_big_endian, &count); size = 2; break;
-                    case 12: v = read_uint32z(def.is_big_endian, &count); size = 4; break;
+                    case 10: value.type = SingleValue; value.v = read_uint8z(&count); size = 1; break;
+                    case 11: value.type = SingleValue; value.v = read_uint16z(def.is_big_endian, &count); size = 2; break;
+                    case 12: value.type = SingleValue; value.v = read_uint32z(def.is_big_endian, &count); size = 4; break;
                     //case 13: // BYTE
 
                     // we may need to add support for float, string + byte base types here
                     default:
                         read_unknown( field.size, &count );
-                        v = NA_VALUE;
+                        value.type = SingleValue;
+                        value.v = NA_VALUE;
                         unknown_base_type.insert(field.num);
                         size = field.size;
                 }
                 // Quick fix : we need to support multivalues
-                if (size < field.size)
+                if (size < field.size) {
+                    if (FIT_DEBUG)  {
+                         printf( "   warning : size=%d for size=%d (num=%d)\n",
+                                 field.size, field.type, field.num);
+                    }
                     read_unknown( field.size-size, &count );
+                }
 
-                values.push_back(v);
-                //printf( " field: type=%d num=%d value=%lld\n",
-                //    field.type, field.num, v );
+                values.push_back(value);
+
+                if (FIT_DEBUG)  {
+                    printf( " field: type=%d num=%d ",
+                        field.type, field.num);
+                    if (value.type == SingleValue)
+                        printf( "value=%lld\n", value.v );
+                    else if (value.type == DoubleValue)
+                        printf( "value=%lld value2=%lld\n", value.v, value.v2 );
+                    else if (value.type == StringValue)
+                        printf( "salue=%s\n",value.s.c_str() );
+                }
             }
             // Most of the record types in the FIT format aren't actually all
             // that useful.  FileId, Lap, and Record clearly are.  The one
@@ -720,15 +907,32 @@ struct FitFileReaderState
                 case 19: decodeLap(def, time_offset, values); break;
                 case RECORD_TYPE: decodeRecord(def, time_offset, values); break;
                 case 21: decodeEvent(def, time_offset, values); break;
+
                 case 23: //decodeDeviceInfo(def, time_offset, values); break; /* device info */
-                case 18: //decodeSession(def, time_offset, values); break; /* session */
+                case 18: decodeSession(def, time_offset, values); break; /* session */
+
+                case 101: /* lap swimming length */
+                    errors << "Unsupported Lap Swimming FIT File - Use .tcx or .pwx formats";
+                    stop = true;
+                    break;
+
+                case 2: /* DEVICE_SETTINGS */
+                case 3: /* USER_PROFILE */
+                case 7: /* ZONES_TARGET12 */
+                case 13: /* unknown */
                 case 22: /* undocumented */
                 case 72: /* undocumented  - new for garmin 800*/
                 case 34: /* activity */
                 case 49: /* file creator */
                 case 79: /* unknown */
                 case 104: /* battery */
+                case 113: /* unknown */
+                case 125: /* unknown */
+                case 128: /* unknown */
+                case 147: /* unknown */
+
                     break;
+
                 default:
                     unknown_global_msg_nums.insert(def.global_msg_num);
             }
@@ -738,6 +942,13 @@ struct FitFileReaderState
     }
 
     RideFile * run() {
+
+        // get the Smart Recording parameters
+        isGarminSmartRecording = appsettings->value(NULL, GC_GARMIN_SMARTRECORD,Qt::Checked);
+        GarminHWM = appsettings->value(NULL, GC_GARMIN_HWMARK);
+        if (GarminHWM.isNull() || GarminHWM.toInt() == 0) GarminHWM.setValue(25); // default to 25 seconds.
+
+        // start
         rideFile = new RideFile;
         rideFile->setDeviceType("Garmin FIT");
         rideFile->setRecIntSecs(1.0); // this is a terrible assumption!
@@ -810,8 +1021,14 @@ struct FitFileReaderState
         }
         else {
             if (!truncated) {
-                int crc = read_uint16( false ); // always littleEndian
-                (void) crc;
+                try {
+                    int crc = read_uint16( false ); // always littleEndian
+                    (void) crc;
+                }
+                catch (TruncatedRead &e) {
+                    errors << "truncated file body";
+                    return NULL;
+                }
             }
 
             foreach(int num, unknown_global_msg_nums)
@@ -822,6 +1039,7 @@ struct FitFileReaderState
                 qDebug() << QString("FitRideFile: unknown base type %1; skipped").arg(num);
 
             file.close();
+
             return rideFile;
         }
     }

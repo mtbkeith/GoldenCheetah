@@ -22,6 +22,7 @@
 #include "Athlete.h"
 #include "RideMetadata.h"
 #include <QObject>
+#include <QByteArray>
 #include <QDir>
 #include "Settings.h"
 
@@ -44,6 +45,32 @@ static void copyArray(Colors source[], Colors target[])
         target[i] = source[i];
 }
 
+unsigned long Colors::fingerprint(const Colors *set)
+{
+    QByteArray ba;
+    while(set->name != "") {
+        ba.append(set->color.name());
+        set++;
+    }
+    return qChecksum(ba, ba.length());
+}
+
+#ifdef Q_OS_WIN
+// handle dpi scaling on windows
+static float windowsDpiScale()
+{
+    HDC screen = GetDC( 0 );
+    FLOAT dpiX = static_cast<FLOAT>( GetDeviceCaps( screen, LOGPIXELSX ) );
+    ReleaseDC( 0, screen );
+    return dpiX / 96.0f;
+}
+
+// global
+float GCDPIScale = windowsDpiScale();
+#else
+float GCDPIScale = 1.0f;
+#endif
+
 // initialization called from constructor to enable translation
 void GCColor::setupColors()
 {
@@ -51,11 +78,12 @@ void GCColor::setupColors()
     // (c++0x not supported by Qt currently and not planned for 4.8 or 5.0)
     Colors init[CNUMOFCFGCOLORS+1] = {
         { tr("Plot Background"), "COLORPLOTBACKGROUND", QColor(52,52,52) },
-        { tr("Ride Plot Background"), "COLORRIDEPLOTBACKGROUND", QColor(52,52,52) },
+        { tr("Performance Plot Background"), "COLORRIDEPLOTBACKGROUND", QColor(52,52,52) },
+        { tr("Trend Plot Background"), "COLORTRENDPLOTBACKGROUND", Qt::black },
         { tr("Train Plot Background"), "COLORTRAINPLOTBACKGROUND", Qt::black },
         { tr("Plot Symbols"), "COLORRIDEPLOTSYMBOLS", Qt::cyan },
-        { tr("Ride Plot X Axis"), "COLORRIDEPLOTXAXIS", Qt::blue },
-        { tr("Ride Plot Y Axis"), "COLORRIDEPLOTYAXIS", Qt::red },
+        { tr("Performance Plot X Axis"), "COLORRIDEPLOTXAXIS", Qt::blue },
+        { tr("Performance Plot Y Axis"), "COLORRIDEPLOTYAXIS", Qt::red },
         { tr("Plot Thumbnail Background"), "COLORPLOTTHUMBNAIL", Qt::gray },
         { tr("Plot Title"), "COLORPLOTTITLE", Qt::black },
         { tr("Plot Selection Pen"), "COLORPLOTSELECT", Qt::blue },
@@ -64,6 +92,7 @@ void GCColor::setupColors()
         { tr("Plot Grid"), "COLORGRID", QColor(65,65,65) },
         { tr("Interval Highlighter"), "COLORINTERVALHIGHLIGHTER", Qt::blue },
         { tr("Heart Rate"), "COLORHEARTRATE", Qt::red },
+        { tr("Core Temperature"), "COLORCORETEMP", QColor(255, 173, 92) },
         { tr("Speed"), "COLORSPEED", Qt::green },
         { tr("Acceleration"), "COLORACCEL", Qt::cyan },
         { tr("Power"), "COLORPOWER", Qt::yellow },
@@ -126,7 +155,7 @@ void GCColor::setupColors()
         { tr("Chart Bar Unselected"), "CTILEBAR", Qt::gray },
         { tr("Chart Bar Selected"), "CTILEBARSELECT", Qt::yellow },
         { tr("ToolBar Background"), "CTOOLBAR", Qt::white },
-        { tr("Ride History Group"), "CRIDEGROUP", QColor(236,246,255) },
+        { tr("Activity History Group"), "CRIDEGROUP", QColor(236,246,255) },
         { tr("SpinScan Left"), "CSPINSCANLEFT", Qt::gray },
         { tr("SpinScan Right"), "CSPINSCANRIGHT", Qt::cyan },
         { tr("Temperature"), "COLORTEMPERATURE", Qt::yellow },
@@ -135,7 +164,7 @@ void GCColor::setupColors()
         { tr("Left Balance"), "CBALANCELEFT", QColor(178,0,0) },
         { tr("Right Balance"), "CBALANCERIGHT", QColor(128,0,50) },
         { tr("W' Balance"), "CWBAL", Qt::red },
-        { tr("Ride CP Curve"), "CRIDECP", Qt::red },
+        { tr("CP Curve"), "CRIDECP", Qt::red },
         { tr("Aerobic TISS"), "CATISS", Qt::magenta },
         { tr("Anaerobic TISS"), "CANTISS", Qt::cyan },
         { tr("Left Torque Effectiveness"), "CLTE", Qt::cyan },
@@ -148,7 +177,7 @@ void GCColor::setupColors()
 #ifdef Q_OS_MAC
         { tr("Toolbar and Sidebar"), "CCHROME", QColor(213,213,213) },
 #else
-        { tr("Toolbar and Sidebar"), "CCHROME", QColor(108,108,108) },
+        { tr("Toolbar and Sidebar"), "CCHROME", QColor(0xec,0xec,0xec) },
 #endif
 #endif
         { "", "", QColor(0,0,0) },
@@ -158,8 +187,16 @@ void GCColor::setupColors()
     init[CCALCURRENT].color = QPalette().color(QPalette::Highlight);
     init[CTOOLBAR].color = QPalette().color(QPalette::Window);
 
+#ifdef Q_OS_MAC
+    // if on yosemite set default chrome to #e5e5e5
+    if (QSysInfo::MacintoshVersion == 12) {
+        init[CCHROME].color = QColor(0xe5,0xe5,0xe5);
+        appsettings->setValue(GC_CHROME, "Flat");
+    }
+#endif
     copyArray(init, DefaultColorList);
     copyArray(init, ColorList);
+
 }
 
 // default settings for fonts etc
@@ -195,12 +232,6 @@ GCColor::defaultSizes(int width, int height)
     return defaultAppearance[0]; // shouldn't get here
 }
 
-GCColor::GCColor(Context *context) : QObject(context)
-{
-    setupColors();
-    readConfig();
-    connect(context, SIGNAL(configChanged()), this, SLOT(readConfig()));
-}
 
 // returns a luminance for a color from 0 (dark) to 255 (very light) 127 is a half way house gray
 double GCColor::luminance(QColor color)
@@ -247,7 +278,7 @@ GCColor::readConfig()
 {
     // read in config settings and populate the color table
     for (unsigned int i=0; ColorList[i].name != ""; i++) {
-        QString colortext = appsettings->value(this, ColorList[i].setting, "").toString();
+        QString colortext = appsettings->value(NULL, ColorList[i].setting, "").toString();
         if (colortext != "") {
             // color definitions are stored as "r:g:b"
             QStringList rgb = colortext.split(":");
@@ -255,6 +286,7 @@ GCColor::readConfig()
                                         rgb[1].toInt(),
                                         rgb[2].toInt());
         } else {
+
             // set sensible defaults for any not set...
             if (ColorList[i].name == "CTOOLBAR") {
                 QPalette def;
@@ -267,6 +299,12 @@ GCColor::readConfig()
             }
         }
     }
+#ifdef Q_OS_MAC
+    // if on yosemite set default chrome to #e5e5e5
+    if (QSysInfo::MacintoshVersion == 12) {
+        ColorList[CCHROME].color = QColor(0xe5,0xe5,0xe5);
+    }
+#endif
 }
 
 QColor
@@ -289,11 +327,11 @@ GCColor::themes()
 
 ColorEngine::ColorEngine(Context* context) : QObject(context), defaultColor(QColor(Qt::white)), context(context)
 {
-    configUpdate();
-    connect(context, SIGNAL(configChanged()), this, SLOT(configUpdate()));
+    configChanged(CONFIG_NOTECOLOR);
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 }
 
-void ColorEngine::configUpdate()
+void ColorEngine::configChanged(qint32)
 {
     // clear existing
     workoutCodes.clear();
@@ -332,9 +370,9 @@ ColorEngine::colorFor(QString text)
 }
 
 QString
-GCColor::css()
+GCColor::css(bool ridesummary)
 {
-    QColor bgColor = GColor(CPLOTBACKGROUND);
+    QColor bgColor = ridesummary ? GColor(CPLOTBACKGROUND) : GColor(CTRENDPLOTBACKGROUND);
     QColor fgColor = GCColor::invertColor(bgColor);
     //QColor altColor = GCColor::alternateColor(bgColor); // not yet ?
 
@@ -397,7 +435,12 @@ GCColor::stylesheet()
 bool
 GCColor::isFlat()
 {
+    // if not set, Mac is default on Mac, otherwise Flat everywhere else
+#ifdef Q_OS_MAC
     return (appsettings->value(NULL, GC_CHROME, "Mac").toString() == "Flat");
+#else
+    return (appsettings->value(NULL, GC_CHROME, "Flat").toString() == "Flat");
+#endif
 }
 
 // setup a linearGradient for the metallic backgrounds used on things like
@@ -500,6 +543,14 @@ Themes::Themes()
     themes << add;
     colors.clear();
 
+    add.name = tr("Corporate Junky"); // New v3.2 colors // ** DARK **
+    colors << QColor(30,30,30) << QColor(Qt::white) << QColor(85,170,255) << QColor(194,194,194) << QColor(Qt::yellow);
+    //            HR              Speed                Power                 Cadence             Torque
+    colors << QColor(Qt::red) << QColor(Qt::green) << QColor(Qt::yellow) << QColor(0,204,204) << QColor(Qt::magenta) ;
+    add.colors = colors;
+    themes << add;
+    colors.clear();
+
 
     // now some popular combos from Kueler
     add.name = tr("Neutral Blue"); // ** DARK **
@@ -578,8 +629,10 @@ Themes::Themes()
 
 }
 
+// NOTE: this is duplicated in Pages.cpp:1565:ColorsPage::applyThemeClicked()
+//       you need to change there too. Sorry.
 void
-GCColor::applyTheme(int index)
+GCColor::applyTheme(int index) 
 {
     // now get the theme selected
     ColorTheme theme = GCColor::themes().themes[index];
@@ -593,6 +646,7 @@ GCColor::applyTheme(int index)
 
         case CPLOTBACKGROUND:
         case CRIDEPLOTBACKGROUND:
+        case CTRENDPLOTBACKGROUND:
         case CTRAINPLOTBACKGROUND:
             color = theme.colors[0]; // background color
             break;
@@ -660,6 +714,19 @@ GCColor::applyTheme(int index)
                                                  .arg(color.blue());
         appsettings->setValue(ColorList[i].setting, colorstring);
     }
+
+#ifdef Q_OS_MAC
+    // if on yosemite we always set default chrome to #e5e5e5 and flat
+    if (QSysInfo::MacintoshVersion == 12) {
+        QColor color = QColor(0xe5,0xe5,0xe5);
+        ColorList[CCHROME].color = color;
+        QString colorstring = QString("%1:%2:%3").arg(color.red())
+                                                 .arg(color.green())
+                                                 .arg(color.blue());
+        appsettings->setValue(ColorList[CCHROME].setting, colorstring);
+        appsettings->setValue(GC_CHROME, "Flat");
+    }
+#endif
 }
 
 //

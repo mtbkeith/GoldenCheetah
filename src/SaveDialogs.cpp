@@ -205,7 +205,7 @@ SaveSingleDialogWidget::SaveSingleDialogWidget(MainWindow *mainWindow, Context *
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     // Warning text
-    warnText = new QLabel(tr("WARNING\n\nYou have made changes to ") + rideItem->fileName + tr(" If you want to save\nthem, we need to convert the ride to GoldenCheetah\'s\nnative format. Should we do so?\n"));
+    warnText = new QLabel(tr("WARNING\n\nYou have made changes to ") + rideItem->fileName + tr(" If you want to save\nthem, we need to convert to GoldenCheetah\'s\nnative format. Should we do so?\n"));
     mainLayout->addWidget(warnText);
 
     // Buttons
@@ -264,6 +264,7 @@ SaveOnExitDialogWidget::SaveOnExitDialogWidget(MainWindow *mainWindow, Context *
     QDialog(mainWindow, Qt::Dialog), mainWindow(mainWindow), context(context), dirtyList(dirtyList)
 {
     setWindowTitle("Save Changes");
+    setWindowFlags(windowFlags() | Qt::WindowStaysOnTopHint);
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     // Warning text
@@ -327,6 +328,10 @@ SaveOnExitDialogWidget::saveClicked()
         QCheckBox *c = (QCheckBox *)dirtyFiles->cellWidget(i,0);
         if (c->isChecked()) {
             mainWindow->saveRideSingleDialog(context, dirtyList.at(i));
+        } else {
+            // we need to ensure the ride is refreshed when we restart
+            // so mark the ride item as nosave to ensure rebuild
+            dirtyList.at(i)->skipsave = true;
         }
     }
     accept();
@@ -335,6 +340,11 @@ SaveOnExitDialogWidget::saveClicked()
 void
 SaveOnExitDialogWidget::abandonClicked()
 {
+    // we need to ensure the ride is refreshed when we restart
+    // so mark the ride item as nosave to ensure rebuild
+    for (int i=0; i<dirtyList.count(); i++) 
+        dirtyList.at(i)->skipsave = true;
+
     accept();
 }
 

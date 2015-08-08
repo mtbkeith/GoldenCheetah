@@ -17,8 +17,9 @@
  */
 
 #include "RideMetric.h"
+#include "RideItem.h"
 #include "Zones.h"
-#include <math.h>
+#include <cmath>
 #include <QApplication>
 
 const double  bikeScoreN   = 4.0;
@@ -56,6 +57,12 @@ class XPower : public RideMetric {
                  const QHash<QString,RideMetric*> &,
                  const Context *) {
 
+        if (ride->recIntSecs() == 0) {
+            setValue(0.0);
+            setCount(0);
+            return;
+        }
+
         static const double EPSILON = 0.1;
         static const double NEGLIGIBLE = 0.1;
 
@@ -84,12 +91,13 @@ class XPower : public RideMetric {
             total += pow(weighted, 4.0);
             count++;
         }
-        xpower = pow(total / count, 0.25);
+        xpower = count ? pow(total / count, 0.25) : 0.0;
         secs = count * secsDelta;
 
         setValue(xpower);
         setCount(secs);
     }
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new XPower(*this); }
 };
 
@@ -128,6 +136,7 @@ class VariabilityIndex : public RideMetric {
 
         setValue(vi);
     }
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new VariabilityIndex(*this); }
 };
 
@@ -178,6 +187,7 @@ class RelativeIntensity : public RideMetric {
     }
     // end added djconnel
 
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new RelativeIntensity(*this); }
 };
 
@@ -220,6 +230,7 @@ class CriticalPower : public RideMetric {
         setValue(other.value(true) > value(true) ? other.value(true) : value(true));
     }
 
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new CriticalPower(*this); }
 };
 
@@ -266,6 +277,7 @@ class aTISS : public RideMetric {
         setValue(aTISS);
     }
 
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new aTISS(*this); }
 };
 
@@ -313,6 +325,8 @@ class anTISS : public RideMetric {
         setValue(anTISS);
     }
 
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
+
     RideMetric *clone() const { return new anTISS(*this); }
 };
 
@@ -351,6 +365,7 @@ class dTISS : public RideMetric {
         else setValue((atscore/(atscore+antscore)) * 100.00f);
     }
 
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new dTISS(*this); }
 };
 class BikeScore : public RideMetric {
@@ -374,8 +389,10 @@ class BikeScore : public RideMetric {
                  const HrZones *, int,
 	    const QHash<QString,RideMetric*> &deps,
                  const Context *) {
-	    if (!zones || zoneRange < 0)
+	    if (!zones || zoneRange < 0) {
+	        setValue(0.0);
 	        return;
+        }
 
         assert(deps.contains("skiba_xpower"));
         assert(deps.contains("skiba_relative_intensity"));
@@ -391,6 +408,7 @@ class BikeScore : public RideMetric {
         setValue(score);
     }
 
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new BikeScore(*this); }
 };
 
@@ -427,6 +445,7 @@ class ResponseIndex : public RideMetric {
 
         setValue(ri);
     }
+    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new ResponseIndex(*this); }
 };
 

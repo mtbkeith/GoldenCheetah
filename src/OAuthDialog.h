@@ -20,6 +20,9 @@
 #define OAUTHDIALOG_H
 #include "GoldenCheetah.h"
 #include "Pages.h"
+#ifdef GC_HAVE_KQOAUTH
+#include <kqoauthmanager.h>
+#endif
 #include <QObject>
 #include <QtGui>
 #include <QWidget>
@@ -28,6 +31,7 @@
 #include <QtWebKit>
 #include <QWebView>
 #include <QWebFrame>
+#include <QSslSocket>
 
 // QUrl split into QUrlQuerty in QT5
 #if QT_VERSION > 0x050000
@@ -44,35 +48,47 @@ public:
     typedef enum {
         STRAVA,
         TWITTER,
-        CYCLING_ANALYTICS
+        CYCLING_ANALYTICS,
+        GOOGLE_CALENDAR,
     } OAuthSite;
 
     OAuthDialog(Context *context, OAuthSite site);
 
-
-
-
-
-signals:
+    bool sslLibMissing() { return noSSLlib; }
 
 private slots:
+
+    // Strava/Cyclinganalytics/Google
     void urlChanged(const QUrl& url);
-    void loadFinished();
+    void loadFinished(bool ok);
+    void networkRequestFinished(QNetworkReply *reply);
+
+#ifdef GC_HAVE_KQOAUTH
+    // Twitter OAUTH
+    void onTemporaryTokenReceived(QString, QString);
+    void onAuthorizationReceived(QString, QString);
+    void onAccessTokenReceived(QString token, QString tokenSecret);
+    void onAuthorizedRequestDone();
+    void onRequestReady(QByteArray response);
+    void onAuthorizationPageRequested (QUrl pageUrl);
+#endif
 
 
 private:
     Context *context;
+    bool noSSLlib;
     OAuthSite site;
 
     QVBoxLayout *layout;
     QWebView *view;
+    QNetworkAccessManager* manager;
 
     QUrl url;
 
-    bool requestToken;
-    bool requestAuth;
-
-    char *t_key, *t_secret;
+#ifdef GC_HAVE_KQOAUTH
+    KQOAuthManager *oauthManager;
+    KQOAuthRequest *oauthRequest;
+#endif
 
 };
 

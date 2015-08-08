@@ -20,7 +20,7 @@
 #include "Settings.h"
 #include "Zones.h"
 #include "HrZones.h"
-#include <math.h>
+#include <cmath>
 #include "Context.h"
 #include "Athlete.h"
 #include <QApplication>
@@ -335,8 +335,12 @@ class SessionRPE : public RideMetric {
         assert(deps.contains("time_riding"));
         const RideMetric *timeRidingMetric = deps.value("time_riding");
         assert(timeRidingMetric);
+        assert(deps.contains("workout_time"));
+        const RideMetric *durationMetric = deps.value("workout_time");
+        assert(durationMetric);
 
-        double secs = timeRidingMetric->value(true);
+        double secs = timeRidingMetric->value(true) ? timeRidingMetric->value(true) :
+                                                      durationMetric->value(true);;
 
         // ok lets work the score out
         score = ((secs == 0.0 || rpe == 0) ? 0.0 :  secs/60 *rpe);
@@ -371,6 +375,7 @@ static bool added() {
 
     deps.clear();
     deps.append("time_riding");
+    deps.append("workout_time");
     RideMetricFactory::instance().addMetric(SessionRPE(), &deps);
     return true;
 }

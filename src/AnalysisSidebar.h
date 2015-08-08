@@ -28,6 +28,10 @@
 #include "IntervalTreeView.h"
 #include "IntervalSummaryWindow.h"
 
+#include <QTreeWidgetItem>
+#include <QTreeWidget>
+#include <QWidget>
+
 class AnalysisSidebar : public QWidget
 {
     Q_OBJECT
@@ -45,8 +49,10 @@ class AnalysisSidebar : public QWidget
     public slots:
 
         // config etc
-        void configChanged();
+        void configChanged(qint32);
         void setRide(RideItem*);
+        void intervalsUpdate(RideItem*);
+        void intervalItemSelectionChanged(IntervalItem*);
 
         void filterChanged();
         void setFilter(QStringList);
@@ -56,23 +62,24 @@ class AnalysisSidebar : public QWidget
         void analysisPopup();
         void showActivityMenu(const QPoint &pos);
 
+        // interval selection
+        void itemSelectionChanged();
+
         // interval menu
         void intervalPopup();
         void showIntervalMenu(const QPoint &pos);
 
         // interval functions
         void addIntervals();
-        void addIntervalForPowerPeaksForSecs(RideFile *ride, int windowSizeSecs, QString name);
-        void findPowerPeaks();
         void editInterval(); // from right click
         void deleteInterval(); // from right click
-        void renameInterval(); // from right click
+        void deleteRoute(); // stop tracking this route
         void zoomInterval(); // from right click
         void sortIntervals(); // from menu popup
-        void renameIntervalSelected(void); // from menu popup
         void renameIntervalsSelected(void); // from menu popup -- rename a series
         void editIntervalSelected(); // from menu popup
         void deleteIntervalSelected(void); // from menu popup
+        void clickZoomInterval(QTreeWidgetItem*); // from treeview
         void zoomIntervalSelected(void); // from menu popup
         void zoomOut();
         void createRouteIntervalSelected(void); // from menu popup
@@ -94,6 +101,9 @@ class AnalysisSidebar : public QWidget
         QSplitter *intervalSplitter;
         IntervalSummaryWindow *intervalSummaryWindow;
         IntervalItem *activeInterval; // currently active for context menu popup
+
+        IntervalTreeView *intervalTree; // the interval tree
+        QMap<RideFileInterval::intervaltype, QTreeWidgetItem*> trees;
 };
 
 #endif // _GC_AnalysisSidebar_h

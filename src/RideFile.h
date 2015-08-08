@@ -29,11 +29,13 @@
 #include <QObject>
 
 class RideItem;
+class RideCache;
+class IntervalItem;
 class WPrime;
 class RideFile;
 struct RideFilePoint;
 struct RideFileDataPresent;
-struct RideFileInterval;
+class RideFileInterval;
 class EditorData;      // attached to a RideFile
 class RideFileCommand; // for manipulating ride data
 class Context;      // for context; cyclist, homedir
@@ -59,10 +61,11 @@ struct RideFileDataPresent
 {
     // basic (te = torqueeffectiveness, ps = pedal smoothness)
     bool secs, cad, hr, km, kph, nm, watts, alt, lon, lat, headwind, slope, temp;
-    bool lrbalance, lte, rte, lps, rps, smo2, thb, interval;
+    bool lrbalance, lte, rte, lps, rps, lpco, rpco, lppb, rppb, lppe, rppe, lpppb, rpppb, lpppe, rpppe;
+    bool smo2, thb, interval;
 
     // derived
-    bool np,xp,apower,wprime,atiss,antiss,gear,hhb,o2hb;
+    bool np,xp,apower,wprime,atiss,antiss,gear,hhb,o2hb,tcore;
 
     // running
     bool rvert, rcad, rcontact;
@@ -72,24 +75,61 @@ struct RideFileDataPresent
         secs(false), cad(false), hr(false), km(false),
         kph(false), nm(false), watts(false), alt(false), lon(false), lat(false),
         headwind(false), slope(false), temp(false), 
-        lrbalance(false), lte(false), rte(false), lps(false), rps(false), smo2(false), thb(false), interval(false),
-        np(false), xp(false), apower(false), wprime(false), atiss(false), antiss(false),gear(false),hhb(false),o2hb(false),
+        lrbalance(false), lte(false), rte(false), lps(false), rps(false),
+        lpco(false), rpco(false), lppb(false), rppb(false), lppe(false), rppe(false),
+        lpppb(false), rpppb(false), lpppe(false), rpppe(false),
+        smo2(false), thb(false), interval(false),
+        np(false), xp(false), apower(false), wprime(false), atiss(false), antiss(false),gear(false),
+        hhb(false),o2hb(false), tcore(false),
         rvert(false), rcad(false), rcontact(false) {}
 
 };
 
-struct RideFileInterval
+class RideFileInterval
 {
-    double start, stop;
-    QString name;
-    RideFileInterval() : start(0.0), stop(0.0) {}
-    RideFileInterval(double start, double stop, QString name) :
-        start(start), stop(stop), name(name) {}
+    Q_DECLARE_TR_FUNCTIONS(RideFileInterval);
 
-    // order bu start time
-    bool operator< (RideFileInterval right) const { return start < right.start; }
-    bool operator== (RideFileInterval right) const { return start == right.start && stop == right.stop; }
-    bool operator!= (RideFileInterval right) const { return start != right.start || stop != right.stop; }
+    public:
+        enum intervaltype { DEVICE,                 // Came from Device (Calibration?)
+                            USER,                   // User defined
+
+                                                    // DISCOVERED ALWAYS AFTER USER BELOW
+                            ALL,                    // Entire workout
+                            PEAKPOWER,              // Peak Power incl. ranking 1-10 in ride
+                            PEAKPACE,               // Peak Pace
+                            EFFORT,                 // Sustained effort
+                            ROUTE,                  // GPS Route
+                            CLIMB,                  // Hills and Cols
+                                                    // ADD NEW ONES HERE AND UPDATE last() below
+
+                           } types;
+
+        static enum intervaltype last() { return CLIMB; } // update to last above!
+
+        typedef enum intervaltype IntervalType;
+        static QString typeDescription(IntervalType);                  // return a string to represent the type
+        static QString typeDescriptionLong(IntervalType);              // return a longer string to represent the type
+        static qint32 intervalTypeBits(IntervalType);                  // returns the bit value or'ed into GC_DISCOVERY
+
+        QString typeString;
+        IntervalType type;
+        double start, stop;
+        QString name;
+        RideFileInterval() : start(0.0), stop(0.0) {}
+        RideFileInterval(IntervalType type, double start, double stop, QString name) : type(type), start(start), stop(stop), name(name) {}
+
+
+        // order bu start time (and stop+name for QMap)
+        bool operator< (RideFileInterval right) const { return start < right.start ||
+                                                        (start == right.start && stop < right.stop) ||
+                                                        (start == right.start && stop == right.stop && name < right.name); }
+        bool operator== (RideFileInterval right) const { return start == right.start && stop == right.stop && name == right.name; }
+        bool operator!= (RideFileInterval right) const { return start != right.start || stop != right.stop; }
+
+        bool isPeak() const;
+        bool isMatch() const;
+        bool isClimb() const;
+        bool isBest() const;
 };
 
 struct RideFileCalibration
@@ -114,8 +154,30 @@ class RideFile : public QObject // QObject to emit signals
     public:
 
         friend class RideFileCommand; // tells us we were modified
+        friend class RideCache; // tells us if wbal is stale
+        friend class RideItem; // derived/wbal stale
+        friend class IntervalItem; // access intervals 
         friend class MainWindow; // tells us we were modified
         friend class Context; // tells us we were saved
+        friend class Athlete; // tells us we were saved
+
+        // file format writers have more access
+        friend class RideFileFactory;
+        friend class FitlogFileReader;
+        friend class GcFileReader;
+        friend class TcxFileReader;
+        friend class PwxFileReader;
+        friend class JsonFileReader;
+        friend class ManualRideDialog;
+
+        // split and mergers
+        friend class MergeActivityWizard;
+        friend class SplitActivityWizard;
+        friend class SplitConfirm;
+        friend class SplitSelect;
+
+        // utility
+        static unsigned int computeFileCRC(QString); 
 
         // Constructor / Destructor
         RideFile();
@@ -133,7 +195,10 @@ class RideFile : public QObject // QObject to emit signals
                           alt, lon, lat, headwind, slope, temp, interval, NP, xPower, 
                           vam, wattsKg, lrbalance, lte, rte, lps, rps, 
                           aPower, wprime, aTISS, anTISS, smo2, thb, 
-                          rvert, rcad, rcontact, gear, o2hb, hhb, none };
+                          rvert, rcad, rcontact, gear, o2hb, hhb,
+                          lpco, rpco, lppb, rppb, lppe, rppe, lpppb, rpppb, lpppe, rpppe,
+                          wbal, tcore,
+                          none }; // none must ALWAYS be last
 
         enum specialValues { NoTemp = -255 };
         typedef enum seriestype SeriesType;
@@ -147,6 +212,7 @@ class RideFile : public QObject // QObject to emit signals
         static QColor colorFor(SeriesType series);
         static bool parseRideFileName(const QString &name, QDateTime *dt);
         bool isRun() const;
+        bool isSwim() const;
 
         // Working with DATAPOINTS -- ***use command to modify***
         RideFileCommand *command;
@@ -162,8 +228,11 @@ class RideFile : public QObject // QObject to emit signals
                          double lon, double lat, double headwind, double slope,
                          double temperature, double lrbalance,
                          double lte, double rte, double lps, double rps,
+                         double lpco, double rpco,
+                         double lppb, double rppb, double lppe, double rppe,
+                         double lpppb, double rpppb, double lpppe, double rpppe,
                          double smo2, double thb,
-                         double rvert, double rcad, double rcontact,
+                         double rvert, double rcad, double rcontact, double tcore,
                          int interval);
 
         void appendPoint(const RideFilePoint &);
@@ -183,6 +252,7 @@ class RideFile : public QObject // QObject to emit signals
         // Working with DATAPRESENT flags
         inline const RideFileDataPresent *areDataPresent() const { return &dataPresent; }
         bool isDataPresent(SeriesType series);
+        QVector<SeriesType> arePresent(); // list of what is present
 
         // Working with FIRST CLASS variables
         const QDateTime &startTime() const { return startTime_; }
@@ -197,18 +267,23 @@ class RideFile : public QObject // QObject to emit signals
         void setId(const QString &value) { id_ = value; }
 
         // Working with INTERVALS
-        const QList<RideFileInterval> &intervals() const { return intervals_; }
-        void addInterval(double start, double stop, const QString &name) {
-            intervals_.append(RideFileInterval(start, stop, name));
+        void addInterval(RideFileInterval::IntervalType type, double start, double stop, const QString &name) {
+            intervals_.append(new RideFileInterval(type, start, stop, name));
         }
-        void clearIntervals();
-        void fillInIntervals();
         int intervalBegin(const RideFileInterval &interval) const;
+        int intervalBeginSecs(const double secs) const;
+        bool removeInterval(RideFileInterval*);
+        void moveInterval(int from, int to);
+        RideFileInterval *newInterval(QString name, double start, double stop) {
+            RideFileInterval *add = new RideFileInterval(RideFileInterval::USER, start, stop, name);
+            intervals_ << add;
+            return add;
+        }
 
         // Working with CAIBRATIONS
-        const QList<RideFileCalibration> &calibrations() const { return calibrations_; }
+        const QList<RideFileCalibration*> &calibrations() const { return calibrations_; }
         void addCalibration(double start, int value, const QString &name) {
-            calibrations_.append(RideFileCalibration(start, value, name));
+            calibrations_.append(new RideFileCalibration(start, value, name));
         }
 
         // Working with REFERENCES
@@ -228,9 +303,8 @@ class RideFile : public QObject // QObject to emit signals
         void setTag(QString name, QString value) { tags_.insert(name, value); }
 
         Context *context;
-        double getWeight();
-        void setWeight(double x);
-        double getHeight();
+        double getWeight(); // legacy - moved to Athlete::getWeight
+        double getHeight(); // legacy - moved to Athlete::getHeight
  
         WPrime *wprimeData(); // return wprime, init/refresh if needed
 
@@ -265,10 +339,16 @@ class RideFile : public QObject // QObject to emit signals
 
     protected:
 
+        //  should access via IntervalItem
+        const QList<RideFileInterval*> &intervals() const { return intervals_; }
+        void clearIntervals();
+        void fillInIntervals();
+
         void emitSaved();
         void emitReverted();
         void emitModified();
 
+        bool wstale;
 
     private:
 
@@ -284,12 +364,11 @@ class RideFile : public QObject // QObject to emit signals
         RideFileDataPresent dataPresent;
         QString deviceType_;
         QString fileFormat_;
-        QList<RideFileInterval> intervals_;
-        QList<RideFileCalibration> calibrations_;
+        QList<RideFileInterval*> intervals_;
+        QList<RideFileCalibration*> calibrations_;
         QMap<QString,QString> tags_;
         EditorData *data;
         WPrime *wprime_;
-        bool wstale;
         double weight_; // cached to save calls to getWeight();
         double totalCount, totalTemp;
 
@@ -305,12 +384,24 @@ struct RideFilePoint
 {
     // recorded data
     double secs, cad, hr, km, kph, nm, watts, alt, lon, lat, headwind, slope, temp;
+
+    // pedals
     double lrbalance, lte, rte, lps, rps;
+    double lpco, rpco; // left and right platform center offset
+    double lppb, rppb, lppe, rppe; // left and right power phase begin/end
+    double lpppb, rpppb, lpppe, rpppe; // left and right begin and end peak power phase
+
+    // oxy
     double smo2, thb;
-    double hrd, cadd, kphd, nmd, wattsd; // acceleration in watts/s km/s
+
+    // acceleration in watts/s km/s
+    double hrd, cadd, kphd, nmd, wattsd;
 
     // running data
     double rvert, rcad, rcontact;
+
+    // core temperature
+    double tcore;
 
     int interval;
 
@@ -321,29 +412,41 @@ struct RideFilePoint
     // create blank point
     RideFilePoint() : secs(0.0), cad(0.0), hr(0.0), km(0.0), kph(0.0), nm(0.0), 
                       watts(0.0), alt(0.0), lon(0.0), lat(0.0), headwind(0.0), 
-                      slope(0.0), temp(-255.0), lrbalance(0), lte(0.0), rte(0.0),
-                      lps(0.0), rps(0.0),
+                      slope(0.0), temp(-255.0),
+                      lrbalance(0),
+                      lte(0.0), rte(0.0), lps(0.0), rps(0.0),
+                      lpco(0.0), rpco(0.0),
+                      lppb(0.0), rppb(0.0), lppe(0.0), rppe(0.0),
+                      lpppb(0.0), rpppb(0.0), lpppe(0.0), rpppe(0.0),
                       smo2(0.0), thb(0.0),
                       hrd(0.0), cadd(0.0), kphd(0.0), nmd(0.0), wattsd(0.0),
-                      rvert(0.0), rcad(0.0), rcontact(0.0),
+                      rvert(0.0), rcad(0.0), rcontact(0.0), tcore(0.0),
                       interval(0), xp(0), np(0),
                       apower(0), atiss(0.0), antiss(0.0), gear(0.0), hhb(0.0), o2hb(0.0) {}
 
     // create point supplying all values
     RideFilePoint(double secs, double cad, double hr, double km, double kph,
                   double nm, double watts, double alt, double lon, double lat,
-                  double headwind, double slope, double temp, double lrbalance, 
+                  double headwind, double slope, double temp,
+                  double lrbalance,
                   double lte, double rte, double lps, double rps,
+                  double lpco, double rpco,
+                  double lppb, double rppb, double lppe, double rppe,
+                  double lpppb, double rpppb, double lpppe, double rpppe,
                   double smo2, double thb, 
-                  double rvert, double rcad, double rcontact,
+                  double rvert, double rcad, double rcontact, double(tcore),
                   int interval) :
 
         secs(secs), cad(cad), hr(hr), km(km), kph(kph), nm(nm), watts(watts), alt(alt), lon(lon), 
         lat(lat), headwind(headwind), slope(slope), temp(temp),
-        lrbalance(lrbalance), lte(lte), rte(rte), lps(lps), rps(rps),
+        lrbalance(lrbalance),
+        lte(lte), rte(rte), lps(lps), rps(rps),
+        lpco(lpco), rpco(rpco),
+        lppb(lppb), rppb(rppb), lppe(lppe), rppe(rppe),
+        lpppb(lpppb), rpppb(rpppb), lpppe(lpppe), rpppe(rpppe),
         smo2(smo2), thb(thb),
         hrd(0.0), cadd(0.0), kphd(0.0), nmd(0.0), wattsd(0.0), 
-        rvert(rvert), rcad(rcad), rcontact(rcontact), interval(interval), 
+        rvert(rvert), rcad(rcad), rcontact(rcontact), tcore(tcore), interval(interval), 
         xp(0), np(0), apower(0), atiss(0.0), antiss(0.0), gear(0.0),hhb(0.0),o2hb(0.0) {}
 
     // get the value via the series type rather than access direct to the values
@@ -360,6 +463,7 @@ struct RideFileReader {
     virtual bool writeRideFile(Context *, const RideFile *, QFile &) const { return false; }
 };
 
+class MetricAggregator;
 class RideFileFactory {
 
     private:
@@ -370,6 +474,18 @@ class RideFileFactory {
 
         RideFileFactory() {}
 
+    protected:
+
+        friend class ::MetricAggregator;
+        friend class ::RideCache;
+
+        // will become private as code should work with
+        // in memory representation not on disk .. but as we
+        // migrate will add friends in here.
+        // NOTE: DO NOT USE THIS, USE THE athlete->rideCache
+        //       TO GET ACCESS TO THE RIDE LIST AND RIDE DATA
+        QStringList listRideFiles(const QDir &dir) const;
+
     public:
 
         static RideFileFactory &instance();
@@ -378,7 +494,6 @@ class RideFileFactory {
                            RideFileReader *reader);
         RideFile *openRideFile(Context *context, QFile &file, QStringList &errors, QList<RideFile*>* = 0) const;
         bool writeRideFile(Context *context, const RideFile *ride, QFile &file, QString format) const;
-        QStringList listRideFiles(const QDir &dir) const;
         QStringList suffixes() const;
         QStringList writeSuffixes() const;
         QString description(const QString &suffix) const {

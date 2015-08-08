@@ -35,7 +35,7 @@
 #include <stdint.h>    // for int8_t, int16_t, etc.
 #include <iostream>
 
-#include "math.h"
+#include "cmath"
 #include "Units.h"
 
 
@@ -239,8 +239,12 @@ RideFile *Computrainer3dpFileReader::openRideFile(QFile & file,
                                 (double) hr, km, speed, 0.0, watts,
                                 altitude, 0, 0, 0.0, 0.0, RideFile::NoTemp, 0.0,
                                 0.0, 0.0, 0.0, 0.0, // pedal torque eff / pedal smoothness
-                                0.0, 0.0,
+                                0.0, 0.0, // pedal platform offset
+                                0.0, 0.0, 0.0, 0.0, //pedal power phase
+                                0.0, 0.0, 0.0, 0.0, //pedal peak power phase
+                                0.0, 0.0, //  smO2 / thb
                                 0.0, 0.0, 0.0, // running dynamics
+                                0.0, //tcore
                                 0);
         }
         // while loop since an interval in the .3dp file might
@@ -294,8 +298,12 @@ RideFile *Computrainer3dpFileReader::openRideFile(QFile & file,
                                 RideFile::NoTemp, // temp
                                 0.0,
                                 0.0, 0.0, 0.0, 0.0, // pedal torque effectiveness / pedal smoothness
+                                0.0, 0.0, // pedal platform offset
+                                0.0, 0.0, 0.0, 0.0, //pedal power phase
+                                0.0, 0.0, 0.0, 0.0, //pedal peak power phase
                                 0.0, 0.0, // smO2 / tHb
                                 0.0, 0.0, 0.0, // running dynamics
+                                0.0, //tcore
                                 0);
 
           // reset averaging sums

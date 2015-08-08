@@ -21,6 +21,7 @@
 #include "Context.h"
 #include "RideCache.h"
 #include "MainWindow.h"
+#include "HelpWhatsThis.h"
 
 // minimum R-squared fit when trying to find offsets to
 // merge ride files. Lower numbers mean happier to take
@@ -59,6 +60,9 @@ MergeActivityWizard::MergeActivityWizard(Context *context) : QWizard(context->ma
     setWizardStyle(QWizard::ModernStyle);
 #endif
     setWindowTitle(tr("Combine Activities"));
+
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Activity_CombineRides));
 
     setFixedHeight(530);
     setFixedWidth(550);
@@ -303,23 +307,24 @@ MergeActivityWizard::combine()
 
         // any intervals with a number name? find the last
         int intervalN=0;
-        foreach(RideFileInterval interval, ride1->intervals()) {
-            int x = interval.name.toInt();
-            if (interval.name == QString("%1").arg(x)) {
+        foreach(RideFileInterval *interval, ride1->intervals()) {
+            int x = interval->name.toInt();
+            if (interval->name == QString("%1").arg(x)) {
                 if (x > intervalN) intervalN = x;
             }
         }
 
         // now run through the intervals for the second ride
         // and add them but renumber any intervals that are just numbers
-        foreach(RideFileInterval interval, ride2->intervals()) {
-            int x = interval.name.toInt();
-            if (interval.name == QString("%1").arg(x)) {
-                interval.name = QString("%1").arg(x+intervalN);
+        foreach(RideFileInterval *interval, ride2->intervals()) {
+            int x = interval->name.toInt();
+            if (interval->name == QString("%1").arg(x)) {
+                interval->name = QString("%1").arg(x+intervalN);
             }
-            combined->addInterval(interval.start + timeOffset,
-                                  interval.stop + timeOffset, 
-                                  interval.name);
+            combined->addInterval(interval->type,
+                                  interval->start + timeOffset,
+                                  interval->stop + timeOffset, 
+                                  interval->name);
         }
 
     } else { // MERGE
@@ -375,16 +380,18 @@ MergeActivityWizard::combine()
         combined->clearIntervals();
 
         // run through what we got then
-        foreach(RideFileInterval interval, ride1->intervals()) {
-            combined->addInterval(interval.start + offset1,
-                                  interval.stop + offset1, 
-                                  interval.name);
+        foreach(RideFileInterval *interval, ride1->intervals()) {
+            combined->addInterval(interval->type,
+                                  interval->start + offset1,
+                                  interval->stop + offset1, 
+                                  interval->name);
         }
         // run through what we got then
-        foreach(RideFileInterval interval, ride2->intervals()) {
-            combined->addInterval(interval.start + offset2,
-                                  interval.stop + offset2, 
-                                  interval.name);
+        foreach(RideFileInterval *interval, ride2->intervals()) {
+            combined->addInterval(interval->type,
+                                  interval->start + offset2,
+                                  interval->stop + offset2, 
+                                  interval->name);
         }
     }
 }
@@ -1160,10 +1167,10 @@ MergeConfirm::MergeConfirm(MergeActivityWizard *parent) : QWizardPage(parent), w
     QVBoxLayout *layout = new QVBoxLayout;
     setLayout(layout);
 
-    QLabel *label = new QLabel(tr("Press Finish to update the current ride with "
+    QLabel *label = new QLabel(tr("Press Finish to update the current activity with "
                                " the combined data.\n\n"
                                "The changes will be saved and cannot be undone.\n\n"
-                               "If you press continue the ride will be saved, if you "
+                               "If you press continue the activity will be saved, if you "
                                "do not want to continue either go back and change "
                                "the settings or press cancel to abort."));
     label->setWordWrap(true);

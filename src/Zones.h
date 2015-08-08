@@ -19,7 +19,6 @@
 #ifndef _Zones_h
 #define _Zones_h
 #include "GoldenCheetah.h"
-#include "Context.h"
 #include "Athlete.h"
 
 #include <QtCore>
@@ -61,12 +60,13 @@ struct ZoneRange {
     QDate begin, end;
     int cp;
     int wprime; // aka awc
+    int pmax;
     QList<ZoneInfo> zones;
     bool zonesSetFromCP;
     ZoneRange(const QDate &b, const QDate &e) :
-        begin(b), end(e), cp(0), wprime(0), zonesSetFromCP(false) {}
-    ZoneRange(const QDate &b, const QDate &e, int _cp, int _wprime) :
-        begin(b), end(e), cp(_cp), wprime(_wprime), zonesSetFromCP(false) {}
+        begin(b), end(e), cp(0), wprime(0), pmax(0), zonesSetFromCP(false) {}
+    ZoneRange(const QDate &b, const QDate &e, int _cp, int _wprime, int pmax) :
+        begin(b), end(e), cp(_cp), wprime(_wprime), pmax(pmax), zonesSetFromCP(false) {}
 
     // used by qSort()
     bool operator< (ZoneRange right) const {
@@ -124,8 +124,8 @@ class Zones : public QObject
         int getRangeSize() const;
 
         // Add ranges
-        void addZoneRange(QDate _start, QDate _end, int _cp, int _wprime);
-        int addZoneRange(QDate _start, int _cp, int _wprime);
+        void addZoneRange(QDate _start, QDate _end, int _cp, int _wprime, int _pmax);
+        int addZoneRange(QDate _start, int _cp, int _wprime, int _pmax);
         void addZoneRange();
 
         // Get / Set ZoneRange details
@@ -137,6 +137,8 @@ class Zones : public QObject
         void setCP(int rnum, int cp);
         int getWprime(int rnum) const;
         void setWprime(int rnum, int wprime);
+        int getPmax(int rnum) const;
+        void setPmax(int rnum, int pmax);
 
         // calculate and then set zoneinfo for a given range
         void setZonesFromCP(int rnum);
@@ -162,6 +164,7 @@ class Zones : public QObject
         int whichRange(const QDate &date) const;
 
         // which zone is the power value in for a given range
+        // will return -1 if not in any zone
         int whichZone(int range, double value) const;
 
         // how many zones are there for a given range
@@ -194,7 +197,12 @@ class Zones : public QObject
         // calculate a CRC for the zones data - used to see if zones
         // data is changed since last referenced in Metric code
         // could also be used in Configuration pages (later)
-        quint16 getFingerprint(Context *context) const;
+        quint16 getFingerprint() const;
+
+        // this is the fingerprint for a specific DATE so that we
+        // can be more granular -- did the zone config for the date of
+        // a particular ride change ?
+        quint16 getFingerprint(QDate date) const;
 };
 
 QColor zoneColor(int zone, int num_zones);

@@ -26,6 +26,33 @@
 #include "CompareDateRange.h" // what intervals are being compared?
 #include "RideFile.h"
 
+// when config changes we need to notify widgets what changed
+// but there is so much config these days we need to be a little
+// more specific, not too specific since we would have a million
+// variations, but enough to let widgets ignore stuff and if they
+// need to react to very specific changes they should manage that
+// themselves.
+//
+// Context::notifyConfigChanged(x) and its signal configChanged(qint32)
+// are used to pass a state value around that contains the different
+// values or-ed together -- since it is possible to make changes
+// to different config and save it all at once.
+
+#define CONFIG_ATHLETE           0x1        // includes default weight, height etc
+#define CONFIG_ZONES             0x2 
+#define CONFIG_GENERAL           0x4        // includes default weight, w'bal formula, directories
+#define CONFIG_APPEARANCE        0x10
+#define CONFIG_FIELDS            0x20       // metadata fields
+#define CONFIG_NOTECOLOR         0x40       // ride coloring from "notes" fields
+#define CONFIG_METRICS           0x100
+#define CONFIG_DEVICES           0x200
+#define CONFIG_SEASONS           0x400      // includes seasons, events and LTS/STS seeded values
+#define CONFIG_UNITS             0x800      // metric / imperial
+#define CONFIG_PMC               0x1000     // PMC constants
+#define CONFIG_WBAL              0x2000     // which w'bal formula to use ?
+#define CONFIG_WORKOUTS          0x4000     // workout location / files
+#define CONFIG_DISCOVERY         0x8000     // interval discovery
+
 class RideItem;
 class IntervalItem;
 class ErgFile;
@@ -51,7 +78,6 @@ class Context : public QObject
 
         // ride item
         RideItem *rideItem() const { return ride; }
-        const RideFile *currentRide();
         const RideItem *currentRideItem() { return ride; }
         DateRange currentDateRange() { return dr_; }
 
@@ -78,12 +104,14 @@ class Context : public QObject
         bool isCompareDateRanges;
         QList<CompareDateRange> compareDateRanges;
 
+    public slots:
+
         // *********************************************
         // APPLICATION EVENTS
         // *********************************************
-        void notifyConfigChanged(); // used by ConfigDialog to notify Context *
-                                    // when config has changed - and to get a
-                                    // signal emitted to notify its children
+        void notifyConfigChanged(qint32); // used by ConfigDialog to notify Context *
+                                            // when config has changed - and to get a
+                                            // signal emitted to notify its children
 
         // preset charts
         void notifyPresetsChanged() { emit presetsChanged(); }
@@ -112,17 +140,28 @@ class Context : public QObject
         void notifyStop() { emit stop(); }
         void notifySeek(long x) { emit seek(x); }
 
+        void notifyWorkoutsChanged() { emit workoutsChanged(); }
+
         void notifyRideSelected(RideItem*x) { ride=x; rideSelected(x); }
         void notifyRideAdded(RideItem *x) { ride=x; rideAdded(x); }
         void notifyRideDeleted(RideItem *x) { ride=x; rideDeleted(x); }
+        void notifyRideChanged(RideItem *x) { rideChanged(x); }
+        void notifyRideSaved(RideItem *x) { rideSaved(x); }
+
         void notifyIntervalZoom(IntervalItem*x) { emit intervalZoom(x); }
         void notifyZoomOut() { emit zoomOut(); }
         void notifyIntervalSelected() { intervalSelected(); }
+        void notifyIntervalItemSelectionChanged(IntervalItem*x) { intervalItemSelectionChanged(x); }
+        void notifyIntervalsUpdate(RideItem *x) { emit intervalsUpdate(x); }
         void notifyIntervalsChanged() { emit intervalsChanged(); }
-        void notifyIntervalHover(RideFileInterval x) { emit intervalHover(x); }
+        void notifyIntervalHover(IntervalItem *x) { emit intervalHover(x); }
         void notifyRideClean() { rideClean(ride); }
         void notifyRideDirty() { rideDirty(ride); }
         void notifyMetadataFlush() { metadataFlush(); }
+
+        void notifyRefreshStart() { emit refreshStart(); }
+        void notifyRefreshEnd() { emit refreshEnd(); }
+        void notifyRefreshUpdate(QDate date) { emit refreshUpdate(date); }
 
         void notifyCompareIntervals(bool state);
         void notifyCompareIntervalsChanged();
@@ -136,17 +175,32 @@ class Context : public QObject
         void filterChanged();
         void homeFilterChanged();
 
-        void configChanged();
+        void configChanged(qint32);
+
+        void workoutsChanged(); // added or deleted a workout in train view
         void presetsChanged();
         void presetSelected(int);
 
+
+        // refreshing stats
+        void refreshStart();
+        void refreshEnd();
+        void refreshUpdate(QDate);
+
         void rideSelected(RideItem*);
+
+        // we added/deleted/changed an item
         void rideAdded(RideItem *);
         void rideDeleted(RideItem *);
+        void rideChanged(RideItem *);
+        void rideSaved(RideItem*);
+
         void intervalSelected();
         void intervalsChanged();
-        void intervalHover(RideFileInterval);
+        void intervalsUpdate(RideItem*);
+        void intervalHover(IntervalItem*);
         void intervalZoom(IntervalItem*);
+        void intervalItemSelectionChanged(IntervalItem*);
         void zoomOut();
         void metadataFlush();
         void rideDirty(RideItem*);

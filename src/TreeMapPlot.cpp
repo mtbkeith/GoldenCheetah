@@ -17,20 +17,17 @@
  */
 
 #include "Context.h"
+#include "Athlete.h"
 #include "TreeMapPlot.h"
 #include "LTMTool.h"
 #include "TreeMapWindow.h"
-#include "MetricAggregator.h"
-#include "SummaryMetrics.h"
+#include "RideCache.h"
 #include "RideMetric.h"
 #include "Settings.h"
 #include "Colors.h"
 
-#include "StressCalculator.h" // for LTS/STS calculation
-
 #include <QSettings>
-
-#include <math.h> // for isinf() isnan()
+#include <cmath> // for isinf() isnan()
 
 // Treemap sorter - reversed to do descending
 bool TreeMapLessThan(const TreeMap *a, const TreeMap *b) {
@@ -49,8 +46,8 @@ TreeMapPlot::TreeMapPlot(TreeMapWindow *parent, Context *context)
     // no margins
     setContentsMargins(0,0,0,0);
 
-    configUpdate(); // set basic colors
-    connect(context, SIGNAL(configChanged()), this, SLOT(configUpdate()));
+    configChanged(CONFIG_APPEARANCE); // set basic colors
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 }
 
 TreeMapPlot::~TreeMapPlot()
@@ -58,22 +55,21 @@ TreeMapPlot::~TreeMapPlot()
 }
 
 void
-TreeMapPlot::configUpdate() { }
+TreeMapPlot::configChanged(qint32) { }
 
 void
 TreeMapPlot::setData(TMSettings *settings)
 {
     root->clear();
 
-    foreach (SummaryMetrics rideMetrics, *(settings->data)) {
+    foreach (RideItem *item, context->athlete->rideCache->rides()) {
 
         // don't plot if filtered
-        if (context->isfiltered && !context->filters.contains(rideMetrics.getFileName())) continue;
-        if (context->ishomefiltered && !context->homeFilters.contains(rideMetrics.getFileName())) continue;
+        if (!settings->specification.pass(item)) continue;
 
-        double value = rideMetrics.getForSymbol(settings->symbol);
-        QString text1 = rideMetrics.getText(settings->field1, tr("(unknown)"));
-        QString text2 = rideMetrics.getText(settings->field2, tr("(unknown)"));
+        double value = item->getForSymbol(settings->symbol);
+        QString text1 = item->getText(settings->field1, tr("(unknown)"));
+        QString text2 = item->getText(settings->field2, tr("(unknown)"));
         if (text1 == "") text1 = tr("(unknown)");
         if (text2 == "") text2 = tr("(unknown)");
 
@@ -104,7 +100,7 @@ TreeMapPlot::paintEvent(QPaintEvent *)
 
     // Init paint settings
     QPainter painter(this);
-    QColor color = GColor(CPLOTBACKGROUND);
+    QColor color = GColor(CTRENDPLOTBACKGROUND);
     QPen pen(color);
     pen.setWidth(10); // root
     QBrush brush(color);
@@ -117,14 +113,10 @@ TreeMapPlot::paintEvent(QPaintEvent *)
                      root->rect.width()-8,
                      root->rect.height()-8);
 
-    // first level
-    font.setPointSize(18);
-    painter.setFont(font);
+    // first level - rectangles, but not text yet
     pen.setWidth(5);
     pen.setColor(color);
     painter.setPen(pen);
-    color = GCColor::invertColor(color);
-    //color.setAlpha(127);
 
     int n=1;
     QColor cHSV, cRGB;
@@ -136,36 +128,68 @@ TreeMapPlot::paintEvent(QPaintEvent *)
         brush.setColor(cRGB);
         painter.setBrush(brush);
         painter.drawRect(first->rect);
-        painter.drawText(first->rect,
-                         Qt::AlignVCenter|Qt::AlignHCenter,
-                         first->name);
     }
 
-    // second level
+    // second level - overlay rectangles - with text
+    QPen textPen(Qt::white);
     font.setPointSize(8);
     painter.setFont(font);
-    pen.setWidth(1);
-    pen.setColor(Qt::lightGray);
-    painter.setPen(pen);
+
+    // overlay colors
     color = Qt::darkGray;
     color.setAlpha(127);
     brush.setColor(color);
     QColor hcolor(Qt::lightGray);
     hcolor.setAlpha(127);
     QBrush hbrush(hcolor);
-
-    foreach (TreeMap *first, root->children)
+    QRect textRect;
+    QRect demandedTextRect;
+    foreach (TreeMap *first, root->children) {
         foreach (TreeMap *second, first->children) {
             if (second == highlight) painter.setBrush(hbrush);
             else painter.setBrush(brush);
+
             painter.setPen(Qt::NoPen);
             painter.drawRect(second->rect.x()+2,
                              second->rect.y()+2,
                              second->rect.width()-4,
                              second->rect.height()-4);
-            painter.setPen(pen);
-            painter.drawText(second->rect, Qt::AlignTop|Qt::AlignLeft, second->name);
+
+            textRect.setRect(second->rect.x()+2, second->rect.y()+2,second->rect.width()-4, second->rect.height()-4 );
+            // determine font size based on size of window and length of text / try to apply 3 different font sizes - then fall back to "8"
+            font.setPointSize(14);
+            painter.setFont(font);
+            painter.setPen(textPen);
+            demandedTextRect = painter.boundingRect(textRect, Qt::AlignTop|Qt::AlignLeft, second->name);
+            if (!textRect.contains(demandedTextRect)) {
+                font.setPointSize(12);
+                painter.setFont(font);
+                demandedTextRect = painter.boundingRect(textRect, Qt::AlignTop|Qt::AlignLeft, second->name);
+                if (!textRect.contains(demandedTextRect)) {
+                    font.setPointSize(10);
+                    painter.setFont(font);
+                    demandedTextRect = painter.boundingRect(textRect, Qt::AlignTop|Qt::AlignLeft, second->name);
+                    if (!textRect.contains(demandedTextRect)) {
+                        // fall back to use smallest useful font / even if text may be clipped
+                        font.setPointSize(8);
+                        painter.setFont(font);
+                    }
+                }
+            }
+            painter.drawText(textRect, Qt::AlignTop|Qt::AlignLeft, second->name);
         }
+    }
+
+    // paint the text for level 1 now - to not overlap it with gray/alpha coming from level 2 drawing overlay
+    textPen.setColor(Qt::black);
+    font.setPointSize(18);
+    painter.setFont(font);
+    painter.setPen(textPen);
+    foreach (TreeMap *first, root->children) {
+        painter.drawText(first->rect,
+                         Qt::AlignVCenter|Qt::AlignHCenter,
+                         first->name);
+    }
 }
 
 bool

@@ -24,6 +24,8 @@
 
 class RideNavigator;
 class MainWindow;
+class ProgressLine;
+class QPaintEvent;
 
 class Tab: public QWidget
 {
@@ -40,8 +42,6 @@ class Tab: public QWidget
         TabView *view(int index);
 
         RideNavigator *rideNavigator(); // to get logical headings
-        IntervalNavigator *routeNavigator(); // to get logical headings
-        IntervalNavigator *bestNavigator(); // to get logical headings
 
     protected:
 
@@ -91,7 +91,6 @@ class Tab: public QWidget
         HomeView *homeView;
         TrainView *trainView;
         DiaryView *diaryView;
-        IntervalView *intervalView;
 
         // Chart Settings Dialog
         ChartSettings *chartSettings;
@@ -104,4 +103,18 @@ class Tab: public QWidget
 
 };
 
+// 1px high progressline only visible when refreshing ..
+class ProgressLine : public QWidget
+{
+    Q_OBJECT
+
+    public:
+        ProgressLine(QWidget *parent, Context *context);
+
+    public slots:
+        void paintEvent (QPaintEvent *event);
+
+    private:
+        Context *context;
+};
 #endif // _GC_TabView_h

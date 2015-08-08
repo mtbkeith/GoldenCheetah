@@ -20,8 +20,17 @@
 #include "MainWindow.h"
 #include "Context.h"
 #include "Athlete.h"
+#include "RideCache.h"
 #include "Settings.h"
+#include "GcUpgrade.h" // for URL to config at www.goldencheetah.org/
+#include "Colors.h"
 #include "Units.h"
+#include "HelpWhatsThis.h"
+
+#include "GcWindowRegistry.h" // for GcWinID types
+#include "HomeWindow.h" // for GcWindowDialog
+#include "LTMWindow.h" // for LTMWindow::settings()
+#include "LTMChartParser.h" // for LTMChartParser::serialize && ChartTreeView
 
 #include <QApplication>
 #include <QWebView>
@@ -39,18 +48,19 @@
 #include <QXmlSimpleReader>
 
 // named searchs
+#include "FreeSearch.h"
 #include "NamedSearch.h"
 #include "DataFilter.h"
-#ifdef GC_HAVE_LUCENE
-#include "Lucene.h"
-#endif
+
+// ride cache
+#include "RideCache.h"
+#include "RideItem.h"
+#include "Specification.h"
 
 // metadata support
 #include "RideMetadata.h"
 #include "SpecialFields.h"
 
-#include "MetricAggregator.h"
-#include "SummaryMetrics.h"
 
 LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context(context), active(false),
                                            isqueryfilter(false), isautofilter(false)
@@ -86,7 +96,10 @@ LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context
 #endif
     seasonsWidget->addWidget(dateRangeTree);
 
-    // events
+    HelpWhatsThis *helpDateRange = new HelpWhatsThis(dateRangeTree);
+    dateRangeTree->setWhatsThis(helpDateRange->getWhatsThisText(HelpWhatsThis::SideBarTrendsView_DateRanges));
+
+     // events
     eventsWidget = new GcSplitterItem(tr("Events"), iconFromPNG(":images/sidebar/bookmark.png"), this);
     QAction *moreEventAct = new QAction(iconFromPNG(":images/sidebar/extra.png"), tr("Menu"), this);
     eventsWidget->addAction(moreEventAct);
@@ -112,22 +125,28 @@ LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context
     cde = QStyleFactory::create(OS_STYLE);
     eventTree->verticalScrollBar()->setStyle(cde);
 #endif
+
     eventsWidget->addWidget(eventTree);
+
+    HelpWhatsThis *helpEventsTree = new HelpWhatsThis(eventTree);
+    eventTree->setWhatsThis(helpEventsTree->getWhatsThisText(HelpWhatsThis::SideBarTrendsView_Events));
 
     // charts
     chartsWidget = new GcSplitterItem(tr("Charts"), iconFromPNG(":images/sidebar/charts.png"), this);
 
-    //XXX Chart Widget Actions Pending
-    //XXXQAction *moreChartAct = new QAction(iconFromPNG(":images/sidebar/extra.png"), tr("Menu"), this);
-    //XXXchartsWidget->addAction(moreChartAct);
-    //XXXconnect(moreEventAct, SIGNAL(triggered(void)), this, SLOT(eventPopup(void)));
+    // Chart Widget Actions
+    QAction *moreChartAct = new QAction(iconFromPNG(":images/sidebar/extra.png"), tr("Menu"), this);
+    chartsWidget->addAction(moreChartAct);
+    connect(moreChartAct, SIGNAL(triggered(void)), this, SLOT(presetPopup(void)));
 
-    chartTree = new QTreeWidget;
+    chartTree = new ChartTreeView(context);
     chartTree->setFrameStyle(QFrame::NoFrame);
     allCharts = chartTree->invisibleRootItem();
     allCharts->setText(0, tr("Events"));
+    allCharts->setFlags(Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
     chartTree->setColumnCount(1);
-    chartTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    chartTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    chartTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     chartTree->header()->hide();
     chartTree->setIndentation(5);
     chartTree->expandItem(allCharts);
@@ -143,11 +162,13 @@ LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context
 #endif
     chartsWidget->addWidget(chartTree);
 
+    HelpWhatsThis *helpChartsTree = new HelpWhatsThis(chartTree);
+    chartTree->setWhatsThis(helpChartsTree->getWhatsThisText(HelpWhatsThis::SideBarTrendsView_Charts));
+
     // setup for first time
     presetsChanged();
 
     // filters
-#ifdef GC_HAVE_LUCENE
     filtersWidget = new GcSplitterItem(tr("Filters"), iconFromPNG(":images/toolbar/filter3.png"), this);
     QAction *moreFilterAct = new QAction(iconFromPNG(":images/sidebar/extra.png"), tr("Menu"), this);
     filtersWidget->addAction(moreFilterAct);
@@ -179,21 +200,21 @@ LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context
     // we cast the filter tree and this because we use the same constructor XXX fix this!!!
     filterSplitter = new GcSubSplitter(Qt::Vertical, (GcSplitterControl*)filterTree, (GcSplitter*)this, true);
     filtersWidget->addWidget(filterSplitter);
-#endif
+
+    HelpWhatsThis *helpFilterTree = new HelpWhatsThis(filterTree);
+    filterTree->setWhatsThis(helpFilterTree->getWhatsThisText(HelpWhatsThis::SideBarTrendsView_Filter));
 
     seasons = context->athlete->seasons;
     resetSeasons(); // reset the season list
     resetFilters(); // reset the filters list
 
     autoFilterMenu = new QMenu(tr("Autofilter"),this);
-    configChanged(); // will reset the metric tree and the autofilters
+    configChanged(CONFIG_APPEARANCE); // will reset the metric tree and the autofilters
 
     splitter = new GcSplitter(Qt::Vertical);
     splitter->addWidget(seasonsWidget); // goes alongside events
     splitter->addWidget(eventsWidget); // goes alongside date ranges
-#ifdef GC_HAVE_LUCENE
     splitter->addWidget(filtersWidget);
-#endif
     splitter->addWidget(chartsWidget); // for charts that 'use sidebar chart' charts ! (confusing or what?!)
 
     GcSplitterItem *summaryWidget = new GcSplitterItem(tr("Summary"), iconFromPNG(":images/sidebar/dashboard.png"), this);
@@ -206,6 +227,9 @@ LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context
     summary->setAcceptDrops(false);
 
     summaryWidget->addWidget(summary);
+
+    HelpWhatsThis *helpSummary = new HelpWhatsThis(summary);
+    summary->setWhatsThis(helpSummary->getWhatsThisText(HelpWhatsThis::SideBarTrendsView_Summary));
 
     QFont defaultFont; // mainwindow sets up the defaults.. we need to apply
     summary->settings()->setFontSize(QWebSettings::DefaultFontSize, defaultFont.pointSize());
@@ -221,25 +245,27 @@ LTMSidebar::LTMSidebar(Context *context) : QWidget(context->mainWindow), context
     connect(dateRangeTree,SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(dateRangePopup(const QPoint &)));
     connect(dateRangeTree,SIGNAL(itemChanged(QTreeWidgetItem *,int)), this, SLOT(dateRangeChanged(QTreeWidgetItem*, int)));
     connect(dateRangeTree,SIGNAL(itemMoved(QTreeWidgetItem *,int, int)), this, SLOT(dateRangeMoved(QTreeWidgetItem*, int, int)));
-#ifdef GC_HAVE_LUCENE
+    connect(this, SIGNAL(dateRangeChanged(DateRange)), this, SLOT(setSummary(DateRange)));
+
+    // filters
     connect(filterTree,SIGNAL(itemSelectionChanged()), this, SLOT(filterTreeWidgetSelectionChanged()));
-#endif
+
+    // events
     connect(eventTree,SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(eventPopup(const QPoint &)));
 
+    // presets
+    connect(chartTree,SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(presetPopup(const QPoint &)));
+    connect(chartTree,SIGNAL(itemSelectionChanged()), this, SLOT(presetSelectionChanged()));
+
     // GC signal
-#ifdef GC_HAVE_LUCENE
-    connect(context->athlete->metricDB, SIGNAL(dataChanged()), this, SLOT(autoFilterRefresh()));
-#endif
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     connect(seasons, SIGNAL(seasonsChanged()), this, SLOT(resetSeasons()));
     connect(context->athlete, SIGNAL(namedSearchesChanged()), this, SLOT(resetFilters()));
-
-    connect(this, SIGNAL(dateRangeChanged(DateRange)), this, SLOT(setSummary(DateRange)));
     connect(context, SIGNAL(presetsChanged()), this, SLOT(presetsChanged()));
-    connect(chartTree,SIGNAL(itemSelectionChanged()), this, SLOT(presetTreeWidgetSelectionChanged()));
+    connect(context, SIGNAL(presetSelected(int)), this, SLOT(presetSelected(int)));
 
     // setup colors
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 }
 
 void
@@ -250,18 +276,39 @@ LTMSidebar::presetsChanged()
     foreach(LTMSettings chart, context->athlete->presets) {
         QTreeWidgetItem *add;
         add = new QTreeWidgetItem(chartTree->invisibleRootItem());
-        add->setFlags(add->flags() | Qt::ItemIsEditable);
+        add->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled);
         add->setText(0, chart.name);
     }
     chartTree->setCurrentItem(chartTree->invisibleRootItem()->child(0));
 }
 
 void
-LTMSidebar::presetTreeWidgetSelectionChanged()
+LTMSidebar::presetSelected(int index)
+{
+    // select it if it isn't selected now
+    if (index < allCharts->childCount() && allCharts->child(index)->isSelected() == false) {
+
+        // lets clear the current selections and select the one we want 
+        // blocking signals to prevent endless loops
+        chartTree->blockSignals(true);
+
+        // clear
+        foreach(QTreeWidgetItem *p, chartTree->selectedItems()) p->setSelected(false);
+
+        // now select!
+        allCharts->child(index)->setSelected(true);
+
+        // back to normal
+        chartTree->blockSignals(false);
+    }
+}
+
+void
+LTMSidebar::presetSelectionChanged()
 {
     if (!chartTree->selectedItems().isEmpty()) {
         QTreeWidgetItem *which = chartTree->selectedItems().first();
-        if (which != allDateRanges) {
+        if (which != allCharts) {
             int index = allCharts->indexOfChild(which);
             if (index >=0 && index < context->athlete->presets.count())
                 context->notifyPresetSelected(index);
@@ -270,15 +317,12 @@ LTMSidebar::presetTreeWidgetSelectionChanged()
 }
 
 void
-LTMSidebar::configChanged()
+LTMSidebar::configChanged(qint32)
 {
     seasonsWidget->setStyleSheet(GCColor::stylesheet());
     eventsWidget->setStyleSheet(GCColor::stylesheet());
     chartsWidget->setStyleSheet(GCColor::stylesheet());
-#ifdef GC_HAVE_LUCENE
     filtersWidget->setStyleSheet(GCColor::stylesheet());
-#endif
-
     setAutoFilterMenu();
 
     // set or reset the autofilter widgets
@@ -354,7 +398,10 @@ LTMSidebar::resetSeasons()
     for (i=allDateRanges->childCount(); i > 0; i--) {
         delete allDateRanges->takeChild(0);
     }
-    QString id = appsettings->cvalue(context->athlete->cyclist, GC_LTM_LAST_DATE_RANGE, seasons->seasons.at(0).id().toString()).toString();
+
+    // by default choose last 3 months not first one, since the first one is all dates
+    // and that means aggregating all data when first starting...
+    QString id = appsettings->cvalue(context->athlete->cyclist, GC_LTM_LAST_DATE_RANGE, "{00000000-0000-0000-0000-000000000012}").toString();
     for (i=0; i <seasons->seasons.count(); i++) {
         Season season = seasons->seasons.at(i);
         QTreeWidgetItem *add = new QTreeWidgetItem(allDateRanges, season.getType());
@@ -545,17 +592,14 @@ LTMSidebar::eventPopup()
 void
 LTMSidebar::manageFilters()
 {
-#ifdef GC_HAVE_LUCENE
     EditNamedSearches *editor = new EditNamedSearches(this, context);
     editor->move(QCursor::pos()+QPoint(10,-200));
     editor->show();
-#endif
 }
 
 void
 LTMSidebar::setAutoFilterMenu()
 {
-#ifdef GC_HAVE_LUCENE
     active = true;
 
     QStringList on = appsettings->cvalue(context->athlete->cyclist, GC_LTM_AUTOFILTERS, tr("Workout Code|Sport")).toString().split("|");
@@ -587,7 +631,6 @@ LTMSidebar::setAutoFilterMenu()
         }
     }
     active = false;
-#endif
 }
 
 void 
@@ -631,12 +674,15 @@ LTMSidebar::autoFilterChanged()
             item->addWidget(tree);
             filterSplitter->addWidget(item);
 
+            HelpWhatsThis *helpFilterTree = new HelpWhatsThis(tree);
+            tree->setWhatsThis(helpFilterTree->getWhatsThisText(HelpWhatsThis::SideBarTrendsView_Filter));
+
             // Convert field names for Internal to Display (to work with the translated values)
             SpecialFields sp;
             // update the values available in the tree
             foreach(FieldDefinition field, context->athlete->rideMetadata()->getFields()) {
                 if (sp.displayName(field.name) == action->text()) {
-                    foreach (QString value, context->athlete->metricDB->db()->getDistinctValues(field)) {
+                    foreach (QString value, context->athlete->rideCache->getDistinctValues(field.name)) {
                         if (value == "") value = tr("(blank)");
                         QTreeWidgetItem *add = new QTreeWidgetItem(tree->invisibleRootItem(), 0);
 
@@ -683,7 +729,6 @@ LTMSidebar::autoFilterChanged()
 void 
 LTMSidebar::filterTreeWidgetSelectionChanged()
 {
-#ifdef GC_HAVE_LUCENE
     int selected = filterTree->selectedItems().count();
 
     if (selected) {
@@ -711,7 +756,7 @@ LTMSidebar::filterTreeWidgetSelectionChanged()
             case NamedSearch::search :
                 {
                     // use clucence
-                    Lucene s(this, context);
+                    FreeSearch s(this, context);
                     results = s.search(ns.text);
                 }
 
@@ -741,7 +786,6 @@ LTMSidebar::filterTreeWidgetSelectionChanged()
 
     // tell the world
     filterNotify();
-#endif
 }
 
 void
@@ -796,7 +840,7 @@ LTMSidebar::autoFilterRefresh()
         // update the values available in the tree
         foreach(FieldDefinition field, context->athlete->rideMetadata()->getFields()) {
             if (field.name == fieldname) {
-                foreach (QString value, context->athlete->metricDB->db()->getDistinctValues(field)) {
+                foreach (QString value, context->athlete->rideCache->getDistinctValues(field.name)) {
                     if (value == "") value = tr("(blank)");
                     QTreeWidgetItem *add = new QTreeWidgetItem(tree->invisibleRootItem(), 0);
 
@@ -813,7 +857,6 @@ void
 LTMSidebar::autoFilterSelectionChanged()
 {
     // only fetch when we know we need to filter ..
-    QList<SummaryMetrics> allRides;
     QSet<QString> matched;
 
     // assume nothing to do...
@@ -831,29 +874,26 @@ LTMSidebar::autoFilterSelectionChanged()
             // we have a selection!
             if (isautofilter == false) {
                 isautofilter = true;
-                allRides = context->athlete->metricDB->getAllMetricsFor(QDateTime(), QDateTime());
-                foreach(SummaryMetrics x, allRides) matched << x.getFileName();
+                foreach(RideItem *x, context->athlete->rideCache->rides()) matched << x->fileName;
             }
 
-            // translate fields back from Display Name to internal Name !
-            SpecialFields sp;
-
             // what is the field?
-            QString fieldname = sp.internalName(item->splitterHandle->title());
+            QString fieldname = item->splitterHandle->title();
 
             // what values are highlighted
             QStringList values;
-            foreach (QTreeWidgetItem *wi, tree->selectedItems()) values << sp.internalName(wi->text(0));
+            foreach (QTreeWidgetItem *wi, tree->selectedItems()) 
+                values << wi->text(0);
 
             // get a set of filenames that match
             QSet<QString> matches;
-            foreach(SummaryMetrics x, allRides) {
+            foreach(RideItem *x, context->athlete->rideCache->rides()) {
 
                 // we use XXX___XXX___XXX because it is not likely to exist
-                QString value = x.getText(fieldname, "XXX___XXX___XXX");
+                QString value = x->getText(fieldname, "XXX___XXX___XXX");
                 if (value == "") value = tr("(blank)"); // match blanks!
 
-                if (values.contains(value)) matches << x.getFileName();
+                if (values.contains(value)) matches << x->fileName;
             }
 
             // now remove items from the matched list that
@@ -872,7 +912,6 @@ LTMSidebar::autoFilterSelectionChanged()
 void
 LTMSidebar::resetFilters()
 {
-#ifdef GC_HAVE_LUCENE
     if (active == true) return;
 
     active = true;
@@ -891,13 +930,11 @@ LTMSidebar::resetFilters()
     }
 
     active = false;
-#endif
 }
 
 void
 LTMSidebar::filterPopup()
 {
-#ifdef GC_HAVE_LUCENE
     // is one selected for deletion?
     int selected = filterTree->selectedItems().count();
 
@@ -922,13 +959,11 @@ LTMSidebar::filterPopup()
 
     // execute the menu
     menu.exec(splitter->mapToGlobal(QPoint(filtersWidget->pos().x()+filtersWidget->width()-20, filtersWidget->pos().y())));
-#endif
 }
 
 void
 LTMSidebar::deleteFilter()
 {
-#ifdef GC_HAVE_LUCENE
     if (filterTree->selectedItems().count() <= 0) return;
 
     active = true; // no need to reset tree when items deleted from model!
@@ -940,7 +975,6 @@ LTMSidebar::deleteFilter()
         context->athlete->namedSearches->deleteNamedSearch(index);
     }
     active = false;
-#endif
 }
 
 void
@@ -988,6 +1022,13 @@ LTMSidebar::addRange()
 
         active = true;
 
+        // check dates are right way round...
+        if (newOne.start > newOne.end) {
+            QDate temp = newOne.start;
+            newOne.start = newOne.end;
+            newOne.end = temp;
+        }
+
         // save 
         seasons->seasons.insert(0, newOne);
         seasons->writeSeasons();
@@ -1015,6 +1056,13 @@ LTMSidebar::editRange()
     if (dialog.exec()) {
 
         active = true;
+
+        // check dates are right way round...
+        if (seasons->seasons[index].start > seasons->seasons[index].end) {
+            QDate temp = seasons->seasons[index].start;
+            seasons->seasons[index].start = seasons->seasons[index].end;
+            seasons->seasons[index].end = temp;
+        }
 
         // update name
         dateRangeTree->selectedItems().first()->setText(0, seasons->seasons[index].getName());
@@ -1181,8 +1229,8 @@ LTMSidebar::setSummary(DateRange dateRange)
         from = newFrom;
         to = newTo;
 
-        // lets get the metrics
-        QList<SummaryMetrics>results = context->athlete->metricDB->getAllMetricsFor(QDateTime(from,QTime(0,0,0)), QDateTime(to, QTime(24,59,59)));
+        Specification spec;
+        spec.setDateRange(DateRange(from,to));
 
         // foreach of the metrics get an aggregated value
         // header of summary
@@ -1235,7 +1283,7 @@ LTMSidebar::setSummary(DateRange dateRange)
                 const RideMetric *metric = RideMetricFactory::instance().rideMetric(metricname);
 
                 QStringList empty; // filter list not used at present
-                QString value = SummaryMetrics::getAggregated(context, metricname, results, empty, false, context->athlete->useMetricUnits);
+                QString value = context->athlete->rideCache->getAggregate(metricname, spec, context->athlete->useMetricUnits);
 
                 // Maximum Max and Average Average looks nasty, remove from name for display
                 QString s = metric ? metric->name().replace(QRegExp(tr("^(Average|Max) ")), "") : "unknown";
@@ -1269,4 +1317,287 @@ LTMSidebar::setSummary(DateRange dateRange)
         summary->page()->mainFrame()->setHtml(summaryText);
 
     }
+}
+
+//
+// Preset chart functions
+//
+void
+LTMSidebar::presetPopup(QPoint)
+{
+}
+
+void
+LTMSidebar::presetPopup()
+{
+    // item points to selection, if it exists
+    QTreeWidgetItem *item = chartTree->selectedItems().count() ? chartTree->selectedItems().at(0) : NULL;
+
+    // OK - we are working with a specific event..
+    QMenu menu(chartTree);
+    QAction *add = new QAction(tr("Add Chart"), chartTree);
+    menu.addAction(add);
+    connect(add, SIGNAL(triggered(void)), this, SLOT(addPreset(void)));
+
+    if (item != NULL) {
+
+        if (chartTree->selectedItems().count() == 1) {
+            QAction *edit = new QAction(tr("Edit Chart"), chartTree);
+            QAction *del = new QAction(tr("Delete Chart"), chartTree);
+
+            menu.addAction(edit);
+            menu.addAction(del);
+
+            connect(edit, SIGNAL(triggered(void)), this, SLOT(editPreset(void)));
+            connect(del, SIGNAL(triggered(void)), this, SLOT(deletePreset(void)));
+
+        } else {
+            QAction *del = new QAction(tr("Delete Selected Charts"), chartTree);
+            menu.addAction(del);
+            connect(del, SIGNAL(triggered(void)), this, SLOT(deletePreset(void)));
+        }
+
+        menu.addSeparator();
+        QAction *exp = NULL;
+        if (chartTree->selectedItems().count() == 1) {
+            exp = new QAction(tr("Export Chart"), chartTree);
+        } else {
+            exp = new QAction(tr("Export Selected Charts"), chartTree);
+        }
+        // connect menu to functions
+        menu.addAction(exp);
+        connect(exp, SIGNAL(triggered(void)), this, SLOT(exportPreset(void)));
+
+    } else {
+
+        // for the import/reset options
+        menu.addSeparator();
+    }
+
+    QAction *import = new QAction(tr("Import Charts"), chartTree);
+    menu.addAction(import);
+    connect(import, SIGNAL(triggered(void)), this, SLOT(importPreset(void)));
+
+    // this one needs to be in a corner away from the crowd
+    menu.addSeparator();
+
+    QAction *reset = new QAction(tr("Reset to default"), chartTree);
+    menu.addAction(reset);
+    connect(reset, SIGNAL(triggered(void)), this, SLOT(resetPreset(void)));
+
+    // execute the menu
+    menu.exec(splitter->mapToGlobal(QPoint(chartsWidget->pos().x()+chartsWidget->width()-20,
+                                           chartsWidget->pos().y())));
+}
+
+void
+LTMSidebar::presetMoved(QTreeWidgetItem *, int, int)
+{
+}
+
+void
+LTMSidebar::addPreset()
+{
+    GcWindow *newone = NULL;
+
+    // GcWindowDialog is delete on close, so no need to delete
+    GcWindowDialog *f = new GcWindowDialog(GcWindowTypes::LTM, context, &newone, true);
+    f->exec();
+
+    // returns null if cancelled or closed
+    if (newone) {
+        // append to the chart list ...
+        LTMSettings set = static_cast<LTMWindow*>(newone)->getSettings();
+        set.name = set.title = newone->property("title").toString();
+        context->athlete->presets.append(set);
+
+        // newone
+        newone->close();
+        newone->deleteLater();
+
+        // now wipe it
+        f->hide();
+        f->deleteLater();
+
+        // tell the world
+        context->notifyPresetsChanged();
+    }
+}
+
+void
+LTMSidebar::editPreset()
+{
+    GcWindow *newone = NULL;
+
+    int index = allCharts->indexOfChild(chartTree->selectedItems()[0]);
+
+    // clear bests, it won't be there any more.
+    context->athlete->presets[index].bests = NULL;
+
+    // GcWindowDialog is delete on close, so no need to delete
+    GcWindowDialog *f = new GcWindowDialog(GcWindowTypes::LTM, context, &newone, true, &context->athlete->presets[index]);
+    f->exec();
+
+    // returns null if cancelled or closed
+    if (newone) {
+
+        // append to the chart list ...
+        LTMSettings set = static_cast<LTMWindow*>(newone)->getSettings();
+        set.name = set.title = newone->property("title").toString();
+        context->athlete->presets[index] = set;
+
+        // newone
+        newone->close();
+        newone->deleteLater();
+
+        // now wipe it
+        f->hide();
+        f->deleteLater();
+
+        // tell the world
+        context->notifyPresetsChanged();
+    }
+}
+
+void
+LTMSidebar::deletePreset()
+{
+    // zap all selected
+    for(int index=allCharts->childCount()-1; index>0; index--) 
+        if (allCharts->child(index)->isSelected())
+            context->athlete->presets.removeAt(index);
+
+    context->notifyPresetsChanged();
+}
+
+void
+LTMSidebar::exportPreset()
+{
+    // get a filename to export to...
+    QString filename = QFileDialog::getSaveFileName(this, tr("Export Charts"), QDir::homePath() + "/charts.xml", tr("Chart File (*.xml)"));
+
+    // nothing given
+    if (filename.length() == 0) return;
+
+    // get a list
+    QList<LTMSettings> these;
+
+    for(int index=0; index<allCharts->childCount(); index++)
+        if (allCharts->child(index)->isSelected())
+            these << context->athlete->presets[index];
+
+    LTMChartParser::serialize(filename, these);
+}
+
+void
+LTMSidebar::importPreset()
+{
+    QFileDialog existing(this);
+    existing.setFileMode(QFileDialog::ExistingFile);
+    existing.setNameFilter(tr("Chart File (*.xml)"));
+
+    if (existing.exec()){
+
+        // we will only get one (ExistingFile not ExistingFiles)
+        QStringList filenames = existing.selectedFiles();
+
+        if (QFileInfo(filenames[0]).exists()) {
+
+            QList<LTMSettings> imported;
+            QFile chartsFile(filenames[0]);
+
+            // setup XML processor
+            QXmlInputSource source( &chartsFile );
+            QXmlSimpleReader xmlReader;
+            LTMChartParser handler;
+            xmlReader.setContentHandler(&handler);
+            xmlReader.setErrorHandler(&handler);
+
+            // parse and get return values
+            xmlReader.parse(source);
+            imported = handler.getSettings();
+
+            // now append to the QList and QTreeWidget
+            context->athlete->presets += imported;
+
+            // notify we changed and tree updates
+            context->notifyPresetsChanged();
+
+        } else {
+            // oops non existent - does this ever happen?
+            QMessageBox::warning( 0, tr("Entry Error"), QString(tr("Selected file (%1) does not exist")).arg(filenames[0]));
+        }
+    }
+}
+
+void
+LTMSidebar::resetPreset()
+{
+    // confirm user is committed to this !
+    QMessageBox msgBox;
+    msgBox.setText(tr("You are about to reset the chart sidebar to the default setup"));
+    msgBox.setInformativeText(tr("Do you want to continue?"));
+    msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
+    msgBox.setDefaultButton(QMessageBox::Cancel);
+    msgBox.setIcon(QMessageBox::Warning);
+    msgBox.exec();
+
+    if(msgBox.clickedButton() != msgBox.button(QMessageBox::Ok)) return;
+
+    // for getting config
+    QNetworkAccessManager nam;
+    QString content;
+
+    // remove the current saved version
+    QFile::remove(context->athlete->home->config().canonicalPath() + "/charts.xml");
+
+    // fetch from the goldencheetah.org website
+    QString request = QString("%1/charts.xml").arg(VERSION_CONFIG_PREFIX);
+    QNetworkReply *reply = nam.get(QNetworkRequest(QUrl(request)));
+
+    // request submitted ok
+    if (reply->error() == QNetworkReply::NoError) {
+
+        // lets wait for a response with an event loop
+        // it quits on a 5s timeout or reply coming back
+        QEventLoop loop;
+        QTimer timer;
+        timer.setSingleShot(true);
+        connect(&timer, SIGNAL(timeout()), &loop, SLOT(quit()));
+        connect(reply, SIGNAL(finished()), &loop, SLOT(quit()));
+        timer.start(5000);
+
+        // lets block until signal received
+        loop.exec(QEventLoop::WaitForMoreEvents);
+
+        // all good?
+        if (reply->error() == QNetworkReply::NoError) {
+            content = reply->readAll();
+        }
+    }
+
+    //  if we don't have content read from resource
+    if (content == "") {
+
+        QFile file(":xml/charts.xml");
+        if (file.open(QIODevice::ReadOnly)) {
+            content = file.readAll();
+            file.close();
+        }
+    }
+
+    // still nowt? give up.
+    if (content == "") return;
+
+    // we should have content now !
+    QFile chartsxml(context->athlete->home->config().canonicalPath() + "/charts.xml");
+    chartsxml.open(QIODevice::WriteOnly);
+    QTextStream out(&chartsxml);
+    out << content;
+    chartsxml.close();
+
+    // following 2 lines could be managed by athlete, but its just a container really
+    // load and tell the world to reset
+    context->athlete->loadCharts();
+    context->notifyPresetsChanged(); 
 }

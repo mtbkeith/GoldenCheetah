@@ -21,17 +21,16 @@
 #include "GoldenCheetah.h"
 
 #include "Context.h"
-#include "MetricAggregator.h"
 #include "RideMetadata.h"
-#include "DBAccess.h"
 #include "Context.h"
 #include "Settings.h"
 #include "Colors.h"
 
-#include <QSqlTableModel>
-#include <QTableView>
+#include <QTreeView>
+#include <QItemDelegate>
 #include <QHeaderView>
 #include <QScrollBar>
+#include <QScrollArea>
 #include <QDragMoveEvent>
 #include <QDragEnterEvent>
 
@@ -86,8 +85,9 @@ class RideNavigator : public GcWindow
 
     public slots:
 
-        void configChanged();
+        void configChanged(qint32);
         void refresh();
+        void backgroundRefresh(); // keep up with bg refreshes
 
         void showEvent(QShowEvent *event);
 
@@ -110,6 +110,9 @@ class RideNavigator : public GcWindow
         // user changed sort order, so ride is off screen
         // bring it back in view
         void cursorRide();
+
+        // if current ride is deleted we need to invaldate
+        void rideDeleted(RideItem*);
 
         // user selection so line up
         void selectionChanged(QItemSelection);
@@ -217,11 +220,12 @@ public:
 
     // override stanard painter to use color config to paint background
     // and perform correct level of rounding for each column before displaying
-    // it will also override the values returned from metricDB with in-core values
-    // when the ride has been modified but not saved (i.e. data is dirty)
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const;
 
     void setWidth(int x) { pwidth=x; }
+
+public slots:
+    bool helpEvent(QHelpEvent*, QAbstractItemView*, const QStyleOptionViewItem&, const QModelIndex&);
 
 private slots:
 
@@ -256,7 +260,8 @@ public slots:
     void buttonClicked(QString name);
 
 private:
-    QGridLayout *buttons;
+    QScrollArea *scrollarea;
+    QVBoxLayout *buttons;
     QSignalMapper *clicked;
 };
 

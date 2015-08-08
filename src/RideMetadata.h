@@ -22,6 +22,7 @@
 
 #include "Context.h"
 #include "SpecialFields.h"
+
 #include <QWidget>
 #include <QLabel>
 #include <QCheckBox>
@@ -49,20 +50,26 @@ class KeywordDefinition
         QString name;       // keyword for autocomplete
         QColor  color;      // color to highlight with
         QStringList tokens; // texts to find from notes
+
+        static unsigned long fingerprint(QList<KeywordDefinition>);
 };
 
 class FieldDefinition
 {
     public:
+
         QString tab,
                 name;
         int type;
         bool diary; // show in summary on diary page...
         QStringList values; // autocomplete 'defaults'
 
-    FieldDefinition() : tab(""), name(""), type(0), diary(false), values() {}
-    FieldDefinition(QString tab, QString name, int type, bool diary, QStringList values)
-                      : tab(tab), name(name), type(type), diary(diary), values(values) {}
+        static unsigned long fingerprint(QList<FieldDefinition>);
+        QCompleter *getCompleter(QObject *parent);
+
+        FieldDefinition() : tab(""), name(""), type(0), diary(false), values() {}
+        FieldDefinition(QString tab, QString name, int type, bool diary, QStringList values)
+                        : tab(tab), name(name), type(type), diary(diary), values(values) {}
 };
 
 class FormField : public QWidget
@@ -80,11 +87,15 @@ class FormField : public QWidget
         QWidget *widget;            // updating widget
         QCompleter *completer;      // for completion
 
+        void setLinkedDefault(QString text);    // set linked fields with default value
+
     public slots:
         void dataChanged();         // from the widget - we changed something
         void editFinished();        // from the widget - we finished editing this field
         void metadataChanged();     // from GC - a new ride got picked / changed elsewhere
         void stateChanged(int);     // should we enable/disable the widget?
+        void focusOut(QFocusEvent *event=NULL);
+        void metadataFlush();       // update all the tags to whatever is edited now
 
     private:
         RideMetadata *meta;
@@ -118,6 +129,20 @@ class Form : public QScrollArea
 
 };
 
+class DefaultDefinition
+{
+    public:
+        QString field;
+        QString value;
+        QString linkedField;
+        QString linkedValue;
+
+
+    DefaultDefinition() : field(""), value(""), linkedField(""), linkedValue("") {}
+    DefaultDefinition(QString field, QString value, QString linkedField, QString linkedValue)
+                      : field(field), value(value), linkedField(linkedField), linkedValue(linkedValue) {}
+};
+
 class RideMetadata : public QWidget
 {
     Q_OBJECT
@@ -127,16 +152,20 @@ class RideMetadata : public QWidget
 
     public:
         RideMetadata(Context *, bool singlecolumn = false);
-        static void serialize(QString filename, QList<KeywordDefinition>, QList<FieldDefinition>, QString colofield);
-        static void readXML(QString filename, QList<KeywordDefinition>&, QList<FieldDefinition>&, QString &colorfield);
+        static void serialize(QString filename, QList<KeywordDefinition>, QList<FieldDefinition>, QString colofield, QList<DefaultDefinition>defaultDefinitions);
+        static void readXML(QString filename, QList<KeywordDefinition>&, QList<FieldDefinition>&, QString &colorfield, QList<DefaultDefinition>&defaultDefinitions);
         QList<KeywordDefinition> getKeywords() { return keywordDefinitions; }
         QList<FieldDefinition> getFields() { return fieldDefinitions; }
+        QList<DefaultDefinition> getDefaults() { return defaultDefinitions; }
 
         QString getColorField() const { return colorfield; }
         void setColorField(QString x) { colorfield = x; }
 
         void setRideItem(RideItem *x);
         RideItem *rideItem() const;
+
+        void addFormField(FormField *f);
+        QVector<FormField*> getFormFields();
 
         bool singlecolumn;
         SpecialFields sp;
@@ -146,8 +175,10 @@ class RideMetadata : public QWidget
 
         QPalette palette; // to be applied to all widgets
 
+
     public slots:
-        void configUpdate();
+        void configChanged(qint32);
+        void metadataFlush();
         void metadataChanged(); // when its changed elsewhere we need to refresh fields
         void setExtraTab();     // shows fields not configured but present in ride file
         void warnDateTime(QDateTime); // warn if file already exists after date/time changed
@@ -163,6 +194,9 @@ class RideMetadata : public QWidget
     QStringList keywordList; // for completer
     QList<KeywordDefinition> keywordDefinitions;
     QList<FieldDefinition>   fieldDefinitions;
+    QList<DefaultDefinition>   defaultDefinitions;
+
+    QVector<FormField*>   formFields;
 
     QString colorfield;
 };
@@ -180,6 +214,7 @@ public:
     QList<KeywordDefinition> getKeywords() { return keywordDefinitions; }
     QList<FieldDefinition> getFields() { return fieldDefinitions; }
     QString getColorField() { return colorfield; }
+    QList<DefaultDefinition> getDefaults() { return defaultDefinitions; }
 
 protected:
     QString buffer;
@@ -188,11 +223,25 @@ protected:
     QList<KeywordDefinition> keywordDefinitions;
     QList<FieldDefinition>   fieldDefinitions;
     QString colorfield;
+    QList<DefaultDefinition>   defaultDefinitions;
 
     // whilst parsing elements are stored here
     KeywordDefinition keyword;
     FieldDefinition   field;
+    DefaultDefinition   adefault;
     int red, green, blue;
 };
 
+// version of qtextedit with signal when lost focus
+class GTextEdit : public QTextEdit
+{
+    Q_OBJECT
+
+    public:
+        GTextEdit(QWidget*parent) : QTextEdit(parent) {}
+        void focusOutEvent (QFocusEvent *event) { emit focusOut(event); }
+
+    signals:
+        void focusOut(QFocusEvent *);
+};
 #endif

@@ -24,12 +24,37 @@
 #include <QTextStream>
 #include <QVector>
 #include <algorithm> // for std::sort
-#include "math.h"
+#include "cmath"
 
 static int csvFileReaderRegistered =
     RideFileFactory::instance().registerReader(
-        "csv","Comma-Separated Values", new CsvFileReader());
+        "csv","Poweragent / PowerTap (CSV)", new CsvFileReader());
 
+int static periMonth(QString month)
+{
+    if (month == "jan") return 1;
+    if (month == "feb") return 2;
+    if (month == "mar") return 3;
+    if (month == "apr") return 4;
+    if (month == "may") return 5;
+    if (month == "jun") return 6;
+    if (month == "jul") return 7;
+    if (month == "aug") return 8;
+    if (month == "sep") return 9;
+    if (month == "oct") return 10;
+    if (month == "nov") return 11;
+    if (month == "dec") return 12;
+    return QDate::currentDate().month(); // no idea
+}
+
+static QDate periDate(QString date)
+{
+    QStringList parts = date.split("-");
+    if (parts.count() == 2) {
+        return QDate(QDate::currentDate().year(), periMonth(parts[1]), parts[0].toInt());
+    }
+    return QDate::currentDate();
+}
 static QDate moxyDate(QString date)
 {
     QStringList parts = date.split("-");
@@ -93,6 +118,7 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
     int total_pause = 0;
     int currentInterval = 0;
     int prevInterval = 0;
+    double lastKM=0; // when deriving distance from speed
 
     /* Joule 1.0
     Version,Date/Time,Km,Minutes,RPE,Tags,"Weight, kg","Work, kJ",FTP,"Sample Rate, s",Device Type,Firmware Version,Last Updated,Category 1,Category 2
@@ -119,6 +145,10 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
     QRegExp iBikeCSV("iBike,\\d\\d?,[a-z]+", Qt::CaseInsensitive);
     QRegExp moxyCSV("FW Part Number:", Qt::CaseInsensitive);
     QRegExp gcCSV("secs, cad, hr, km, kph, nm, watts, alt, lon, lat, headwind, slope, temp, interval, lrbalance, lte, rte, lps, rps, smo2, thb, o2hb, hhb");
+    QRegExp periCSV("mm-dd,hh:mm:ss,SmO2 Live,SmO2 Averaged,THb,Target Power,Heart Rate,Speed,Power,Cadence");
+    QRegExp freemotionCSV("Stages Data", Qt::CaseInsensitive);
+    QRegExp cpexportCSV("seconds, value,[ model,]* date", Qt::CaseInsensitive);
+
 
     int recInterval = 1;
 
@@ -134,9 +164,16 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
     bool dfpmExists   = false;
     int iBikeVersion  = 0;
 
-    int secsIndex, minutesIndex = -1;
+    int secsIndex=-1;
+    //UNUSED int minutesIndex = -1;
 
-    while (!is.atEnd()) {
+    double precAvg=0.0;
+    //double precWatts=0.0;
+    double precSecs=0.0;
+    double maxWatts=0.0;
+
+    bool eof = false;
+    while (!is.atEnd() && !eof) {
         // the readLine() method doesn't handle old Macintosh CR line endings
         // this workaround will load the the entire file if it has CR endings
         // then split and loop through each line
@@ -221,10 +258,35 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                     ++lineno;
                     continue;
                }
+                else if(periCSV.indexIn(line) != -1) {
+                    csvType = peripedal;
+                    rideFile->setDeviceType("Peripedal");
+                    rideFile->setFileFormat("Peripedal CSV (csv)");
+                    unitsHeader = 1;
+                    recInterval = 1;
+                    ++lineno;
+                    continue;
+               }
                else if(powertapCSV.indexIn(line) != -1) {
                     csvType = powertap;
                     rideFile->setDeviceType("PowerTap");
                     rideFile->setFileFormat("PowerTap CSV (csv)");
+                    unitsHeader = 1;
+                    ++lineno;
+                    continue;
+               }
+               else if(freemotionCSV.indexIn(line) != -1) {
+                    csvType = freemotion;
+                    rideFile->setDeviceType("Freemotion Bike");
+                    rideFile->setFileFormat("Stages Data (csv)");
+                    unitsHeader = 3;
+                    ++lineno;
+                    continue;
+               }
+               else if(cpexportCSV.indexIn(line) != -1) {
+                    csvType = cpexport;
+                    rideFile->setDeviceType("CP Plot Export");
+                    rideFile->setFileFormat("CP Plot Export (csv)");
                     unitsHeader = 1;
                     ++lineno;
                     continue;
@@ -252,6 +314,15 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                     recInterval = (int)line.section(',',4,4).toDouble();
                 }
             }
+
+            if (csvType == freemotion) {
+                if (lineno == 2) {
+                    if (line == "English")
+                        metric = false;
+                }
+            }
+
+
 
             if (csvType == joule && lineno == 2) {
                 // 6,2012-11-27 13:40:41,0,0,0,,55.8,788,227,1,Joule,18.018,,0,
@@ -281,12 +352,12 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                     QString header = i.next();
                     if (timeHeaderSecs.indexIn(header) != -1)  {
                         secsIndex = headers.indexOf(header);
-                    } else if (timeHeaderMins.indexIn(header) != -1)  {
+                    }/* UNUSED else if (timeHeaderMins.indexIn(header) != -1)  {
                         minutesIndex = headers.indexOf(header);
-                    }
+                    } */
                 }
             }
-            else if (lineno == unitsHeader && csvType != moxy) {
+            else if (lineno == unitsHeader && csvType != moxy && csvType != peripedal) {
                 if (metricUnits.indexIn(line) != -1)
                     metric = true;
                 else if (englishUnits.indexIn(line) != -1)
@@ -314,9 +385,11 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                 double lte = 0.0, rte = 0.0;
                 double lps = 0.0, rps = 0.0;
                 double smo2 = 0.0, thb = 0.0;
-                double o2hb = 0.0, hhb = 0.0;
+                //UNUSED double o2hb = 0.0, hhb = 0.0;
                 int interval=0;
                 int pause=0;
+
+
                 quint64 ms;
 
                 if (csvType == powertap || csvType == joule) {
@@ -370,8 +443,75 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                     rps = line.section(',', 18, 18).toInt();
                     smo2 = line.section(',', 19, 19).toInt();
                     thb = line.section(',', 20, 20).toInt();
-                    o2hb = line.section(',', 21, 21).toInt();
-                    hhb = line.section(',', 22, 22).toInt();
+                    //UNUSED o2hb = line.section(',', 21, 21).toInt();
+                    //UNUSED hhb = line.section(',', 22, 22).toInt();
+
+                } else if (csvType == peripedal) {
+
+                    //mm-dd,hh:mm:ss,SmO2 Live,SmO2 Averaged,THb,Target Power,Heart Rate,Speed,Power,Cadence
+                    // ignore lines with wrong number of entries
+                    if (line.split(",").count() != 10) continue;
+
+                    seconds = moxySeconds(line.section(',',1,1));
+                    minutes = seconds / 60.0f;
+
+                    if (startTime == QDateTime()) {
+                        QDate date = periDate(line.section(',',0,0));
+                        QTime time = QTime(0,0,0).addSecs(seconds);
+                        startTime = QDateTime(date,time);
+                    }
+
+                    double aSmo2 = line.section(',', 3, 3).toDouble();
+                    smo2 = line.section(',', 2, 2).toDouble();
+
+                    // use average if live not available
+                    if (aSmo2 && !smo2) smo2 = aSmo2;
+
+                    thb = line.section(',', 4, 4).toDouble();
+                    hr = line.section(',', 6, 6).toDouble();
+                    kph = line.section(',', 7, 7).toDouble();
+                    watts = line.section(',', 8, 8).toDouble();
+                    cad = line.section(',', 10, 10).toDouble();
+
+                    // dervice distance from speed
+                    km = lastKM + (kph/3600.0f);
+                    lastKM = km;
+
+                    nm = 0;
+                    alt = 0;
+                    lon = 0;
+                    lat = 0;
+                    headwind = 0;
+                    slope = 0;
+                    temp = 0;
+                    interval = 0;
+                    lrbalance = 0;
+                    lte = 0;
+                    rte = 0;
+                    lps = 0;
+                    rps = 0;
+                    //UNUSED o2hb = 0;
+                    //UNUSED hhb = 0;
+
+                } else if (csvType == freemotion) {
+                    if (line == "Ride_Totals") {
+                        eof = true;
+                        continue;
+                    }
+                    // Time,Miles,MPH,Watts,HR,RPM
+
+                    seconds = QTime::fromString(line.section(',', 0, 0), "m:s").second();
+                    minutes = QTime::fromString(line.section(',', 0, 0), "m:s").minute() + seconds / 60.0f;
+                    cad = line.section(',', 5, 5).toDouble();
+                    hr = line.section(',', 4, 4).toDouble();
+                    km = line.section(',', 1, 1).toDouble();
+                    kph = line.section(',', 2, 2).toDouble();
+                    watts = line.section(',', 3, 3).toDouble();
+
+                    if (!metric) {
+                        km *= KM_PER_MILE;
+                        kph *= KM_PER_MILE;
+                    }
 
                } else if (csvType == ibike) {
                     // this must be iBike
@@ -510,7 +650,44 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                          kph *= KM_PER_MILE;
                          alt *= METERS_PER_FOOT;
                      }
-                } else {
+                } else if (csvType == cpexport) {
+                    // seconds, value, (model), date
+                    seconds = line.section(',',0,0).toDouble();
+                    if (seconds == precSecs)
+                        continue;
+                    minutes = seconds / 60.0f;
+
+
+                    //seconds = lineno -1 ;
+                    double avgWatts = line.section(',', 1, 1).toDouble();
+                    if ( avgWatts > maxWatts ) {
+                        maxWatts = avgWatts;
+                    }
+
+                    //watts = (avgwatts * seconds - precSecs * precWatts) / (seconds - precSecs);
+                    watts = (avgWatts * seconds - precSecs * precAvg) / (seconds - precSecs);
+                    if ( watts > maxWatts ) {
+                        watts = maxWatts;
+                    }
+
+
+                    for (int gap=1; seconds-gap>precSecs; gap++) {
+                        rideFile->appendPoint(seconds-gap, cad, hr, km,
+                                              kph, nm, watts, alt, lon, lat,
+                                              headwind, slope, temp, lrbalance,
+                                              lte, rte, lps, rps,
+                                              0.0, 0.0,
+                                              0.0, 0.0, 0.0, 0.0,
+                                              0.0, 0.0, 0.0, 0.0,
+                                              smo2, thb, 0.0, 0.0, 0.0, 0.0, interval);
+                    }
+
+                    precAvg = (precAvg * precSecs + (watts>0?watts:0) * (seconds - precSecs)) / seconds;
+                    //qDebug() << seconds << avgwatts << precSecs << precWatts << ":" <<watts << "->" << precAvg;
+                    precSecs = seconds;
+                    //precWatts = avgwatts;
+
+               } else {
                     if (secsIndex > -1) {
                         seconds = line.section(',', secsIndex, secsIndex).toDouble();
                         minutes = seconds / 60.0f;
@@ -525,7 +702,9 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                     rideFile->appendPoint(seconds, cad, hr, km,
                                           kph, nm, watts, alt, lon, lat, 0.0,
                                           0.0, temp, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                          0.0, 0.0, 0.0, 0.0, 0.0, interval);
+                                          0.0, 0.0, 0.0, 0.0,
+                                          0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
                else if (csvType == moxy) {
 
                     // hack it in for now
@@ -534,19 +713,28 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
                                           kph, nm, watts, alt, lon, lat,
                                           headwind, slope, temp, 0.0,
                                           0.0, 0.0, 0.0, 0.0,
-                                          smo2, thb, 0.0, 0.0, 0.0, interval);
+                                          0.0, 0.0,
+                                          0.0, 0.0, 0.0, 0.0,
+                                          0.0, 0.0, 0.0, 0.0,
+                                          smo2, thb, 0.0, 0.0, 0.0, 0.0, interval);
                     rideFile->appendPoint((minutes * 60.0)+1, cad, hr, km, // dupe it so we have 1s recording easier to merge
                                           kph, nm, watts, alt, lon, lat,
                                           headwind, slope, temp, 0.0,
                                           0.0, 0.0, 0.0, 0.0,
-                                          smo2, thb, 0.0, 0.0, 0.0, interval);
+                                          0.0, 0.0,
+                                          0.0, 0.0, 0.0, 0.0,
+                                          0.0, 0.0, 0.0, 0.0,
+                                          smo2, thb, 0.0, 0.0, 0.0, 0.0, interval);
 
                } else {
                     rideFile->appendPoint(minutes * 60.0, cad, hr, km,
                                           kph, nm, watts, alt, lon, lat,
-                                          headwind, slope, temp, 0.0,
+                                          headwind, slope, temp, lrbalance,
+                                          lte, rte, lps, rps,
+                                          0.0, 0.0,
                                           0.0, 0.0, 0.0, 0.0,
-                                          smo2, thb, 0.0, 0.0, 0.0, interval);
+                                          0.0, 0.0, 0.0, 0.0,
+                                          smo2, thb, 0.0, 0.0, 0.0, 0.0, interval);
                }
             }
             ++lineno;
@@ -649,7 +837,7 @@ RideFile *CsvFileReader::openRideFile(QFile &file, QStringList &errors, QList<Ri
 }
 
 bool
-CsvFileReader::writeRideFile(Context *, const RideFile *ride, QFile &file) const
+CsvFileReader::writeRideFile(Context *, const RideFile *ride, QFile &file, CsvType format) const
 {
     if (!file.open(QIODevice::WriteOnly)) return(false);
 
@@ -659,8 +847,6 @@ CsvFileReader::writeRideFile(Context *, const RideFile *ride, QFile &file) const
     // Use the column headers that make WKO+ happy.
     double convertUnit;
     QTextStream out(&file);
-
-    CsvType format = powertap;
 
     if (format == gc) {
         // CSV File header

@@ -44,12 +44,13 @@
 #define GC_RIDE_PLOT_STACK           "ridePlot/Stack"
 #define GC_PERF_MAN_METRIC           "performanceManager/metric"
 #define GC_HIST_BIN_WIDTH            "histogamWindow/binWidth"
-#define GC_SETTINGS_BESTS_METRICS_DEFAULT "5s_critical_power,1m_critical_power,5m_critical_power,20m_critical_power,60m_critical_power"
-#define GC_SETTINGS_SUMMARY_METRICS_DEFAULT "skiba_xpower,skiba_relative_intensity,skiba_bike_score,daniels_points,daniels_equivalent_power,trimp_points,aerobic_decoupling"
-#define GC_SETTINGS_INTERVAL_METRICS_DEFAULT "workout_time,total_distance,total_work,average_power,skiba_xpower,max_power,average_hr,ninety_five_percent_hr,average_cad,average_speed"
+#define GC_SETTINGS_BESTS_METRICS_DEFAULT "5s_critical_power,1m_critical_power,5m_critical_power,20m_critical_power,60m_critical_power,3m_critical_pace,20m_critical_pace,3m_critical_pace_swim,20m_critical_pace_swim"
+#define GC_SETTINGS_SUMMARY_METRICS_DEFAULT "triscore,skiba_xpower,skiba_relative_intensity,xPace,swimscore_xpace,trimp_points,aerobic_decoupling"
+#define GC_SETTINGS_INTERVAL_METRICS_DEFAULT "workout_time,total_distance,total_work,average_power,average_hr,average_cad,average_speed,pace,pace_swim,distance_swim"
 #define GC_DATETIME_FORMAT          "ddd MMM dd, yyyy, hh:mm"
 #define GC_UNIT                     "unit"
 #define GC_PACE                     "pace"
+#define GC_SWIMPACE                 "swimpace"
 #define GC_LANG                     "lang"
 #define GC_NICKNAME                 "nickname"
 #define GC_DOB                      "dob"
@@ -126,6 +127,8 @@
 #define GC_DVURL          "dv/url"
 #define GC_DVUSER         "dv/user"
 #define GC_DVPASS         "dv/pass"
+#define GC_DVCALDAVTYPE   "dv/type"
+#define GC_DVGOOGLE_CALID "dv/googlecalid"
 #define GC_ZEOURL         "zeo/url"
 #define GC_ZEOUSER        "zeo/user"
 #define GC_ZEOPASS        "zeo/pass"
@@ -179,6 +182,11 @@
 #define GC_TWITTER_TOKEN "twitter_token"
 #define GC_TWITTER_SECRET "twitter_secret"
 
+//Google Calendar-CALDAV oauthkeys
+//Google Calendar-CALDAV oauthkeys
+#define GC_GOOGLE_CALENDAR_CLIENT_ID      "426009671216-c588t1u6hafep30tfs7g0g1nuo72s8ko.apps.googleusercontent.com"
+#define GC_GOOGLE_CALENDAR_REFRESH_TOKEN  "google_cal_refresh_token"
+
 //Strava
 #define GC_STRAVA_CLIENT_ID    "83" // client id
 #define GC_STRAVA_TOKEN "strava_token"
@@ -227,8 +235,11 @@
 // wbal formula to use
 #define GC_WBALFORM               "wbal/formula"
 
+// intervals to discover
+#define GC_DISCOVERY              "intervals/discovery"
+
 // success tracking of more complex upgrades stored on athlete level
-#define GC_UPGRADE_311_FOLDER_SUCCESS  "upgradesuccess/folder311"
+#define GC_UPGRADE_FOLDER_SUCCESS  "upgradesuccess/folder"
 
 #include <QSettings>
 #include <QFileInfo>

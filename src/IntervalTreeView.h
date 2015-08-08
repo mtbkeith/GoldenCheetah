@@ -19,9 +19,13 @@
 #ifndef _GC_IntervalTreeView_h
 #define _GC_IntervalTreeView_h 1
 #include "GoldenCheetah.h"
+#include "IntervalItem.h"
+#include "Colors.h"
 
 #include <QtGui>
 #include <QTreeWidget>
+#include <QStyle>
+#include <QStyledItemDelegate>
 
 class Context;
 
@@ -36,6 +40,10 @@ class IntervalTreeView : public QTreeWidget
         QStringList mimeTypes () const;
         QMimeData * mimeData ( const QList<QTreeWidgetItem *> items ) const;
 
+        // access protected members .. why do the Trolls do this to us?
+        QTreeWidgetItem *itemFromIndexPublic(QModelIndex index) { return itemFromIndex(index); }
+        int rowHeightPublic(QModelIndex index) { return rowHeight(index); }
+
     private slots:
         void mouseHover(QTreeWidgetItem *item, int column);
 
@@ -44,5 +52,18 @@ class IntervalTreeView : public QTreeWidget
 
         void dropEvent(QDropEvent* event);
 
+};
+
+// style the item to show the color like we see in the ride navigator
+class IntervalColorDelegate : public QStyledItemDelegate 
+{
+    Q_OBJECT
+public:
+
+    explicit IntervalColorDelegate(IntervalTreeView *parent = 0) : QStyledItemDelegate(parent), tree(parent) { }
+    IntervalTreeView *tree;
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const;
 };
 #endif // _GC_IntervalTreeView_h

@@ -1,7 +1,4 @@
 /*
-
-// named searchs
-#include "NamedSearch.h"
  * Copyright (c) 2010 Mark Liversedge (liversedge@gmail.com)
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -28,10 +25,9 @@
 #include "Season.h"
 #include "RideMetric.h"
 #include "LTMSettings.h"
+#include "LTMChartParser.h"
 
-#ifdef GC_HAVE_LUCENE
 #include "SearchFilterBox.h"
-#endif
 
 #include <QDir>
 #include <QtGui>
@@ -65,7 +61,6 @@ class LTMSidebar : public QWidget
         void dateRangePopup();
         void dateRangeChanged(QTreeWidgetItem *, int);
         void dateRangeMoved(QTreeWidgetItem *, int, int);
-        void presetTreeWidgetSelectionChanged();
         void addRange();
         void editRange();
         void deleteRange();
@@ -76,7 +71,19 @@ class LTMSidebar : public QWidget
         void deleteEvent();
         void addEvent();
 
+        // working with preset charts
         void presetsChanged();
+        void presetSelectionChanged();
+        void presetSelected(int index);
+        void presetPopup(QPoint);
+        void presetPopup();
+        void presetMoved(QTreeWidgetItem *, int, int);
+        void addPreset();
+        void editPreset();
+        void deletePreset();
+        void resetPreset();
+        void exportPreset();
+        void importPreset();
 
         void filterTreeWidgetSelectionChanged();
         void resetFilters(); // rebuild the seasons list if it changes
@@ -88,7 +95,7 @@ class LTMSidebar : public QWidget
         void filterNotify(); // merge/update when auto or query filter applied
 
         // config etc
-        void configChanged();
+        void configChanged(qint32);
         void resetSeasons(); // rebuild the seasons list if it changes
         void setAutoFilterMenu();
         void autoFilterRefresh(); // refresh the value lists
@@ -109,7 +116,7 @@ class LTMSidebar : public QWidget
         QTreeWidgetItem *allDateRanges;
 
         GcSplitterItem *chartsWidget;
-        QTreeWidget *chartTree;
+        ChartTreeView *chartTree;
         QTreeWidgetItem *allCharts;
 
         GcSplitterItem *eventsWidget;

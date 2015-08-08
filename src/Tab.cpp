@@ -24,6 +24,9 @@
 #include "IntervalItem.h"
 #include "IntervalTreeView.h"
 #include "MainWindow.h"
+#include "Colors.h"
+
+#include <QPaintEvent>
 
 Tab::Tab(Context *context) : QWidget(context->mainWindow), context(context)
 {
@@ -79,17 +82,6 @@ Tab::Tab(Context *context) : QWidget(context->mainWindow), context(context)
     trainView = new TrainView(context, trainControls);
     views->addWidget(trainView);
 
-#ifdef GC_HAVE_INTERVALS
-    // Interval
-    intervalControls = new QStackedWidget(this);
-    intervalControls->setFrameStyle(QFrame::Plain | QFrame::NoFrame);
-    intervalControls->setCurrentIndex(0);
-    intervalControls->setContentsMargins(0,0,0,0);
-    masterControls->addWidget(intervalControls);
-    intervalView = new IntervalView(context, intervalControls);
-    views->addWidget(intervalView);
-#endif
-
     // the dialog box for the chart settings
     chartSettings = new ChartSettings(this, masterControls);
     chartSettings->setMaximumWidth(450);
@@ -119,18 +111,6 @@ Tab::rideNavigator()
     return analysisView->rideNavigator();
 }
 
-IntervalNavigator *
-Tab::routeNavigator()
-{
-    return intervalView->routeNavigator();
-}
-
-IntervalNavigator *
-Tab::bestNavigator()
-{
-    return intervalView->bestNavigator();
-}
-
 void
 Tab::close()
 {
@@ -138,17 +118,11 @@ Tab::close()
     homeView->saveState();
     trainView->saveState();
     diaryView->saveState();
-#ifdef GC_HAVE_INTERVALS
-    intervalView->saveState();
-#endif
 
     analysisView->close();
     homeView->close();
     trainView->close();
     diaryView->close();
-#ifdef GC_HAVE_INTERVALS
-    intervalView->close();
-#endif
 }
 
 /******************************************************************************
@@ -174,9 +148,6 @@ void Tab::setRide(RideItem*ride)
     homeView->setRide(ride);
     trainView->setRide(ride);
     diaryView->setRide(ride);
-#ifdef GC_HAVE_INTERVALS
-    intervalView->setRide(ride);
-#endif
 }
 
 TabView *
@@ -188,9 +159,6 @@ Tab::view(int index)
         case 1 : return analysisView;
         case 2 : return diaryView;
         case 3 : return trainView;
-#ifdef GC_HAVE_INTERVALS
-        case 4 : return intervalView;
-#endif
     }
 }
 
@@ -209,38 +177,6 @@ Tab::selectView(int index)
 void
 Tab::rideSelected(RideItem*)
 {
-    // stop SEGV in widgets watching for intervals being
-    // selected whilst we are deleting them from the tree
-    context->athlete->intervalWidget->blockSignals(true);
-
-    // refresh interval list for bottom left
-    // first lets wipe away the existing intervals
-    QList<QTreeWidgetItem *> intervals = context->athlete->allIntervals->takeChildren();
-    for (int i=0; i<intervals.count(); i++) delete intervals.at(i);
-
-    // now add the intervals for the current ride
-    if (context->ride) { // only if we have a ride pointer
-        RideFile *selected = context->ride->ride();
-        if (selected) {
-            // get all the intervals in the currently selected RideFile
-            QList<RideFileInterval> intervals = selected->intervals();
-            for (int i=0; i < intervals.count(); i++) {
-                // add as a child to context->athlete->allIntervals
-                IntervalItem *add = new IntervalItem(selected,
-                                                        intervals.at(i).name,
-                                                        intervals.at(i).start,
-                                                        intervals.at(i).stop,
-                                                        selected->timeToDistance(intervals.at(i).start),
-                                                        selected->timeToDistance(intervals.at(i).stop),
-                                                        context->athlete->allIntervals->childCount()+1);
-                add->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled);
-                context->athlete->allIntervals->addChild(add);
-            }
-        }
-    }
-    // all done, so connected widgets can receive signals now
-    context->athlete->intervalWidget->blockSignals(false);
-
     // update the ride property on all widgets
     // to let them know they need to replot new
     // selected ride (now the tree is up to date)
@@ -250,3 +186,38 @@ Tab::rideSelected(RideItem*)
     context->notifyIntervalsChanged();
 }
 
+ProgressLine::ProgressLine(QWidget *parent, Context *context) : QWidget(parent), context(context)
+{
+    setFixedHeight(2);
+    hide();
+
+    connect(context, SIGNAL(refreshStart()), this, SLOT(show()));
+    connect(context, SIGNAL(refreshEnd()), this, SLOT(hide()));
+    connect(context, SIGNAL(refreshUpdate(QDate)), this, SLOT(show())); // we might miss 1st one
+    connect(context, SIGNAL(refreshUpdate(QDate)), this, SLOT(repaint()));
+}
+
+void
+ProgressLine::paintEvent(QPaintEvent *)
+{
+
+    // nothing for test...
+    QColor translucentGray = GColor(CPLOTMARKER);
+    translucentGray.setAlpha(240);
+    QColor translucentWhite = GColor(CPLOTBACKGROUND);
+
+    // setup a painter and the area to paint
+    QPainter painter(this);
+
+    painter.save();
+    QRect all(0,0,width(),height());
+
+    // fill
+    painter.setPen(Qt::NoPen);
+    painter.fillRect(all, translucentWhite);
+
+    // progressbar
+    QRectF progress(0, 0, (double(context->athlete->rideCache->progress()) / 100.0f) * double(width()), height());
+    painter.fillRect(progress, translucentGray);
+    painter.restore();
+}

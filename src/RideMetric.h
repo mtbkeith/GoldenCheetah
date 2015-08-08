@@ -25,16 +25,19 @@
 #include <QVector>
 #include <QSharedPointer>
 #include <assert.h>
-#include <math.h>
+#include <cmath>
 #include <QDebug>
 
 #include "RideFile.h"
+
+extern int DBSchemaVersion; // moved from old DBAccess
 
 class Zones;
 class HrZones;
 class Context;
 class RideMetric;
 class RideFile;
+class RideItem;
 
 typedef QSharedPointer<RideMetric> RideMetricPtr;
 
@@ -94,13 +97,18 @@ public:
     virtual int precision() const { return precision_; }
 
     // The actual value of this ride metric, in the units above.
-    virtual double value(bool metric) const { return metric ? value_ : (value_ * conversion_); }
+    virtual double value(bool metric) const { return metric ? value_ : (value_ * conversion_ + conversionSum_); }
+    // The internal value of this ride metric, useful to cache and then setValue.
+    double value() const { return value_; }
 
     // for averages the count of items included in the average
     virtual double count() const { return count_; }
 
     // when aggregating averages, should we include zeroes ? no by default
     virtual bool aggregateZero() const { return false; }
+
+    // is this metric relevant
+    virtual bool isRelevantForRide(const RideItem *) const { return true; }
 
     // Factor to multiple value to convert from metric to imperial
     virtual double conversion() const { return conversion_; }
@@ -118,7 +126,11 @@ public:
     virtual bool isTime() const { return false; }
 
     // Convert value to string, taking into account metric pref
-    virtual QString toString(bool useMetricUnits);
+    virtual QString toString(bool useMetricUnits) const;
+
+    // Criterium to compare values, overridden by Pace metrics
+    // Default just see if it is a RideMetric::Low
+    virtual bool isLowerBetter() const { return type_ == Low ? true : false; }
 
     // Fill in the value of the ride metric using the mapping provided.  For
     // example, average speed might be specified by the mapping
@@ -188,7 +200,7 @@ class RideMetricFactory {
     static RideMetricFactory *_instance;
     static QVector<QString> noDeps;
 
-    QVector<QString> metricNames;
+    QStringList metricNames;
     QVector<RideMetric::MetricType> metricTypes;
     QHash<QString,RideMetric*> metrics;
     QHash<QString,QVector<QString>*> dependencyMap;
@@ -222,6 +234,7 @@ class RideMetricFactory {
             metrics[metricName]->initialize();
     }
 
+    const QStringList &allMetrics() const { return metricNames; }
     const QString &metricName(int i) const { return metricNames[i]; }
     const RideMetric::MetricType &metricType(int i) const { return metricTypes[i]; }
     const RideMetric *rideMetric(QString name) const { return metrics.value(name, NULL); }

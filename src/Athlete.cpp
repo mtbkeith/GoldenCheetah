@@ -20,6 +20,8 @@
 
 #include "MainWindow.h"
 #include "Context.h"
+#include "Season.h"
+#include "Colors.h"
 #include "RideMetadata.h"
 #include "RideCache.h"
 #include "RideFileCache.h"
@@ -28,27 +30,24 @@
 #include "TimeUtils.h"
 #include "Units.h"
 #include "Zones.h"
+#include "HrZones.h"
 #include "PaceZones.h"
-#include "MetricAggregator.h"
 #include "WithingsDownload.h"
-#include "ZeoDownload.h"
 #include "CalendarDownload.h"
+#include "PMCData.h"
 #include "ErgDB.h"
 #ifdef GC_HAVE_ICAL
 #include "ICalendar.h"
 #include "CalDAV.h"
 #endif
-#ifdef GC_HAVE_LUCENE
-#include "Lucene.h"
 #include "NamedSearch.h"
-#endif
 #include "IntervalItem.h"
 #include "IntervalTreeView.h"
 #include "LTMSettings.h"
 #include "RideImportWizard.h"
 #include "RideAutoImportConfig.h"
+
 #include "Route.h"
-#include "RouteWindow.h"
 
 #include "GcUpgrade.h" // upgrade wizard
 #include "GcCrashDialog.h" // recovering from a crash?
@@ -60,7 +59,6 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     this->context = context;
     context->athlete = this;
     cyclist = this->home->root().dirName();
-    isclean = false;
 
     // Recovering from a crash?
     if(!appsettings->cvalue(cyclist, GC_SAFEEXIT, true).toBool()) {
@@ -68,6 +66,12 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         crashed->exec();
     }
     appsettings->setCValue(cyclist, GC_SAFEEXIT, false); // will be set to true on exit
+
+    // make sure that the latest folder structure exists in Athlete Directory -
+    // e.g. Cache could be deleted by mistake or empty folders are not copied
+    // later GC expects the folders are available
+
+    if (!this->home->subDirsExist()) this->home->createAllSubdirs();
 
     // Before we initialise we need to run the upgrade wizard for this athlete
     GcUpgrade v3;
@@ -106,12 +110,14 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
             QMessageBox::warning(context->mainWindow, tr("Reading HR Zones File"), hrzones_->warningString());
     }
 
-    // Pace Zones
-    pacezones_ = new PaceZones;
-    QFile pacezonesFile(home->config().canonicalPath() + "/pace.zones");
-    if (pacezonesFile.exists()) {
-        if (!pacezones_->read(pacezonesFile)) {
-            QMessageBox::critical(context->mainWindow, tr("Pace Zones File Error"), pacezones_->errorString());
+    // Pace Zones for Run & Swim
+    for (int i=0; i < 2; i++) {
+        pacezones_[i] = new PaceZones(i>0);
+        QFile pacezonesFile(home->config().canonicalPath() + "/" + pacezones_[i]->fileName());
+        if (pacezonesFile.exists()) {
+            if (!pacezones_[i]->read(pacezonesFile)) {
+                QMessageBox::critical(context->mainWindow, tr("Pace Zones File %1 Error").arg(pacezones_[i]->fileName()), pacezones_[i]->errorString());
+            }
         }
     }
 
@@ -119,14 +125,16 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     autoImportConfig = new RideAutoImportConfig(home->config());
 
     // read athlete's charts.xml and translate etc
-    LTMSettings reader;
-    reader.readChartXML(context->athlete->home->config(), context->athlete->useMetricUnits, presets);
-    translateDefaultCharts(presets);
+    loadCharts();
+
+    // Search / filter
+    namedSearches = new NamedSearches(this); // must be before navigator
 
     // Metadata
-    metricDB = NULL; // warn metadata we haven't got there yet !
+    rideCache = NULL; // let metadata know we don't have a ridecache yet
     rideMetadata_ = new RideMetadata(context,true);
     rideMetadata_->hide();
+    colorEngine = new ColorEngine(context);
 
     // Date Ranges
     seasons = new Seasons(home->config());
@@ -134,71 +142,42 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     // seconds step of the upgrade - now everything of configuration needed should be in place in Context
     v3.upgradeLate(context);
 
-
     // Routes
     routes = new Routes(context, home->config());
 
-    // Search / filter
-#ifdef GC_HAVE_LUCENE
-    namedSearches = new NamedSearches(this); // must be before navigator
-    lucene = new Lucene(context, context); // before metricDB attempts to refresh
-#endif
+    // get withings in if there is a cache
+    QFile withingsJSON(QString("%1/withings.json").arg(context->athlete->home->cache().canonicalPath()));
+    if (withingsJSON.exists() && withingsJSON.open(QFile::ReadOnly)) {
 
-    // metrics DB
-    metricDB = new MetricAggregator(context); // just to catch config updates!
-    metricDB->refreshMetrics();
+        QString text;
+        QStringList errors;
+        QTextStream stream(&withingsJSON);
+        text = stream.readAll();
+        withingsJSON.close();
 
-    // the model atop the metric DB
-    sqlModel = new QSqlTableModel(this, metricDB->db()->connection());
-    sqlModel->setTable("metrics");
-    sqlModel->setEditStrategy(QSqlTableModel::OnManualSubmit);
+        WithingsParser parser;
+        parser.parse(text, errors);
+        if (errors.count() == 0) setWithings(parser.readings());
+    }
 
-    sqlRouteIntervalsModel = new QSqlTableModel(this, metricDB->db()->connection());
-    sqlRouteIntervalsModel->setTable("interval_metrics");
-    sqlRouteIntervalsModel->setFilter("type='Route'");
-    sqlRouteIntervalsModel->setEditStrategy(QSqlTableModel::OnManualSubmit);
-
-    sqlBestIntervalsModel = new QSqlTableModel(this, metricDB->db()->connection());
-    sqlBestIntervalsModel->setTable("interval_metrics");
-    sqlBestIntervalsModel->setFilter("type='Best'");
-    sqlBestIntervalsModel->setEditStrategy(QSqlTableModel::OnManualSubmit);
+    // now most dependencies are in get cache
+    rideCache = new RideCache(context);
 
     // Downloaders
     withingsDownload = new WithingsDownload(context);
-    zeoDownload      = new ZeoDownload(context);
     calendarDownload = new CalendarDownload(context);
 
     // Calendar
 #ifdef GC_HAVE_ICAL
     rideCalendar = new ICalendar(context); // my local/remote calendar entries
     davCalendar = new CalDAV(context); // remote caldav
-    davCalendar->download(); // refresh the diary window
+    davCalendar->download(true); // refresh the diary window but do not show any error messages
 #endif
 
-    //.INTERVALS TREE -- transitionary
-    intervalWidget = new IntervalTreeView(context);
-    intervalWidget->setColumnCount(1);
-    intervalWidget->setIndentation(5);
-    intervalWidget->setSortingEnabled(false);
-    intervalWidget->header()->hide();
-    intervalWidget->setAlternatingRowColors (false);
-    intervalWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
-    intervalWidget->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    intervalWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    intervalWidget->setContextMenuPolicy(Qt::CustomContextMenu);
-    intervalWidget->setFrameStyle(QFrame::NoFrame);
-    allIntervals = context->athlete->intervalWidget->invisibleRootItem();
-    allIntervals->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
-    allIntervals->setText(0, tr("Intervals"));
-
-    rideCache = new RideCache(context);
-
     // trap signals
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     connect(context,SIGNAL(rideAdded(RideItem*)),this,SLOT(checkCPX(RideItem*)));
     connect(context,SIGNAL(rideDeleted(RideItem*)),this,SLOT(checkCPX(RideItem*)));
-    connect(intervalWidget,SIGNAL(itemSelectionChanged()), this, SLOT(intervalTreeWidgetSelectionChanged()));
-    connect(intervalWidget,SIGNAL(itemChanged(QTreeWidgetItem *,int)), this, SLOT(updateRideFileIntervals()));
 }
 
 void
@@ -207,6 +186,14 @@ Athlete::close()
     // set to latest so we don't repeat
     appsettings->setCValue(context->athlete->home->root().dirName(), GC_VERSION_USED, VERSION_LATEST);
     appsettings->setCValue(context->athlete->home->root().dirName(), GC_SAFEEXIT, true);
+}
+void
+Athlete::loadCharts()
+{
+    presets.clear();
+    LTMSettings reader;
+    reader.readChartXML(context->athlete->home->config(), context->athlete->useMetricUnits, presets);
+    translateDefaultCharts(presets);
 }
 
 Athlete::~Athlete()
@@ -221,7 +208,6 @@ Athlete::~Athlete()
                                                // have not been reflected in the charts.xml file
 
     delete withingsDownload;
-    delete zeoDownload;
     delete calendarDownload;
 
 #ifdef GC_HAVE_ICAL
@@ -229,21 +215,15 @@ Athlete::~Athlete()
     delete davCalendar;
 #endif
 
-    // close the db connection (but clear models first!)
-    delete sqlModel;
-    delete sqlRouteIntervalsModel;
-    delete sqlBestIntervalsModel;
-    delete metricDB;
-
-#ifdef GC_HAVE_LUCENE
     delete namedSearches;
-    delete lucene;
-#endif
+    delete routes;
     delete seasons;
 
     delete rideMetadata_;
+    delete colorEngine;
     delete zones_;
     delete hrzones_;
+    for (int i=0; i<2; i++) delete pacezones_[i];
 }
 
 void Athlete::selectRideFile(QString fileName)
@@ -262,40 +242,9 @@ void Athlete::selectRideFile(QString fileName)
 }
 
 void
-Athlete::intervalTreeWidgetSelectionChanged()
+Athlete::addRide(QString name, bool dosignal, bool useTempActivities)
 {
-    context->notifyIntervalHover(RideFileInterval()); // clear
-    context->notifyIntervalSelected();
-}
-
-void
-Athlete::updateRideFileIntervals()
-{
-    // iterate over context->athlete->allIntervals as they are now defined
-    // and update the RideFile->intervals
-    if (context->ride) {
-
-        RideFile *current = context->ride->ride();
-        current->clearIntervals();
-
-        for (int i=0; i < allIntervals->childCount(); i++) {
-            // add the intervals as updated
-            IntervalItem *it = (IntervalItem *)allIntervals->child(i);
-            current->addInterval(it->start, it->stop, it->text(0));
-        }
-
-        // emit signal for interval data changed
-        context->notifyIntervalsChanged();
-
-        // set dirty
-        context->ride->setDirty(true);
-    }
-}
-
-void
-Athlete::addRide(QString name, bool dosignal)
-{
-    rideCache->addRide(name, dosignal);
+    rideCache->addRide(name, dosignal, useTempActivities);
 }
 
 void
@@ -323,39 +272,41 @@ Athlete::translateDefaultCharts(QList<LTMSettings>&charts)
     // Map default (english) chart name to external (Localized) name
     // New default charts need to be added to this list to be translated
     QMap<QString, QString> chartNameMap;
-	chartNameMap.insert("PMC", tr("PMC"));
-	chartNameMap.insert("Track Weight", tr("Track Weight"));
-	chartNameMap.insert("Time In Power Zone (Stacked)", tr("Time In Power Zone (Stacked)"));
-	chartNameMap.insert("Time In Power Zone (Bar)", tr("Time In Power Zone (Bar)"));
+	chartNameMap.insert("Athlete Weight", tr("Athlete Weight"));
+	chartNameMap.insert("Time In Power Zone", tr("Time In Power Zone"));
+	chartNameMap.insert("Sustained Time In Zone", tr("Sustained Time In Zone"));
+	chartNameMap.insert("Time in W' Zone", tr("Time in W' Zone"));
 	chartNameMap.insert("Time In HR Zone", tr("Time In HR Zone"));
 	chartNameMap.insert("Power Distribution", tr("Power Distribution"));
+    chartNameMap.insert("Vo2max Estimation", tr("Vo2max Estimation"));
 	chartNameMap.insert("KPI Tracker", tr("KPI Tracker"));
 	chartNameMap.insert("Critical Power Trend", tr("Critical Power Trend"));
 	chartNameMap.insert("Aerobic Power", tr("Aerobic Power"));
-	chartNameMap.insert("Aerobic WPK", tr("Aerobic WPK"));
 	chartNameMap.insert("Power Variance", tr("Power Variance"));
 	chartNameMap.insert("Power Profile", tr("Power Profile"));
 	chartNameMap.insert("Anaerobic Power", tr("Anaerobic Power"));
-	chartNameMap.insert("Anaerobic WPK", tr("Anaerobic WPK"));
 	chartNameMap.insert("Power & Speed Trend", tr("Power & Speed Trend"));
-	chartNameMap.insert("Cardiovascular Response", tr("Cardiovascular Response"));
 	chartNameMap.insert("Tempo & Threshold Time", tr("Tempo & Threshold Time"));
 	chartNameMap.insert("Training Mix", tr("Training Mix"));
 	chartNameMap.insert("Time & Distance", tr("Time & Distance"));
-	chartNameMap.insert("Skiba Power", tr("Skiba Power"));
-	chartNameMap.insert("Daniels Power", tr("Daniels Power"));
-	chartNameMap.insert("PM Ramp & Peak", tr("PM Ramp & Peak"));
-	chartNameMap.insert("Skiba PM", tr("Skiba PM"));
-	chartNameMap.insert("Daniels PM", tr("Daniels PM"));
-	chartNameMap.insert("Device Reliability", tr("Device Reliability"));
-	chartNameMap.insert("Withings Weight", tr("Withings Weight"));
+	chartNameMap.insert("BikeScore and Intensity", tr("BikeScore and Intensity"));
+	chartNameMap.insert("TSS and IF", tr("TSS and IF"));
 	chartNameMap.insert("Stress and Distance", tr("Stress and Distance"));
 	chartNameMap.insert("Calories vs Duration", tr("Calories vs Duration"));
     chartNameMap.insert("Stress (TISS)", tr("Stress (TISS)"));
+    chartNameMap.insert("Aerobic Response", tr("Aerobic Response"));
+    chartNameMap.insert("Anaerobic Response", tr("Anaerobic Response"));
     chartNameMap.insert("PMC (Coggan)", tr("PMC (Coggan)"));
     chartNameMap.insert("PMC (Skiba)", tr("PMC (Skiba)"));
     chartNameMap.insert("PMC (TRIMP)", tr("PMC (TRIMP)"));
+    chartNameMap.insert("PMC (Distance)", tr("PMC (Distance)"));
+    chartNameMap.insert("PMC (Duration)", tr("PMC (Duration)"));
     chartNameMap.insert("CP History", tr("CP History"));
+    chartNameMap.insert("CP Analysis", tr("CP Analysis"));
+    chartNameMap.insert("PMC (TriScore)", tr("PMC (TriScore)"));
+    chartNameMap.insert("Time in Pace Zones", tr("Time in Pace Zones"));
+    chartNameMap.insert("Run Pace", tr("Run Pace"));
+    chartNameMap.insert("Swim Pace", tr("Swim Pace"));
 
     for(int i=0; i<charts.count(); i++) {
         // Replace chart name for localized version, default to english name
@@ -364,47 +315,21 @@ Athlete::translateDefaultCharts(QList<LTMSettings>&charts)
 }
 
 void
-Athlete::configChanged()
+Athlete::configChanged(qint32 state)
 {
-    // re-read Zones in case it changed
-    QFile zonesFile(home->config().canonicalPath() + "/power.zones");
-    if (zonesFile.exists()) {
-        if (!zones_->read(zonesFile)) {
-            QMessageBox::critical(context->mainWindow, tr("Zones File Error"),
-                                 zones_->errorString());
-        }
-       else if (! zones_->warningString().isEmpty())
-            QMessageBox::warning(context->mainWindow, tr("Reading Zones File"), zones_->warningString());
+    // change units
+    if (state & CONFIG_UNITS) {
+        QVariant unit = appsettings->cvalue(cyclist, GC_UNIT);
+        useMetricUnits = (unit.toString() == GC_UNIT_METRIC);
     }
 
-    // reread HR zones
-    QFile hrzonesFile(home->config().canonicalPath() + "/hr.zones");
-    if (hrzonesFile.exists()) {
-        if (!hrzones_->read(hrzonesFile)) {
-            QMessageBox::critical(context->mainWindow, tr("HR Zones File Error"),
-                                 hrzones_->errorString());
-        }
-       else if (! hrzones_->warningString().isEmpty())
-            QMessageBox::warning(context->mainWindow, tr("Reading HR Zones File"), hrzones_->warningString());
-    }
-
-    // reread Pace zones
-    QFile pacezonesFile(home->config().canonicalPath() + "/pace.zones");
-    if (pacezonesFile.exists()) {
-        if (!pacezones_->read(pacezonesFile)) {
-            QMessageBox::critical(context->mainWindow, tr("Pace Zones File Error"),
-                                 pacezones_->errorString());
-        }
-    }
-
-    QVariant unit = appsettings->cvalue(cyclist, GC_UNIT);
-    useMetricUnits = (unit.toString() == GC_UNIT_METRIC);
-
-    // forget all the cached weight values in case weight changed
-    foreach (RideItem *rideItem, rideCache->rides()) {
-        if (rideItem->ride(false)) {
-            rideItem->ride(false)->setWeight(0);
-            rideItem->ride(false)->getWeight();
+    // invalidate PMC data
+    if (state & (CONFIG_PMC | CONFIG_SEASONS)) {
+        QMapIterator<QString, PMCData *> pmcs(pmcData);
+        pmcs.toFront();
+        while(pmcs.hasNext()) {
+            pmcs.next();
+            pmcs.value()->invalidate();
         }
     }
 }
@@ -432,15 +357,18 @@ AthleteDirectoryStructure::AthleteDirectoryStructure(const QDir home){
     myhome = home;
 
     athlete_activities = "activities";
+    athlete_tmp_activities = "tempActivities";
     athlete_imports = "imports";
     athlete_records = "records";
     athlete_downloads = "downloads";
+    athlete_fileBackup = "bak";
     athlete_config = "config";
     athlete_cache = "cache";
     athlete_calendar = "calendar";
     athlete_workouts = "workouts";
     athlete_temp = "temp";
     athlete_logs = "logs";
+    athlete_quarantine = "quarantine";
 
 
 }
@@ -455,15 +383,19 @@ void
 AthleteDirectoryStructure::createAllSubdirs() {
 
     myhome.mkdir(athlete_activities);
+    myhome.mkdir(athlete_tmp_activities);
     myhome.mkdir(athlete_imports);
     myhome.mkdir(athlete_records);
     myhome.mkdir(athlete_downloads);
+    myhome.mkdir(athlete_fileBackup);
     myhome.mkdir(athlete_config);
     myhome.mkdir(athlete_cache);
     myhome.mkdir(athlete_calendar);
     myhome.mkdir(athlete_workouts);
     myhome.mkdir(athlete_logs);
     myhome.mkdir(athlete_temp);
+    myhome.mkdir(athlete_quarantine);
+
 
 
 }
@@ -472,14 +404,140 @@ bool
 AthleteDirectoryStructure::subDirsExist() {
 
     return (activities().exists() &&
+            tmpActivities().exists() &&
             imports().exists() &&
             records().exists() &&
             downloads().exists() &&
+            fileBackup().exists() &&
             config().exists() &&
             cache().exists() &&
             calendar().exists() &&
             workouts().exists() &&
             logs().exists() &&
-            temp().exists()
+            temp().exists() &&
+            quarantine().exists()
             );
+}
+
+bool
+AthleteDirectoryStructure::upgradedDirectoriesHaveData() {
+
+   if ( activities().exists() && config().exists()) {
+       QStringList activityFiles = activities().entryList(QDir::Files);
+       if (!activityFiles.isEmpty()) { return true; }
+       QStringList configFiles = config().entryList(QDir::Files);
+       if (!configFiles.isEmpty()) { return true; }
+   }
+   return false;
+
+}
+
+// working with withings data
+void 
+Athlete::setWithings(QList<WithingsReading>&x)
+{
+    withings_ = x;
+    qSort(withings_); // date order
+}
+
+void 
+Athlete::getWithings(QDate date, WithingsReading &here)
+{
+    // the optimisation below is not thread safe and should be encapsulated
+    // by a mutex, but this kind of defeats to purpose of the optimisation!
+
+    //if (withings_.count() && withings_.last().when.date() <= date) here = withings_.last();
+    //if (!withings_.count() || withings_.first().when.date() > date) here = WithingsReading();
+
+    // always set to not found before searching
+    here = WithingsReading();
+
+    // loop
+    foreach(WithingsReading x, withings_) {
+        if (x.when.date() <= date) here = x;
+        if (x.when.date() > date) break;
+    }
+
+    // will be empty if none found
+    return;
+}
+
+double 
+Athlete::getWithingsWeight(QDate date, int type)
+{
+    WithingsReading withings;
+    getWithings(date, withings);
+
+    // return what was asked for!
+    switch(type) {
+
+        default:
+        case WITHINGS_WEIGHT : return withings.weightkg;
+        case WITHINGS_FATKG : return withings.fatkg;
+        case WITHINGS_FATPERCENT : return withings.fatpercent;
+        case WITHINGS_LEANKG : return withings.leankg;
+        case WITHINGS_HEIGHT : return withings.sizemeter;
+    }
+}
+
+double
+Athlete::getWeight(QDate date, RideFile *ride)
+{
+    double weight;
+
+    // withings first
+    weight = getWithingsWeight(date);
+
+    // ride (if available)
+    if (!weight && ride)
+        weight = ride->getTag("Weight", "0.0").toDouble();
+
+    // global options
+    if (!weight)
+        weight = appsettings->cvalue(context->athlete->cyclist, GC_WEIGHT, "75.0").toString().toDouble(); // default to 75kg
+
+    // No weight default is weird, we'll set to 80kg
+    if (weight <= 0.00) weight = 80.00;
+
+    return weight;
+}
+
+double
+Athlete::getHeight(RideFile *ride)
+{
+    double height = 0;
+
+    // ride if present?
+    if (ride) height = ride->getTag("Height", "0.0").toDouble();
+
+    // global options ?
+    if (!height) height = appsettings->cvalue(context->athlete->cyclist, GC_HEIGHT, 0.0f).toString().toDouble();
+
+    // from weight via Stillman Average?
+    if (!height && ride) height = (getWeight(ride->startTime().date(), ride)+100.0)/98.43;
+
+    // it must not be zero!!!
+    if (!height) height = 1.7526f; // 5'9" is average male height
+
+    return height;
+}
+
+// working with PMC data series
+PMCData *
+Athlete::getPMCFor(QString metricName, int stsdays, int ltsdays)
+{
+    PMCData *returning = NULL;
+
+    // if we don't already have one, create it
+    returning = pmcData.value(metricName, NULL);
+    if (!returning) {
+
+        // specification is blank and passes for all
+        returning = new PMCData(context, Specification(), metricName, stsdays, ltsdays);
+
+        // add to our collection
+        pmcData.insert(metricName, returning);
+    }
+
+    return returning;
 }

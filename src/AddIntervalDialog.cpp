@@ -24,8 +24,9 @@
 #include "RideFile.h"
 #include "RideItem.h"
 #include "WPrime.h"
+#include "HelpWhatsThis.h"
 #include <QMap>
-#include <math.h>
+#include <cmath>
 
 // helper function
 static void clearResultsTable(QTableWidget *);
@@ -35,6 +36,8 @@ AddIntervalDialog::AddIntervalDialog(Context *context) :
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(tr("Find Intervals"));
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::FindIntervals));
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     intervalMethodWidget = new QWidget();
@@ -238,7 +241,7 @@ AddIntervalDialog::AddIntervalDialog(Context *context) :
 
     QHBoxLayout *buttonLayout = new QHBoxLayout;
     buttonLayout->addStretch();
-    addButton = new QPushButton(tr("&Add to Ride"));
+    addButton = new QPushButton(tr("&Add to Activity"));
     buttonLayout->addWidget(addButton);
     buttonLayout->addStretch();
     mainLayout->addLayout(buttonLayout);
@@ -419,7 +422,7 @@ AddIntervalDialog::createClicked()
 {
     const RideFile *ride = context->ride ? context->ride->ride() : NULL;
     if (!ride) {
-        QMessageBox::critical(this, tr("Select Ride"), tr("No ride selected!"));
+        QMessageBox::critical(this, tr("Select Activity"), tr("No activity selected!"));
         return;
     }
 
@@ -849,6 +852,9 @@ AddIntervalDialog::findBests(bool typeTime, const RideFile *ride, double windowS
 void
 AddIntervalDialog::addClicked()
 {
+    RideItem *rideItem = const_cast<RideItem*>(context->currentRideItem());
+    RideFile *ride = rideItem->ride();
+
     // run through the table row by row
     // and when the checkbox is shown
     // get name from column 2
@@ -862,19 +868,20 @@ AddIntervalDialog::addClicked()
             double start = resultsTable->item(i,3)->text().toDouble();
             double stop = resultsTable->item(i,4)->text().toDouble();
             QString name = resultsTable->item(i,2)->text();
-            const RideFile *ride = context->ride ? context->ride->ride() : NULL;
 
-            QTreeWidgetItem *allIntervals = context->athlete->mutableIntervalItems();
-            QTreeWidgetItem *last =
-                new IntervalItem(ride, name, start, stop,
+
+            // add new one to the ride
+            rideItem->newInterval(name, start, stop,
                                  ride->timeToDistance(start),
-                                 ride->timeToDistance(stop),
-                                 allIntervals->childCount()+1);
-            last->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled);
-            // add
-            allIntervals->addChild(last);
+                                 ride->timeToDistance(stop));
         }
     }
-    context->athlete->updateRideFileIntervals();
+
+    // update the sidebar
+    context->notifyIntervalsUpdate(rideItem);
+
+    // charts need to update to reflect the intervals
+    context->notifyIntervalsChanged();
+
     done(0);
 }

@@ -29,122 +29,91 @@
 #include "Context.h"
 
 class  RideFile;
-class  RouteRide2;
 class  Routes;
-
-struct RouteRide;
 struct RoutePoint;
 
-class RouteSegment
+class RouteSegment // represents a segment we match against
 {
     public:
+
         RouteSegment();
         RouteSegment(Routes *routes);
 
-        Routes *routes;
+        // accessors
         QString getName();
         void setName(QString _name);
-
         QUuid id() const { return _id; }
+        QList<RoutePoint> getPoints();
         void setId(QUuid x) { _id = x; }
 
-        int addPoint(RoutePoint _point);
-        int addRide(RouteRide _ride);
-        int addRideForRideFile(const RideFile *ride, double start, double stop, double precision);
-        bool parseRideFileName(Context *context, const QString &name, QString *notesFileName, QDateTime *dt);
+        double getMinLat();
+        void setMinLat(double);
+        double getMaxLat();
+        void setMaxLat(double);
+        double getMinLon();
+        void setMinLon(double);
+        double getMaxLon();
+        void setMaxLon(double);
 
+        // managing points and matched rides
+        int addPoint(RoutePoint _point);
         double distance(double lat1, double lon1, double lat2, double lon2);
 
-        void searchRouteInAllRides(Context *context);
-        void searchRouteInRide(RideFile* ride, bool freememory, QTextStream* log);
-
-        void removeRideInRoute(RideFile* ride);
-
-        QList<RoutePoint> getPoints();
-
-        QList<RouteRide> getRides();
-
-        QList<RouteRide2> getRouteRides();
+        // find segments in ridefiles
+        void search(RideItem *, RideFile*, QList<IntervalItem*>&);
 
     private:
+
+        Routes *routes;
         QUuid _id; // unique id
 
         QString name; // name, typically users name them by year e.g. "Col de Saxel"
-
         QList<RoutePoint> points;
 
-        QList<RouteRide> rides;
-
+        double minLat, maxLat;
+        double minLon, maxLon;
 };
 
-class Routes : public QObject {
+struct RoutePoint // represents a point within a segment
+{
+    RoutePoint() : lon(0.0), lat(0.0) {}
+    RoutePoint(double lon, double lat) : lon(lon), lat(lat) {}
+
+    double lon, lat;
+};
+
+
+class Routes : public QObject { // top-level object with API and map of segments/rides
 
     Q_OBJECT;
 
+    friend class ::RideItem; // access the route/ride map
+
     public:
+
         Routes(Context *context, const QDir &home);
+        ~Routes();
+
+        // checksum changes as routes added
+        quint16 getFingerprint() const;
+
+        // managing the list of route segments
         void readRoutes();
         int newRoute(QString name);
-        void updateRoute(int index, QString name);
+        void createRouteFromInterval(IntervalItem *activeInterval);
+        void deleteRoute(QUuid);
         void deleteRoute(int);
         void writeRoutes();
+
+        // find in a ride
+        void search(RideItem*, RideFile* ride, QList<IntervalItem*>&here);
+
+    protected:
         QList<RouteSegment> routes;
-
-        void createRouteFromInterval(IntervalItem *activeInterval);
-        void searchRoutesInRide(RideFile* ride);
-        void removeRideInRoutes(RideFile* ride);
-
-    public slots:
-        void addRide(RideItem*);
-        void deleteRide(RideItem* ride);
-
-    signals:
-        void routesChanged();
-
 
     private:
         QDir home;
         Context *context;
-};
-
-
-/*class RouteRide2 : public QObject {
-
-    Q_OBJECT;
-
-    public :
-        RouteRide2();
-
-        RouteRide2(QDateTime startTime, double start, double stop, double precision);// : startTime(startTime), start(start), stop(stop), precision(precision)  {}
-
-        QDateTime startTime;
-        double start, stop;
-        double precision;
-
-};*/
-
-struct RouteRide {
-
-    QString filename;
-    QDateTime startTime;
-    double start, stop;
-    double precision;
-
-
-
-    RouteRide(QString filename, QDateTime startTime, double start, double stop, double precision) : filename(filename), startTime(startTime), start(start), stop(stop), precision(precision)  {}
-
-    RouteRide() {}
-};
-
-struct RoutePoint
-{
-    double lon, lat;
-
-    RoutePoint() : lon(0.0), lat(0.0) {}
-
-    RoutePoint(double lon, double lat) : lon(lon), lat(lat) {}
-    //double value(RideFile::SeriesType series) const;
 };
 
 #endif // ROUTE_H

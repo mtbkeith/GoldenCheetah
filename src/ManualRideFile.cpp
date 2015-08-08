@@ -22,10 +22,10 @@
 #include <QRegExp>
 #include <QTextStream>
 #include <algorithm> // for std::sort
-#include "math.h"
+#include "cmath"
 
 static int manualFileReaderRegistered =
-    RideFileFactory::instance().registerReader("man", "Manual Ride File", new ManualFileReader());
+    RideFileFactory::instance().registerReader("man", "Manual File", new ManualFileReader());
 
 RideFile *ManualFileReader::openRideFile(QFile &file, QStringList &errors, QList<RideFile*>*) const
 {
@@ -126,8 +126,13 @@ RideFile *ManualFileReader::openRideFile(QFile &file, QStringList &errors, QList
                                       kph, nm, watts, alt,
                                       0.0, 0.0, 0.0, 0.0,
                                       RideFile::NoTemp, 0.0, 
-                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+                                      0.0, 0.0, 0.0, 0.0,
+                                      0.0, 0.0, // pedal platform offset
+                                      0.0, 0.0, 0.0, 0.0, //pedal power phase
+                                      0.0, 0.0, 0.0, 0.0, //pedal peak power phase
+                                      0.0, 0.0,
                                       0.0, 0.0, 0.0, // running dynamics
+                                      0.0, //tcore
                                       interval);
                 QMap<QString,QString> bsm;
                 bsm.insert("value", QString("%1").arg(bs));

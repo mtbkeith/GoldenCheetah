@@ -25,9 +25,7 @@
 #include "HomeWindow.h"
 #include "GcWindowRegistry.h"
 #include "TrainDB.h"
-#include "MetricAggregator.h"
 #include "RideNavigator.h"
-#include "IntervalNavigator.h"
 #include "MainWindow.h"
 
 #include "Settings.h"
@@ -61,7 +59,7 @@ TabView::TabView(Context *context, int type) :
     splitter->setOpaqueResize(true); // redraw when released, snappier UI
     stack->insertWidget(0, splitter); // splitter always at index 0
 
-    QString heading = tr("Compare Rides and Intervals");
+    QString heading = tr("Compare Activities and Intervals");
     if (type == VIEW_HOME) heading = tr("Compare Date Ranges");
 
     mainSplitter = new ViewSplitter(Qt::Vertical, heading, this);
@@ -74,7 +72,7 @@ TabView::TabView(Context *context, int type) :
     anim = new QPropertyAnimation(mainSplitter, "hpos");
 
     connect(splitter,SIGNAL(splitterMoved(int,int)), this, SLOT(splitterMoved(int,int)));
-    connect(context,SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context,SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 }
 
 TabView::~TabView()
@@ -147,7 +145,7 @@ TabView::setSidebar(QWidget *sidebar)
     sidebar_ = sidebar;
     splitter->insertWidget(0, sidebar);
 
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 }
 
 QString
@@ -227,7 +225,7 @@ TabView::ourStyleSheet()
 }
 
 void
-TabView::configChanged()
+TabView::configChanged(qint32)
 {
 #if (defined Q_OS_LINUX) || (defined Q_OS_WIN)
     // style that sucker
@@ -340,8 +338,9 @@ TabView::setBlank(BlankStatePage *blank)
 
     // and when stuff happens lets check
     connect(blank, SIGNAL(closeClicked()), this, SLOT(checkBlank()));
-    connect(context->athlete->metricDB, SIGNAL(dataChanged()), this, SLOT(checkBlank()));
-    connect(context, SIGNAL(configChanged()), this, SLOT(checkBlank()));
+    connect(context, SIGNAL(rideAdded(RideItem*)), this, SLOT(checkBlank()));
+    connect(context, SIGNAL(rideDeleted(RideItem*)), this, SLOT(checkBlank()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(checkBlank()));
     connect(trainDB, SIGNAL(dataChanged()), this, SLOT(checkBlank()));
 
 }
@@ -384,12 +383,6 @@ TabView::sidebarChanged()
         // being adjusted as the splitter gets resized and reset
         if (type == VIEW_ANALYSIS && active == false && context->tab->rideNavigator()->geometry().width() != 100)
             context->tab->rideNavigator()->setWidth(context->tab->rideNavigator()->geometry().width());
-        if (type == VIEW_INTERVAL && active == false && context->tab->routeNavigator()->geometry().width() != 100) {
-            context->tab->routeNavigator()->setWidth(context->tab->routeNavigator()->geometry().width());
-        }
-        if (type == VIEW_INTERVAL && active == false && context->tab->bestNavigator()->geometry().width() != 100) {
-            context->tab->bestNavigator()->setWidth(context->tab->bestNavigator()->geometry().width());
-        }
         setUpdatesEnabled(true);
 
     } else sidebar_->hide();

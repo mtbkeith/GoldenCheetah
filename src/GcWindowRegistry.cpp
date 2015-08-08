@@ -53,7 +53,8 @@
 #include "SpinScanPlotWindow.h"
 #include "WorkoutPlotWindow.h"
 #include "BingMap.h"
-#include "RouteWindow.h"
+// Not until v4.0
+//#include "RouteWindow.h"
 
 #define VIEW_TRAIN    0x01
 #define VIEW_ANALYSIS 0x02
@@ -74,7 +75,7 @@ GcWindowRegistry::initialize()
     //{ VIEW_HOME, tr("Weekly Summary"),GcWindowTypes::WeeklySummary },// DEPRECATED
     { VIEW_HOME|VIEW_DIARY,  tr("Critical Mean Maximal"),GcWindowTypes::CriticalPowerSummary },
     //{ VIEW_HOME|VIEW_DIARY,  tr("Performance Manager"),GcWindowTypes::PerformanceManager },
-    { VIEW_ANALYSIS|VIEW_INTERVAL, tr("Ride Summary"),GcWindowTypes::RideSummary },
+    { VIEW_ANALYSIS|VIEW_INTERVAL, tr("Activity Summary"),GcWindowTypes::RideSummary },
     { VIEW_ANALYSIS, tr("Details"),GcWindowTypes::MetadataWindow },
     { VIEW_ANALYSIS, tr("Summary and Details"),GcWindowTypes::Summary },
     { VIEW_ANALYSIS, tr("Editor"),GcWindowTypes::RideEditor },
@@ -89,7 +90,6 @@ GcWindowRegistry::initialize()
     { VIEW_ANALYSIS, tr("2d Plot"),GcWindowTypes::Scatter },
     { VIEW_ANALYSIS, tr("3d Plot"),GcWindowTypes::Model },
     { VIEW_ANALYSIS, tr("Aerolab Chung Analysis"),GcWindowTypes::Aerolab },
-    { VIEW_ANALYSIS, tr("Route Segment"),GcWindowTypes::RouteSegment },
     { VIEW_DIARY, tr("Calendar"),GcWindowTypes::Diary },
     { VIEW_DIARY, tr("Navigator"), GcWindowTypes::ActivityNavigator },
     { VIEW_DIARY|VIEW_HOME, tr("Summary"), GcWindowTypes::DateRangeSummary },
@@ -123,6 +123,7 @@ GcWindowRegistry::title(GcWinID id)
         if (GcWindows[i].relevance && GcWindows[i].id == id)
             return GcWindows[i].name;
     }
+    return QString("unknown");
 }
 
 QList<GcWinID> idsForType(int type)
@@ -202,7 +203,11 @@ GcWindowRegistry::newGcWindow(GcWinID id, Context *context)
     case GcWindowTypes::MapWindow: returning = new MapWindow(context); break;
     case GcWindowTypes::StreetViewWindow: returning = new StreetViewWindow(context); break;
     case GcWindowTypes::ActivityNavigator: returning = new RideNavigator(context); break;
+#if 0 // not till v4.0
     case GcWindowTypes::RouteSegment: returning = new RouteWindow(context); break;
+#else
+    case GcWindowTypes::RouteSegment: returning = new GcWindow(); break;
+#endif
     default: return NULL; break;
     }
     if (returning) returning->setProperty("type", QVariant::fromValue<GcWinID>(id));

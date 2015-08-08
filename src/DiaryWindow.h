@@ -53,13 +53,11 @@ class DiaryWindow : public GcWindow
         int view() const { return 0; /* viewMode->currentIndex(); */ }
         void setView(int /* x */ ) { /* viewMode->setCurrentIndex(x); */ }
 
-#ifdef GC_HAVE_LUCENE
         bool isFiltered() const { return (context->ishomefiltered || context->isfiltered); }
-#endif
 
     public slots:
         void rideSelected();
-        void configChanged();
+        void configChanged(qint32);
         void nextClicked();
         void prevClicked();
         void setDefaultView(int);

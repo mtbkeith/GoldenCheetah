@@ -17,10 +17,10 @@
  */
 
 #include "RideMetadata.h"
-#include "MetricAggregator.h"
 #include "SpecialFields.h"
 
 #include "MainWindow.h"
+#include "RideCache.h"
 #include "RideItem.h"
 #include "Context.h"
 #include "Athlete.h"
@@ -29,6 +29,7 @@
 #include "Colors.h"
 #include "Units.h"
 #include "TabView.h"
+#include "HelpWhatsThis.h"
 
 #include <QXmlDefaultHandler>
 #include <QtGui>
@@ -43,7 +44,7 @@
 /*----------------------------------------------------------------------
  * Master widget for Metadata Entry "on" RideSummaryWindow
  *--------------------------------------------------------------------*/
-RideMetadata::RideMetadata(Context *context, bool singlecolumn) : 
+RideMetadata::RideMetadata(Context *context, bool singlecolumn) :
     QWidget(context->mainWindow), singlecolumn(singlecolumn), context(context)
 {
 
@@ -52,6 +53,9 @@ RideMetadata::RideMetadata(Context *context, bool singlecolumn) :
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(0);
     mainLayout->setContentsMargins(0,0,0,0);
+
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::ChartRides_Details));
 
     // setup the tabs widget
     tabs = new QTabWidget(this);
@@ -69,10 +73,10 @@ RideMetadata::RideMetadata(Context *context, bool singlecolumn) :
 
     extraForm = new Form(this);
 
-    configUpdate();
+    configChanged(CONFIG_FIELDS | CONFIG_APPEARANCE);
 
     // watch for config changes
-    connect(context, SIGNAL(configChanged()), this, SLOT(configUpdate()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 
     // Extra tab is expensive to update so we only update if it
     // is visible. In this case we need to trigger refresh when the
@@ -117,7 +121,7 @@ RideMetadata::warnDateTime(QDateTime datetime)
 
         QString conflict = context->athlete->home->activities().canonicalPath() + "/" + targetnosuffix + "." + suffix;
         if (QFile(conflict).exists() && QFileInfo(conflict).fileName() != rideItem()->fileName) {
-            QMessageBox::warning(this, "Date/Time Entry", "A ride already exists with that date/time, if you do not change it then you will overwrite and lose existing data");
+            QMessageBox::warning(this, "Date/Time Entry", "An activity already exists with that date/time, if you do not change it then you will overwrite and lose existing data");
             return; // only warn on the first conflict!
         }
     }
@@ -182,7 +186,7 @@ RideMetadata::setExtraTab()
             // we might get more selective later?
 
             // set Text Field to 'Read Only' to still enable scrolling,...
-            QTextEdit* textEdit = dynamic_cast<QTextEdit*> (field->widget);
+            GTextEdit* textEdit = dynamic_cast<GTextEdit*> (field->widget);
             if (textEdit)  textEdit->setReadOnly(true);
             else {
                 QLineEdit* lineEdit = dynamic_cast<QLineEdit*> (field->widget);
@@ -215,7 +219,7 @@ RideMetadata::metadataChanged()
 }
 
 void
-RideMetadata::configUpdate()
+RideMetadata::configChanged(qint32)
 {
     setProperty("color", GColor(CPLOTBACKGROUND));
 
@@ -245,7 +249,7 @@ RideMetadata::configUpdate()
     // read metadata.xml
     QString filename = context->athlete->home->config().absolutePath()+"/metadata.xml";
     if (!QFile(filename).exists()) filename = ":/xml/metadata.xml";
-    readXML(filename, keywordDefinitions, fieldDefinitions, colorfield);
+    readXML(filename, keywordDefinitions, fieldDefinitions, colorfield, defaultDefinitions);
 
     // wipe existing tabs
     QMapIterator<QString, Form*> d(tabList);
@@ -256,6 +260,7 @@ RideMetadata::configUpdate()
            delete d.value();
     }
     tabList.clear();
+    formFields.empty();
 
 
     // create forms and populate with fields
@@ -295,6 +300,18 @@ RideMetadata::configUpdate()
 
     metadataChanged(); // re-read the values!
 }
+
+void
+RideMetadata::addFormField(FormField *f)
+{
+    formFields.append(f);
+}
+
+QVector<FormField *> RideMetadata::getFormFields()
+{
+    return formFields;
+}
+
 
 /*----------------------------------------------------------------------
  * Forms (one per tab)
@@ -357,6 +374,7 @@ Form::addField(FieldDefinition &x)
 {
     FormField *p = new FormField(x, meta);
     fields.append(p);
+    meta->addFormField(p);
 }
 
 void
@@ -371,8 +389,8 @@ Form::arrange()
     //                 this is how the "Notes" tab is created
     if (fields.count() == 1 && fields[0]->definition.type == FIELD_TEXTBOX) {
         hlayout->addWidget(fields[0]->widget, 0, 0);
-        ((QTextEdit*)(fields[0]->widget))->setFrameStyle(QFrame::NoFrame);
-        ((QTextEdit*)(fields[0]->widget))->viewport()->setAutoFillBackground(false);
+        ((GTextEdit*)(fields[0]->widget))->setFrameStyle(QFrame::NoFrame);
+        ((GTextEdit*)(fields[0]->widget))->viewport()->setAutoFillBackground(false);
         return;
     } else {
         vlayout1 = new QVBoxLayout;
@@ -461,25 +479,7 @@ FormField::FormField(FieldDefinition field, RideMetadata *meta) : definition(fie
     case FIELD_TEXT : // text
     case FIELD_SHORTTEXT : // shorttext
 
-        if (field.values.count()) {
-            if (field.values.count() == 1 && field.values.at(0) == "*") {
-
-                // get the metdata values from the metric db ....
-                QStringList values;
-
-                // set values from whatever we have done in the past
-                completer = new QCompleter(values, this);
-                completer->setCaseSensitivity(Qt::CaseInsensitive);
-                completer->setCompletionMode(QCompleter::InlineCompletion);
-
-            } else {
-
-                // user specified restricted values
-                completer = new QCompleter(field.values, this);
-                completer->setCaseSensitivity(Qt::CaseInsensitive);
-                completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
-            }
-        }
+        completer = field.getCompleter(this);
         widget = new QLineEdit(this);
         dynamic_cast<QLineEdit*>(widget)->setCompleter(completer);
 
@@ -489,20 +489,21 @@ FormField::FormField(FieldDefinition field, RideMetadata *meta) : definition(fie
         break;
 
     case FIELD_TEXTBOX : // textbox
-        widget = new QTextEdit(this);
+        widget = new GTextEdit(this);
 
         // use special style sheet ..
-        dynamic_cast<QTextEdit*>(widget)->setObjectName("metadata"); 
+        dynamic_cast<GTextEdit*>(widget)->setObjectName("metadata");
 
         // rich text hangs 'fontd' for some users
-        dynamic_cast<QTextEdit*>(widget)->setAcceptRichText(false); 
-        dynamic_cast<QTextEdit*>(widget)->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding); 
+        dynamic_cast<GTextEdit*>(widget)->setAcceptRichText(false);
+        dynamic_cast<GTextEdit*>(widget)->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
         if (field.name == "Change History") {
-            dynamic_cast<QTextEdit*>(widget)->setReadOnly(true);
+            dynamic_cast<GTextEdit*>(widget)->setReadOnly(true);
         } else {
-            connect (widget, SIGNAL(textChanged()), this, SLOT(editFinished()));
-        }
+            //we use focusout event for this now
+            connect (widget, SIGNAL(focusOut(QFocusEvent*)), this, SLOT(focusOut(QFocusEvent*)));
+       }
         break;
 
     case FIELD_INTEGER : // integer
@@ -569,7 +570,9 @@ FormField::FormField(FieldDefinition field, RideMetadata *meta) : definition(fie
     //connect(main, SIGNAL(rideSelected()), this, SLOT(rideSelected()));
 
     // if save is being called flush all the values out ready to save as they are
-    connect(meta->context, SIGNAL(metadataFlush()), this, SLOT(editFinished()));
+    connect(meta->context, SIGNAL(metadataFlush()), this, SLOT(metadataFlush()));
+
+    active = false;
 }
 
 FormField::~FormField()
@@ -585,11 +588,11 @@ FormField::~FormField()
         case FIELD_TEXTBOX : if (definition.name == "Summary")
                                  delete ((RideSummaryWindow *)widget);
                              else
-                                 delete ((QTextEdit*)widget);
+                                 delete ((GTextEdit*)widget);
                              break;
         case FIELD_INTEGER : delete ((QSpinBox*)widget); break;
         case FIELD_DOUBLE : {
-                                if (!isTime) delete ((QDoubleSpinBox*)widget); 
+                                if (!isTime) delete ((QDoubleSpinBox*)widget);
                                 else delete ((QTimeEdit*)widget);
                             }
                             break;
@@ -608,8 +611,146 @@ FormField::dataChanged()
 }
 
 void
+RideMetadata::metadataFlush()
+{
+    // run through each field setting the metadata text to whatever
+    // we have in the field
+    QMapIterator<QString, Form*> d(tabList);
+    d.toFront();
+    while (d.hasNext()) {
+       d.next();
+       foreach(FormField *field, d.value()->fields) // keep track so we can destroy
+          field->metadataFlush();
+    }
+
+    // now we're clean we can signal
+    RideItem *item = property("ride").value<RideItem*>();
+    if (item) item->notifyRideMetadataChanged();
+}
+
+void
+FormField::metadataFlush()
+{
+    if (ourRideItem == NULL) return;
+
+    // get values from the widgets
+    QString text;
+
+    // get the current value into a string
+    switch (definition.type) {
+    case FIELD_TEXT :
+    case FIELD_SHORTTEXT :
+             text = ((QLineEdit*)widget)->text();
+             break;
+    case FIELD_TEXTBOX :
+        {
+            text = ((GTextEdit*)widget)->document()->toPlainText();
+            break;
+        }
+
+    case FIELD_INTEGER : text = QString("%1").arg(((QSpinBox*)widget)->value()); break;
+    case FIELD_DOUBLE :
+        {
+            if (!isTime) text = QString("%1").arg(((QDoubleSpinBox*)widget)->value());
+            else {
+                text = QString("%1").arg(QTime(0,0,0,0).secsTo(((QTimeEdit*)widget)->time()));
+            }
+        }
+        break;
+    case FIELD_DATE : text = ((QDateEdit*)widget)->date().toString("dd.MM.yyyy"); break;
+    case FIELD_TIME : text = ((QTimeEdit*)widget)->time().toString("hh:mm:ss.zzz"); break;
+    }
+
+    // Update special field
+    if (definition.name == "Device") {
+        ourRideItem->ride()->setDeviceType(text);
+
+    } else if (definition.name == "Identifier") {
+        ourRideItem->ride()->setId(text);
+
+    } else if (definition.name == "Recording Interval") {
+        ourRideItem->ride()->setRecIntSecs(text.toDouble());
+
+    } else if (definition.name == "Start Date") {
+        QDateTime current = ourRideItem->ride()->startTime();
+        QDate date(/* year*/text.mid(6,4).toInt(),
+                   /* month */text.mid(3,2).toInt(),
+                   /* day */text.mid(0,2).toInt());
+        QDateTime update = QDateTime(date, current.time());
+        ourRideItem->setStartTime(update);
+
+    } else if (definition.name == "Start Time") {
+        QDateTime current = ourRideItem->ride()->startTime();
+        QTime time(/* hours*/ text.mid(0,2).toInt(),
+                   /* minutes */ text.mid(3,2).toInt(),
+                   /* seconds */ text.mid(6,2).toInt(),
+                   /* milliseconds */ text.mid(9,3).toInt());
+        QDateTime update = QDateTime(current.date(), time);
+        ourRideItem->setStartTime(update);
+
+    } else if (definition.name != "Summary") {
+        if (meta->sp.isMetric(definition.name) && enabled->isChecked()) {
+
+            // convert from imperial to metric if needed
+            if (!meta->context->athlete->useMetricUnits) {
+                double value = text.toDouble() * (1/ meta->sp.rideMetric(definition.name)->conversion());
+                value -= meta->sp.rideMetric(definition.name)->conversionSum();
+                text = QString("%1").arg(value);
+            }
+
+            // update metric override QMap!
+            QMap<QString,QString> override;
+            override.insert("value", text);
+            ourRideItem->ride()->metricOverrides.insert(meta->sp.metricSymbol(definition.name), override);
+
+        } else {
+
+            // we need to convert from display value to
+            // stored value for the Weight field:
+            if (definition.type == FIELD_DOUBLE && definition.name == "Weight" && meta->context->athlete->useMetricUnits == false) {
+                double kg = text.toDouble() / LB_PER_KG;
+                text = QString("%1").arg(kg);
+            }
+
+            // just update the tags QMap!
+            ourRideItem->ride()->setTag(definition.name, text);
+        }
+    }
+
+    // Construct the summary text used on the calendar
+    QString calendarText;
+    foreach (FieldDefinition field, meta->getFields()) {
+        if (field.diary == true) {
+            calendarText += QString("%1\n")
+                    .arg(ourRideItem->ride()->getTag(field.name, ""));
+        }
+    }
+    ourRideItem->ride()->setTag("Calendar Text", calendarText);
+}
+
+void
+FormField::focusOut(QFocusEvent *)
+{
+    if (ourRideItem && ourRideItem->ride()) {
+
+        // watch to see if we actually have changed ?
+        if (definition.type == FIELD_TEXTBOX && definition.name != "Change History") {
+
+            // what did we used to be ?
+            QString value = ourRideItem->ride()->getTag(definition.name, "");
+            if (value != dynamic_cast<GTextEdit*>(widget)->document()->toPlainText()) {
+                edited = true;
+                editFinished(); // we made a change so reflect it !
+            }
+        }
+    }
+}
+
+void
 FormField::editFinished()
 {
+    bool changed = false;
+
     if (active || ourRideItem == NULL ||
         (edited == false && definition.type != FIELD_TEXTBOX) ||
         ourRideItem == NULL) return;
@@ -633,7 +774,7 @@ FormField::editFinished()
              break;
     case FIELD_TEXTBOX :
         {
-            text = ((QTextEdit*)widget)->document()->toPlainText();
+            text = ((GTextEdit*)widget)->document()->toPlainText();
             break;
         }
 
@@ -649,28 +790,44 @@ FormField::editFinished()
     case FIELD_TIME : text = ((QTimeEdit*)widget)->time().toString("hh:mm:ss.zzz"); break;
     }
 
+    active = true;
 
     // Update special field
     if (definition.name == "Device") {
-        ourRideItem->ride()->setDeviceType(text);
-        ourRideItem->notifyRideMetadataChanged();
+
+        if (ourRideItem->ride()->deviceType() != text) {
+            changed = true;
+            ourRideItem->ride()->setDeviceType(text);
+        }
+
     } else if (definition.name == "Identifier") {
-        ourRideItem->ride()->setId(text);
-        ourRideItem->notifyRideMetadataChanged();
+
+        if (ourRideItem->ride()->id() != text) {
+            changed = true;
+            ourRideItem->ride()->setId(text);
+        }
+
     } else if (definition.name == "Recording Interval") {
-        ourRideItem->ride()->setRecIntSecs(text.toDouble());
-        ourRideItem->notifyRideMetadataChanged();
+
+        if (ourRideItem->ride()->recIntSecs() != text.toDouble()) {
+            changed = true;
+            ourRideItem->ride()->setRecIntSecs(text.toDouble());
+        }
+
     } else if (definition.name == "Start Date") {
         QDateTime current = ourRideItem->ride()->startTime();
         QDate date(/* year*/text.mid(6,4).toInt(),
                    /* month */text.mid(3,2).toInt(),
                    /* day */text.mid(0,2).toInt());
         QDateTime update = QDateTime(date, current.time());
-        ourRideItem->setStartTime(update);
-        ourRideItem->notifyRideMetadataChanged();
 
-        // warn if the ride already exists with that date/time
-        meta->warnDateTime(update);
+        if (update != current) {
+            changed = true;
+            ourRideItem->setStartTime(update);
+
+            // warn if the ride already exists with that date/time
+            meta->warnDateTime(update);
+        }
 
     } else if (definition.name == "Start Time") {
         QDateTime current = ourRideItem->ride()->startTime();
@@ -679,11 +836,15 @@ FormField::editFinished()
                    /* seconds */ text.mid(6,2).toInt(),
                    /* milliseconds */ text.mid(9,3).toInt());
         QDateTime update = QDateTime(current.date(), time);
-        ourRideItem->setStartTime(update);
-        ourRideItem->notifyRideMetadataChanged();
 
-        // warn if the ride already exists with that date/time
-        meta->warnDateTime(update);
+        if (update != current) {
+
+            changed = true;
+            ourRideItem->setStartTime(update);
+
+            // warn if the ride already exists with that date/time
+            meta->warnDateTime(update);
+        }
 
     } else if (definition.name != "Summary") {
         if (meta->sp.isMetric(definition.name) && enabled->isChecked()) {
@@ -695,16 +856,21 @@ FormField::editFinished()
                 text = QString("%1").arg(value);
             }
 
-            // update metric override QMap!
-            QMap<QString,QString> override;
-            override.insert("value", text);
-            ourRideItem->ride()->metricOverrides.insert(meta->sp.metricSymbol(definition.name), override);
+            QMap<QString, QString> empty;
+            QMap<QString,QString> current = ourRideItem->ride()->metricOverrides.value(meta->sp.metricSymbol(definition.name), empty);
+            QString currentvalue = current.value("value", "");
 
-            // get widgets updated with new override
-            ourRideItem->notifyRideMetadataChanged();
+            if (currentvalue != text) {
+                // update metric override QMap!
+                changed = true;
+                QMap<QString,QString> override;
+                override.insert("value", text);
+                ourRideItem->ride()->metricOverrides.insert(meta->sp.metricSymbol(definition.name), override);
+            }
+
         } else {
 
-            // we need to convert from display value to 
+            // we need to convert from display value to
             // stored value for the Weight field:
             if (definition.type == FIELD_DOUBLE && definition.name == "Weight" && meta->context->athlete->useMetricUnits == false) {
                 double kg = text.toDouble() / LB_PER_KG;
@@ -712,22 +878,60 @@ FormField::editFinished()
             }
 
             // just update the tags QMap!
-            ourRideItem->ride()->setTag(definition.name, text);
+            QString current = ourRideItem->ride()->getTag(definition.name, "");
+            if (current != text) {
+                changed = true;
+                ourRideItem->ride()->setTag(definition.name, text);
+            }
         }
     }
 
-    // Construct the summary text used on the calendar
-    QString calendarText;
-    foreach (FieldDefinition field, meta->getFields()) {
-        if (field.diary == true) {
-            calendarText += QString("%1\n")
-                    .arg(ourRideItem->ride()->getTag(field.name, ""));
-        }
-    }
-    ourRideItem->ride()->setTag("Calendar Text", calendarText);
+    // default values
+    if (changed) {
 
-    // rideFile is now dirty!
-    ourRideItem->setDirty(true);
+        // we actually edited it !
+        setLinkedDefault(text);
+
+        // Construct the summary text used on the calendar
+        QString calendarText;
+        foreach (FieldDefinition field, meta->getFields()) {
+            if (field.diary == true) {
+                calendarText += QString("%1\n")
+                        .arg(ourRideItem->ride()->getTag(field.name, ""));
+            }
+        }
+        ourRideItem->ride()->setTag("Calendar Text", calendarText);
+
+        // and update !
+        ourRideItem->notifyRideMetadataChanged();
+
+        // rideFile is now dirty!
+        ourRideItem->setDirty(true);
+    }
+    active = false;
+}
+
+void
+FormField::setLinkedDefault(QString text)
+{
+    foreach (DefaultDefinition adefault, meta->getDefaults()) {
+        if (adefault.field == definition.name && adefault.value == text) {
+            //qDebug() << "Default for" << adefault.linkedField << ":" << adefault.linkedValue;
+
+            if (ourRideItem->ride()->getTag(adefault.linkedField, "") == "")
+                ourRideItem->ride()->setTag(adefault.linkedField, adefault.linkedValue);
+
+            foreach (FormField *formField, meta->getFormFields()) {
+                if (formField->definition.name == adefault.linkedField) {
+                    formField->metadataChanged();
+                    formField->setLinkedDefault(adefault.linkedValue);
+                }
+            }
+
+
+        }
+
+    }
 }
 
 void
@@ -740,7 +944,7 @@ FormField::stateChanged(int state)
         ourRideItem->ride()->setTag(definition.name, ((QCheckBox *)widget)->isChecked() ? "1" : "0");
         ourRideItem->setDirty(true);
         return;
-    } 
+    }
 
     widget->setEnabled(state ? true : false);
     widget->setHidden(state ? false : true);
@@ -777,6 +981,8 @@ FormField::stateChanged(int state)
 void
 FormField::metadataChanged()
 {
+    if (active == true) return;
+
     active = true;
     edited = false;
     QString value;
@@ -823,77 +1029,134 @@ FormField::metadataChanged()
         value ="";
     }
 
-    switch (definition.type) {
-    case FIELD_TEXT : // text
-    case FIELD_SHORTTEXT : // shorttext
-        { 
-            if (meta->context->athlete->metricDB && completer && 
-                definition.values.count() == 1 && definition.values.at(0) == "*") {
+    if (!enabled) { // not a ride metric 
+        switch (definition.type) {
+        case FIELD_TEXT : // text
+        case FIELD_SHORTTEXT : // shorttext
+            {
+                if (meta->context->athlete->rideCache && completer &&
+                    definition.values.count() == 1 && definition.values.at(0) == "*") {
 
-                // set completer if needed for wildcard matching
-                QStringList values;
-                QSqlQuery query(meta->context->athlete->metricDB->db()->connection());
-                bool rc = query.exec(QString("SELECT Z%1 FROM metrics;").arg(meta->context->specialFields.makeTechName(definition.name)));
-                while (rc && query.next()) values << query.value(0).toString();
+                    // set completer if needed for wildcard matching
+                    QStringList values = meta->context->athlete->rideCache->getDistinctValues(definition.name);
 
-                delete completer;
-                completer = new QCompleter(values, this);
-                completer->setCaseSensitivity(Qt::CaseInsensitive);
-                completer->setCompletionMode(QCompleter::InlineCompletion);
-                dynamic_cast<QLineEdit*>(widget)->setCompleter(completer);
+                    delete completer;
+                    completer = new QCompleter(values, this);
+                    completer->setCaseSensitivity(Qt::CaseInsensitive);
+                    completer->setCompletionMode(QCompleter::InlineCompletion);
+                    dynamic_cast<QLineEdit*>(widget)->setCompleter(completer);
+                }
+                ((QLineEdit*)widget)->setText(value);
             }
-            ((QLineEdit*)widget)->setText(value);
-        }
-        break;
+            break;
 
-    case FIELD_TEXTBOX : // textbox
-        if (definition.name != "Summary")
-            ((QTextEdit*)widget)->setText(value);
-        break;
+        case FIELD_TEXTBOX : // textbox
+            if (definition.name != "Summary")
+                ((GTextEdit*)widget)->setText(value);
+            break;
 
-    case FIELD_INTEGER : // integer
-        ((QSpinBox*)widget)->setValue(value.toInt());
-        break;
+        case FIELD_INTEGER : // integer
+            ((QSpinBox*)widget)->setValue(value.toInt());
+            break;
 
-    case FIELD_DOUBLE : // double
-        if (isTime) ((QTimeEdit*)widget)->setTime(QTime(0,0,0,0).addSecs(value.toDouble()));
-        else {
-            if (definition.name == "Weight" && meta->context->athlete->useMetricUnits == false) {
-                double lbs = value.toDouble() * LB_PER_KG;
-                value = QString("%1").arg(lbs);
+        case FIELD_DOUBLE : // double
+            if (isTime) ((QTimeEdit*)widget)->setTime(QTime(0,0,0,0).addSecs(value.toDouble()));
+            else {
+                if (definition.name == "Weight" && meta->context->athlete->useMetricUnits == false) {
+                    double lbs = value.toDouble() * LB_PER_KG;
+                    value = QString("%1").arg(lbs);
+                }
+                ((QDoubleSpinBox*)widget)->setValue(value.toDouble());
             }
-            ((QDoubleSpinBox*)widget)->setValue(value.toDouble());
-        }
-        break;
+            break;
 
-    case FIELD_DATE : // date
-        {
-        if (value == "") value = "          ";
-        QDate date(/* year*/value.mid(6,4).toInt(),
-                   /* month */value.mid(3,2).toInt(),
-                   /* day */value.mid(0,2).toInt());
-        ((QDateEdit*)widget)->setDate(date);
-        }
-        break;
+        case FIELD_DATE : // date
+            {
+            if (value == "") value = "          ";
+            QDate date(/* year*/value.mid(6,4).toInt(),
+                    /* month */value.mid(3,2).toInt(),
+                    /* day */value.mid(0,2).toInt());
+            ((QDateEdit*)widget)->setDate(date);
+            }
+            break;
 
-    case FIELD_TIME : // time
-        {
-        if (value == "") value = "            ";
-        QTime time(/* hours*/ value.mid(0,2).toInt(),
-                   /* minutes */ value.mid(3,2).toInt(),
-                   /* seconds */ value.mid(6,2).toInt(),
-                   /* milliseconds */ value.mid(9,3).toInt());
-        ((QTimeEdit*)widget)->setTime(time);
-        }
-        break;
+        case FIELD_TIME : // time
+            {
+            if (value == "") value = "            ";
+            QTime time(/* hours*/ value.mid(0,2).toInt(),
+                    /* minutes */ value.mid(3,2).toInt(),
+                    /* seconds */ value.mid(6,2).toInt(),
+                    /* milliseconds */ value.mid(9,3).toInt());
+            ((QTimeEdit*)widget)->setTime(time);
+            }
+            break;
 
-    case FIELD_CHECKBOX : // checkbox
-        {
-        ((QCheckBox*)widget)->setChecked((value == "1") ? true : false);
+        case FIELD_CHECKBOX : // checkbox
+            {
+            ((QCheckBox*)widget)->setChecked((value == "1") ? true : false);
+            }
+            break;
         }
-        break;
     }
     active = false;
+}
+
+unsigned long
+FieldDefinition::fingerprint(QList<FieldDefinition> list)
+{
+    QByteArray ba;
+
+    foreach(FieldDefinition def, list) {
+
+        ba.append(def.tab);
+        ba.append(def.name);
+        ba.append(def.type);
+        ba.append(def.diary);
+        ba.append(def.values.join(""));
+    }
+
+    return qChecksum(ba, ba.length());
+}
+
+QCompleter *
+FieldDefinition::getCompleter(QObject *parent)
+{
+    QCompleter *completer = NULL;
+    if (values.count()) {
+        if (values.count() == 1 && values.at(0) == "*") {
+
+            // get the metdata values from the metric db ....
+            QStringList past_values;
+
+            // set values from whatever we have done in the past
+            completer = new QCompleter(past_values, parent);
+            completer->setCaseSensitivity(Qt::CaseInsensitive);
+            completer->setCompletionMode(QCompleter::InlineCompletion);
+
+        } else {
+
+            // user specified restricted values
+            completer = new QCompleter(values, parent);
+            completer->setCaseSensitivity(Qt::CaseInsensitive);
+            completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
+        }
+    }
+    return completer;
+}
+
+unsigned long
+KeywordDefinition::fingerprint(QList<KeywordDefinition> list)
+{
+    QByteArray ba;
+
+    foreach(KeywordDefinition def, list) {
+
+        ba.append(def.name);
+        ba.append(def.color.name());
+        ba.append(def.tokens.join(""));
+    }
+
+    return qChecksum(ba, ba.length());
 }
 
 /*----------------------------------------------------------------------
@@ -917,11 +1180,18 @@ static QString xmlprotect(QString string)
 }
 
 void
-RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinitions, QList<FieldDefinition>fieldDefinitions, QString colorfield)
+RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinitions, QList<FieldDefinition>fieldDefinitions, QString colorfield, QList<DefaultDefinition>defaultDefinitions)
 {
     // open file - truncate contents
     QFile file(filename);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly)) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(tr("Problem Saving Meta Data"));
+        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        msgBox.exec();
+        return;
+    };
     file.resize(0);
     QTextStream out(&file);
     out.setCodec("UTF-8");
@@ -952,7 +1222,7 @@ RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinit
     out <<"\t</keywords>\n";
 
     //
-    // Last we write out the field definitions
+    // we write out the field definitions
     //
     out << "\t<fields>\n";
     // write out to file
@@ -967,6 +1237,23 @@ RideMetadata::serialize(QString filename, QList<KeywordDefinition>keywordDefinit
         out<<QString("\t\t</field>\n");
     }
     out <<"\t</fields>\n";
+
+    //
+    // Last we write out the default definitions
+    //
+    out << "\t<defaults>\n";
+    // write out to file
+    foreach (DefaultDefinition adefault, defaultDefinitions) {
+        // chart name
+        out<<QString("\t\t<default>\n");
+        out<<QString("\t\t\t<defaultfield>\"%1\"</defaultfield>\n").arg(xmlprotect(adefault.field));
+        out<<QString("\t\t\t<defaultvalue>\"%1\"</defaultvalue>\n").arg(xmlprotect(adefault.value));
+        out<<QString("\t\t\t<defaultlinkedfield>\"%1\"</defaultlinkedfield>\n").arg(xmlprotect(adefault.linkedField));
+        out<<QString("\t\t\t<defaultlinkedvalue>\"%1\"</defaultlinkedvalue>\n").arg(xmlprotect(adefault.linkedValue));
+        out<<QString("\t\t</default>\n");
+    }
+    out <<"\t</defaults>\n";
+
 
     // end document
     out << "</metadata>\n";
@@ -994,7 +1281,7 @@ static QString unprotect(QString buffer)
 }
 
 void
-RideMetadata::readXML(QString filename, QList<KeywordDefinition>&keywordDefinitions, QList<FieldDefinition>&fieldDefinitions, QString &colorfield)
+RideMetadata::readXML(QString filename, QList<KeywordDefinition>&keywordDefinitions, QList<FieldDefinition>&fieldDefinitions, QString &colorfield, QList<DefaultDefinition> &defaultDefinitions)
 {
     QFile metadataFile(filename);
     QXmlInputSource source( &metadataFile );
@@ -1009,26 +1296,39 @@ RideMetadata::readXML(QString filename, QList<KeywordDefinition>&keywordDefiniti
     keywordDefinitions = handler.getKeywords();
     fieldDefinitions = handler.getFields();
     colorfield = handler.getColorField();
+    defaultDefinitions = handler.getDefaults();
 
     // backwards compatible
     if (colorfield == "") colorfield = "Calendar Text";
 
     // now auto append special fields, in case
     // the user wiped them or we have introduced
-    // them in this release. This is to ensure
-    // they get written to metricDB
+    // them in this release.
     bool hasCalendarText = false;
     bool hasData = false;
 
-    foreach (FieldDefinition field, fieldDefinitions) {
-        if (field.name == "Data") {
+    for (int i=0; i<fieldDefinitions.count(); i++) {
+    
+        if (fieldDefinitions[i].name == "Data") {
             hasData = true;
         }
-        if (field.name == "Calendar Text") {
+        if (fieldDefinitions[i].name == "Calendar Text") {
             hasCalendarText = true;
         }
+
         // other fields here...
+
+        // any field called "Time Riding" on the "Metric" tab needs to be renamed "Time Moving" as we renamed it !
+        if (fieldDefinitions[i].name == "Time Riding" && fieldDefinitions[i].tab == "Metric") fieldDefinitions[i].name = "Time Moving";
+
+        // set type to correct value if a 1st class variable
+        if (fieldDefinitions[i].name == "Device") fieldDefinitions[i].type = FIELD_SHORTTEXT;
+        else if (fieldDefinitions[i].name == "Recording Interval") fieldDefinitions[i].type = FIELD_DOUBLE;
+        else if (fieldDefinitions[i].name == "Start Date") fieldDefinitions[i].type = FIELD_DATE;
+        else if (fieldDefinitions[i].name == "Start Time") fieldDefinitions[i].type = FIELD_TIME;
+        else if (fieldDefinitions[i].name == "Identifier") fieldDefinitions[i].type = FIELD_SHORTTEXT;
     }
+
     if (!hasCalendarText) {
         FieldDefinition add;
         add.name = "Calendar Text";
@@ -1072,6 +1372,10 @@ bool MetadataXMLParser::endElement( const QString&, const QString&, const QStrin
     } else if(qName == "fieldvalues") {
         field.values = unprotect(buffer).split(",", QString::SkipEmptyParts);
     } else if (qName == "fielddiary") field.diary = (buffer.trimmed().toInt() != 0);
+    else if(qName == "defaultfield") adefault.field =  unprotect(buffer);
+    else if(qName == "defaultvalue") adefault.value =  unprotect(buffer);
+    else if(qName == "defaultlinkedfield") adefault.linkedField =  unprotect(buffer);
+    else if(qName == "defaultlinkedvalue") adefault.linkedValue =  unprotect(buffer);
 
     //
     // Complex Elements
@@ -1082,6 +1386,8 @@ bool MetadataXMLParser::endElement( const QString&, const QString&, const QStrin
         fieldDefinitions.append(field);
     else if (qName == "colorfield")
         colorfield = unprotect(buffer);
+    else if (qName == "default") // <default></default> block
+        defaultDefinitions.append(adefault);
 
     return true;
 }
@@ -1106,6 +1412,10 @@ bool MetadataXMLParser::startElement( const QString&, const QString&, const QStr
             if (attrs.qName(i) == "blue") blue=attrs.value(i).toInt();
         }
     }
+    else if (name == "defaults")
+        defaultDefinitions.clear();
+    else if (name == "default")
+        adefault = DefaultDefinition();
 
     return true;
 }

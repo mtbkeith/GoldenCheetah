@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QTableWidget>
 #include <QScrollArea>
+#include <QDialog>
 
 #include "GcSideBarItem.h"
 #include "Context.h"
@@ -51,7 +52,7 @@ class ComparePane : public QWidget
 
         void clear(); // wipe away whatever is there
 
-        void configChanged();
+        void configChanged(qint32);
 
         void itemsWereSorted();
         void intervalButtonsChanged();
@@ -65,6 +66,29 @@ class ComparePane : public QWidget
         CompareMode mode_; // remember the mode we were created as...
         QTableWidget *table;
         QScrollArea *scrollArea;
+};
+
+class RouteDropDialog : public QDialog
+{
+    Q_OBJECT
+    G_OBJECT
+
+
+    public:
+        RouteDropDialog(QWidget *, Context *, QString name, QVector<int>&, int&);
+
+    public slots:
+        void allClicked();
+        void oneClicked();
+        void seasonChanged(int);
+
+    private:
+        Context *context;
+        QVector<int> &seasonCount;
+        int &selected;
+
+        QPushButton *all, *one;
+        QComboBox *seasonSelector;
 };
 
 #endif // _GC_ComparePane_h

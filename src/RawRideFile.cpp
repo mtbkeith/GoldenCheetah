@@ -20,7 +20,7 @@
 #include "RawRideFile.h"
 #include "PowerTapUtil.h"
 #include "Units.h"
-#include <math.h>
+#include <cmath>
 
 static int rawFileReaderRegistered =
     RideFileFactory::instance().registerReader(
@@ -71,8 +71,14 @@ time_cb(struct tm *, time_t since_epoch, void *context)
     state->rideFile->appendPoint(secs, 0.0, 0.0,
                                  state->last_miles * KM_PER_MILE, 0.0,
                                  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                 RideFile::NoTemp, 0.0, 0.0,0.0,0.0,0.0,0.0,0.0,
+                                 RideFile::NoTemp, 0.0,
+                                 0.0, 0.0, 0.0, 0.0,
+                                 0.0,0.0,
+                                 0.0, 0.0, 0.0, 0.0,
+                                 0.0, 0.0, 0.0, 0.0,
+                                 0.0,0.0,
                                  0.0,0.0,0.0, // running dynamic
+                                 0.0, //tcore
                                  state->last_interval);
     state->last_secs = secs;
 }
@@ -90,7 +96,11 @@ data_cb(double secs, double nm, double mph, double watts, double miles, double a
                                  mph * KM_PER_MILE, nm, watts, alt, 0.0, 0.0, 0.0, 0.0, RideFile::NoTemp, 0.0, 
                                  0.0,0.0,0.0,0.0, // pedal smooth/te
                                  0.0,0.0,
+                                 0.0,0.0,0.0,0.0,
+                                 0.0,0.0,0.0,0.0,
+                                 0.0,0.0,
                                  0.0,0.0,0.0,
+                                 0.0, //tcore
                                  interval);
     state->last_secs = secs;
     state->last_miles = miles;

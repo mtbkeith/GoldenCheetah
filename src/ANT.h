@@ -132,6 +132,7 @@ struct setChannelAtom {
 #define ANT_STANDARD_POWER     0x10
 #define ANT_WHEELTORQUE_POWER  0x11
 #define ANT_CRANKTORQUE_POWER  0x12
+#define ANT_TE_AND_PS_POWER    0x13
 #define ANT_CRANKSRM_POWER     0x20
 
 // ANT messages
@@ -215,6 +216,7 @@ struct setChannelAtom {
 #define ANT_SPORT_CONTROL_PERIOD 8192
 #define ANT_SPORT_KICKR_PERIOD 2048
 #define ANT_SPORT_MOXY_PERIOD 8192
+#define ANT_SPORT_TACX_VORTEX_PERIOD 8192
 #define ANT_FAST_QUARQ_PERIOD (8182/16)
 #define ANT_QUARQ_PERIOD (8182*4)
 
@@ -225,6 +227,7 @@ struct setChannelAtom {
 #define ANT_SPORT_SandC_TYPE 0x79
 #define ANT_SPORT_MOXY_TYPE 0x1F
 #define ANT_SPORT_CONTROL_TYPE 0x10
+#define ANT_SPORT_TACX_VORTEX_TYPE 61
 #define ANT_FAST_QUARQ_TYPE_WAS 11 // before release 1.8
 #define ANT_FAST_QUARQ_TYPE 0x60
 #define ANT_QUARQ_TYPE 0x60
@@ -234,6 +237,7 @@ struct setChannelAtom {
 #define ANT_QUARQ_FREQUENCY 61
 #define ANT_KICKR_FREQUENCY 52
 #define ANT_MOXY_FREQUENCY 57
+#define ANT_TACX_VORTEX_FREQUENCY 66
 
 #define ANT_SPORT_CALIBRATION_MESSAGE                 0x01
 
@@ -268,6 +272,12 @@ struct setChannelAtom {
 #define KICKR_CONNECT_ANT_SENSOR       0x4F
 // 0x51-0x59 reserved.
 #define KICKR_SPINDOWN_RESULT          0x5A
+
+// Tacx Vortex data page types
+#define TACX_VORTEX_DATA_SPEED         0
+#define TACX_VORTEX_DATA_SERIAL        1
+#define TACX_VORTEX_DATA_VERSION       2
+#define TACX_VORTEX_DATA_CALIBRATION   3
 
 
 //======================================================================
@@ -379,8 +389,15 @@ public:
         telemetry.setHr(x);
     }
     void setCadence(float x) {
+        lastCadenceMessage = QDateTime(QDateTime::currentDateTime());
         telemetry.setCadence(x);
     }
+    void setSecondaryCadence(float x) {
+        if (lastCadenceMessage.toTime_t() == 0 || (QDateTime::currentDateTime().toTime_t() - lastCadenceMessage.toTime_t())>10)  {
+            telemetry.setCadence(x);
+        }
+    }
+
     void setWheelRpm(float x);
     void setWatts(float x) {
         telemetry.setWatts(x);
@@ -389,6 +406,23 @@ public:
         telemetry.setAltWatts(x);
     }
     void setHb(double smo2, double thb);
+
+    void setLRBalance (double lrbalance) {
+        telemetry.setLRBalance(lrbalance);
+    }
+
+    void setTE(double lte, double rte) {
+        telemetry.setLTE(lte);
+        telemetry.setRTE(rte);
+    }
+
+    void setPS(double lps, double rps) {
+        telemetry.setLPS(lps);
+        telemetry.setRPS(rps);
+    }
+
+    void setVortexData(int channel, int id);
+    void refreshVortexLoad();
 
 private:
 
@@ -433,6 +467,7 @@ private:
     int bytes;
     int checksum;
     int powerchannels; // how many power channels do we have?
+    QDateTime lastCadenceMessage;
 
     QQueue<setChannelAtom> channelQueue; // messages for configuring channels from controller
 
@@ -445,6 +480,9 @@ private:
     int kickrDeviceID;
     int kickrChannel;
 
+    // tacx vortex (we'll probably want to abstract this out cf. kickr)
+    int vortexID;
+    int vortexChannel;
 };
 
 #include "ANTMessage.h"

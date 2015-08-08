@@ -92,7 +92,7 @@ RideFile *SrdFileReader::openRideFile(QFile &file, QStringList &errorStrings, QL
             km = w->dist_data[i];
 
             // add to ride
-            result->appendPoint(time, cad, hr, km, kph, nm, watts, alt, lon, lat, wind, 0.0, RideFile::NoTemp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0);
+            result->appendPoint(time, cad, hr, km, kph, nm, watts, alt, lon, lat, wind, 0.0, RideFile::NoTemp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0);
 
             // keep a track of time
             time += w->recording_interval;
@@ -115,7 +115,7 @@ RideFile *SrdFileReader::openRideFile(QFile &file, QStringList &errorStrings, QL
                              (60 * (w->lap_data[i].cumulative.minutes)) +
                              (3600 * w->lap_data[i].cumulative.hours);
 
-            result->addInterval(add.start, add.stop, add.name);
+            result->addInterval(RideFileInterval::DEVICE, add.start, add.stop, add.name);
         }
 
         // free up s710 resources

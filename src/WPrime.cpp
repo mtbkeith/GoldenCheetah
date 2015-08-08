@@ -49,6 +49,7 @@
 
 
 #include "WPrime.h"
+#include "RideItem.h"
 #include "Units.h" // for MILES_PER_KM
 #include "Settings.h" // for GC_WBALFORM
 
@@ -59,6 +60,25 @@ const double E = 2.71828183;
 
 const int WprimeMatchSmoothing = 25; // 25 sec smoothing looking for matches
 const int WprimeMatchMinJoules = 100; 
+
+// used by summarise
+static struct WPRIMEZONES {
+
+    int lo, hi;
+    QString name;
+    const char *desc;
+
+} wbal_zones[] = {
+
+    { 0, 25, "W1", QT_TRANSLATE_NOOP("wbalzone", "Recovered") },
+    { 25, 50, "W2", QT_TRANSLATE_NOOP("wbalzone", "Moderate Fatigue") },
+    { 50, 75, "W3", QT_TRANSLATE_NOOP("wbalzone", "Heavy Fatigue") },
+    { 75, 100, "W4", QT_TRANSLATE_NOOP("wbalzone", "Severe Fatigue") }
+
+};
+
+QString WPrime::zoneName(int i) { return wbal_zones[i].name; }
+QString WPrime::zoneDesc(int i) { return qApp->translate("wbalzone", wbal_zones[i].desc); }
 
 WPrime::WPrime()
 {
@@ -150,6 +170,7 @@ WPrime::setRide(RideFile *input)
 
     // Get CP
     CP = 250; // default
+    WPRIME = 20000;
     if (input->context->athlete->zones()) {
         int zoneRange = input->context->athlete->zones()->whichRange(input->startTime().date());
         CP = zoneRange >= 0 ? input->context->athlete->zones()->getCP(zoneRange) : 0;
@@ -158,6 +179,8 @@ WPrime::setRide(RideFile *input)
         // did we override CP in metadata / metrics ?
         int oCP = input->getTag("CP","0").toInt();
         if (oCP) CP=oCP;
+        int oW = input->getTag("W'","0").toInt();
+        if (oW) WPRIME=oW;
     }
     minY = maxY = WPRIME;
 
@@ -313,7 +336,7 @@ WPrime::setRide(RideFile *input)
                 match.stop = end;
                 match.secs = (match.stop-match.start) +1; // don't fencepost!
                 match.cost = values[match.start] - values[match.stop];
-
+                match.exhaust = values[match.stop] <= 500 ? true : false; // its to exhaustion!
                 if (match.cost >= WprimeMatchMinJoules) {
                     matches << match;
                 }
@@ -527,6 +550,65 @@ WPrimeIntegrator::run()
 }
 
 //
+// HTML zone summary
+//
+QString
+WPrime::summarize(int WPRIME, QVector<double> wtiz, QColor color)
+{
+    // if wtiz is not 4 big return empty
+    if (wtiz.count() != 4) return "";
+
+    // otherwise lets go
+    QString summary;
+
+    // W' used for summary
+    summary += "<table align=\"center\" width=\"70%\" border=\"0\">";
+    summary += "<tr><td align=\"center\">";
+    summary += QString(tr("W' (Joules): %1")).arg(WPRIME);
+    summary += "</td></tr></table>";
+
+    // Heading
+    summary += "<table align=\"center\" width=\"70%\" ";
+    summary += "border=\"0\">";
+    summary += "<tr>";
+    summary += tr("<td align=\"center\">Zone</td>");
+    summary += tr("<td align=\"center\">Description</td>");
+    summary += tr("<td align=\"center\">High (J)</td>");
+    summary += tr("<td align=\"center\">Low (J)</td>");
+    summary += tr("<td align=\"center\">Time</td>");
+    summary += tr("<td align=\"center\">%</td>");
+    summary += "</tr>";
+
+    // calc totals to use for percentages
+    double duration = 0;
+    foreach(double v, wtiz) {
+        duration += v;
+    }
+
+    for (int zone = 0; zone < 4; zone++) {
+
+        // alternating rows
+        if (zone % 2 == 0) summary += "<tr bgcolor='" + color.name() + "'>";
+        else summary += "<tr>"; 
+
+        // basics
+        summary += QString("<td align=\"center\">%1</td>").arg(wbal_zones[zone].name);
+        summary += QString("<td align=\"center\">%1</td>").arg(qApp->translate("wbalzone", wbal_zones[zone].desc));
+        summary += QString("<td align=\"center\">%1</td>").arg(WPRIME - (WPRIME / 100.0f * wbal_zones[zone].lo), 0, 'f', 0);
+
+        if (zone == 3)
+            summary += "<td align=\"center\">MIN</td>";
+        else
+            summary += QString("<td align=\"center\">%1</td>").arg(WPRIME - (WPRIME / 100.0f * wbal_zones[zone].hi), 0, 'f', 0); 
+        summary += QString("<td align=\"center\">%1</td>").arg(time_to_string((unsigned) round(wtiz[zone])));
+        summary += QString("<td align=\"center\">%1</td>").arg((double)wtiz[zone]/duration * 100, 0, 'f', 0);
+        summary += "</tr>";
+    }
+    summary += "</table>";
+    return summary;
+}
+
+//
 // Associated Metrics
 //
 
@@ -556,6 +638,7 @@ class MinWPrime : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new MinWPrime(*this); }
 };
 
@@ -585,6 +668,7 @@ class MaxWPrime : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new MaxWPrime(*this); }
 };
 
@@ -614,6 +698,7 @@ class MaxMatch : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new MaxMatch(*this); }
 };
 
@@ -645,6 +730,7 @@ class Matches : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new Matches(*this); }
 };
 
@@ -674,6 +760,7 @@ class WPrimeTau : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new WPrimeTau(*this); }
 };
 
@@ -715,7 +802,50 @@ class WPrimeExp : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new WPrimeExp(*this); }
+};
+
+class WPrimeWatts : public RideMetric {
+    Q_DECLARE_TR_FUNCTIONS(WPrimeWatts);
+
+    public:
+
+    WPrimeWatts()
+    {
+        setSymbol("skiba_wprime_watts");
+        setInternalName("W' Watts");
+    }
+    void initialize() {
+        setName(tr("W' Power"));
+        setType(RideMetric::Total);
+        setMetricUnits(tr("watts"));
+        setImperialUnits(tr("watts"));
+        setPrecision(0);
+    }
+    void compute(const RideFile *r, const Zones *zones, int zonerange,
+                 const HrZones *, int,
+                 const QHash<QString,RideMetric*> &,
+                 const Context *) {
+
+        int cp = r->getTag("CP","0").toInt();
+        if (!cp && zones && zonerange >=0) cp = zones->getCP(zonerange);
+
+        double total = 0;
+        double secs = 0;
+        foreach(const RideFilePoint *point, r->dataPoints()) {
+            if (cp && point->watts > cp)  {
+                total += r->recIntSecs() * (point->watts - cp);
+            }
+            secs += r->recIntSecs();
+        }
+        setValue(total/secs);
+        setCount(secs);
+    }
+
+    bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    RideMetric *clone() const { return new WPrimeWatts(*this); }
 };
 
 class CPExp : public RideMetric {
@@ -759,7 +889,138 @@ class CPExp : public RideMetric {
     }
 
     bool canAggregate() { return false; }
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
     RideMetric *clone() const { return new CPExp(*this); }
+};
+
+// time in zone
+class WZoneTime : public RideMetric {
+    Q_DECLARE_TR_FUNCTIONS(WZoneTime)
+
+    int level;
+
+    public:
+
+    WZoneTime() : level(0)
+    {
+        setType(RideMetric::Total);
+        setMetricUnits(tr("seconds"));
+        setImperialUnits(tr("seconds"));
+        setPrecision(0);
+        setConversion(1.0);
+    }
+    bool isTime() const { return true; }
+    void setLevel(int level) { this->level=level-1; } // zones start from zero not 1
+    void compute(const RideFile *ride, const Zones *zones, int zoneRange,
+                 const HrZones *, int,
+                 const QHash<QString,RideMetric*> &,
+                 const Context *)
+    {
+
+        double WPRIME = zoneRange >= 0 ? zones->getWprime(zoneRange) : 20000;
+
+        // 4 zones
+        QVector<double> tiz(4);
+        tiz.fill(0.0f);
+
+        RideFile *cride = const_cast<RideFile*>(ride);
+        if (cride->wprimeData() && cride->wprimeData()->ydata().count()) {
+
+            foreach(int value, cride->wprimeData()->ydata()) {
+
+                // percent is PERCENT OF W' USED
+                double percent = 100.0f - ((double (value) / WPRIME) * 100.0f);
+                if (percent < 0.0f) percent = 0.0f;
+                if (percent > 100.0f) percent = 100.0f;
+
+                // and zones in 1s increments
+                if (percent <= 25.0f) tiz[0]++;
+                else if (percent <= 50.0f) tiz[1]++;
+                else if (percent <= 75.0f) tiz[2]++;
+                else tiz[3]++;
+            }
+
+        } 
+        setValue(tiz[level]);
+    }
+
+    bool canAggregate() { return false; }
+    void aggregateWith(const RideMetric &) {}
+    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    RideMetric *clone() const { return new WZoneTime(*this); }
+};
+
+class WZoneTime1 : public WZoneTime {
+    Q_DECLARE_TR_FUNCTIONS(WZoneTime1)
+
+    public:
+        WZoneTime1()
+        {
+            setLevel(1);
+            setSymbol("wtime_in_zone_L1");
+            setInternalName("W1 W'bal Low Fatigue");
+        }
+        void initialize ()
+        {
+            setName(tr("W1 W'bal Low Fatigue"));
+            setMetricUnits(tr("seconds"));
+            setImperialUnits(tr("seconds"));
+        }
+        RideMetric *clone() const { return new WZoneTime1(*this); }
+};
+class WZoneTime2 : public WZoneTime {
+    Q_DECLARE_TR_FUNCTIONS(WZoneTime2)
+
+    public:
+        WZoneTime2()
+        {
+            setLevel(2);
+            setSymbol("wtime_in_zone_L2");
+            setInternalName("W2 W'bal Moderate Fatigue");
+        }
+        void initialize ()
+        {
+            setName(tr("W2 W'bal Moderate Fatigue"));
+            setMetricUnits(tr("seconds"));
+            setImperialUnits(tr("seconds"));
+        }
+        RideMetric *clone() const { return new WZoneTime2(*this); }
+};
+class WZoneTime3 : public WZoneTime {
+    Q_DECLARE_TR_FUNCTIONS(WZoneTime3)
+
+    public:
+        WZoneTime3()
+        {
+            setLevel(3);
+            setSymbol("wtime_in_zone_L3");
+            setInternalName("W3 W'bal Heavy Fatigue");
+        }
+        void initialize ()
+        {
+            setName(tr("W3 W'bal Heavy Fatigue"));
+            setMetricUnits(tr("seconds"));
+            setImperialUnits(tr("seconds"));
+        }
+        RideMetric *clone() const { return new WZoneTime3(*this); }
+};
+class WZoneTime4 : public WZoneTime {
+    Q_DECLARE_TR_FUNCTIONS(WZoneTime4)
+
+    public:
+        WZoneTime4()
+        {
+            setLevel(4);
+            setSymbol("wtime_in_zone_L4");
+            setInternalName("W4 W'bal Severe Fatigue");
+        }
+        void initialize ()
+        {
+            setName(tr("W4 W'bal Severe Fatigue"));
+            setMetricUnits(tr("seconds"));
+            setImperialUnits(tr("seconds"));
+        }
+        RideMetric *clone() const { return new WZoneTime4(*this); }
 };
 
 // add to catalogue
@@ -770,6 +1031,11 @@ static bool addMetrics() {
     RideMetricFactory::instance().addMetric(MaxMatch());
     RideMetricFactory::instance().addMetric(WPrimeTau());
     RideMetricFactory::instance().addMetric(WPrimeExp());
+    RideMetricFactory::instance().addMetric(WPrimeWatts());
+    RideMetricFactory::instance().addMetric(WZoneTime1());
+    RideMetricFactory::instance().addMetric(WZoneTime2());
+    RideMetricFactory::instance().addMetric(WZoneTime3());
+    RideMetricFactory::instance().addMetric(WZoneTime4());
     RideMetricFactory::instance().addMetric(CPExp());
     return true;
 }

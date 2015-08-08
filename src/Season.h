@@ -58,7 +58,7 @@ class Season
         QString getName();
         int days() { return _days; } // how many days in the season, -1 if never ending
         int getType();
-
+        static bool LessThanForStarts(const Season &a, const Season &b);
 
         void setStart(QDate _start);
         void setEnd(QDate _end);
@@ -70,6 +70,7 @@ class Season
         QUuid id() const { return _id; }
         void setId(QUuid x) { _id = x; }
         QVector<int> &load() { return _load; }
+
 
         QDate start; // first day of the season
         QDate end; // last day of the season
@@ -145,6 +146,9 @@ class Seasons : public QObject {
         void deleteSeason(int);
         void writeSeasons();
         QList<Season> seasons;
+
+        // get first season the date falls within
+        Season seasonFor(QDate);
 
     signals:
         void seasonsChanged();

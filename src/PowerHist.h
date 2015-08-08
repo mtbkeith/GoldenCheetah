@@ -27,6 +27,9 @@
 #include "Zones.h"
 #include "HrZones.h"
 #include "PaceZones.h"
+#include "Specification.h"
+#include "Settings.h"
+#include "Colors.h"
 
 #include <qwt_plot.h>
 #include <qwt_plot_canvas.h>
@@ -43,6 +46,7 @@ class QwtPlotCurve;
 class QwtPlotGrid;
 class Context;
 class RideItem;
+class IntervalItem;
 struct RideFilePoint;
 class RideFileCache;
 class HistogramWindow;
@@ -54,7 +58,6 @@ class PaceHistBackground;
 class PaceHistZoneLabel;
 class LTMCanvasPicker;
 class ZoneScaleDraw;
-class SummaryMetrics;
 
 class penTooltip: public QwtPlotZoomer
 {
@@ -66,20 +69,24 @@ class penTooltip: public QwtPlotZoomer
              setTrackerMode(AlwaysOn);
          }
 
+        virtual QRect trackerRect(const QFont &font) const
+        {
+            return QwtPlotPicker::trackerRect(font).adjusted(-3,-3,3,3);
+        }
+
         virtual QwtText trackerText(const QPoint &/*pos*/) const {
-            QColor bg = QColor(Qt::lightGray);
-#if QT_VERSION >= 0x040300
-            bg.setAlpha(200);
-#endif
-            QwtText text;
-            QFont def;
-            //def.setPointSize(8); // too small on low res displays (Mac)
-            //double val = ceil(pos.y()*100) / 100; // round to 2 decimal place
-            //text.setText(QString("%1 %2").arg(val).arg(format), QwtText::PlainText);
-            text.setText(tip);
-            text.setFont(def);
-            text.setBackgroundBrush( QBrush( bg ));
-            text.setRenderFlags(Qt::AlignLeft | Qt::AlignTop);
+            QwtText text(tip);
+
+            QFont stGiles;
+            stGiles.fromString(appsettings->value(this, GC_FONT_CHARTLABELS, QFont().toString()).toString());
+            stGiles.setPointSize(appsettings->value(NULL, GC_FONT_CHARTLABELS_SIZE, 8).toInt());
+            stGiles.setWeight(QFont::Bold);
+            text.setFont(stGiles);
+
+            text.setBackgroundBrush(QBrush( GColor(CPLOTMARKER)));
+            text.setColor(GColor(CRIDEPLOTBACKGROUND));
+            text.setBorderRadius(6);
+            text.setRenderFlags(Qt::AlignCenter | Qt::AlignVCenter);
             return text;
         }
 
@@ -96,15 +103,16 @@ class HistData // each curve needs a lot of data (!? this may need refactoring, 
     public:
 
         // storage for data counts
-        QVector<unsigned int> aPowerArray, wattsArray, wattsZoneArray,
-                              wattsCPZoneArray, wattsKgArray, nmArray,
+        QVector<unsigned int> aPowerArray, wattsArray, wbalArray, wbalZoneArray,
+                              wattsZoneArray, wattsCPZoneArray, wattsKgArray, nmArray,
                               hrArray, hrZoneArray, hrCPZoneArray,
                               kphArray, paceZoneArray, paceCPZoneArray,
                               cadArray, gearArray, smo2Array, metricArray;
 
         // storage for data counts in interval selected
-        QVector<unsigned int> aPowerSelectedArray, wattsSelectedArray,
+        QVector<unsigned int> aPowerSelectedArray, wattsSelectedArray, 
                               wattsZoneSelectedArray, wattsCPZoneSelectedArray,
+                              wbalSelectedArray, wbalZoneSelectedArray,
                               wattsKgSelectedArray, nmSelectedArray,
                               hrSelectedArray, hrZoneSelectedArray, hrCPZoneSelectedArray,
                               kphSelectedArray, paceZoneSelectedArray, paceCPZoneSelectedArray,
@@ -143,7 +151,7 @@ class PowerHist : public QwtPlot
         void setData(RideItem *_rideItem, bool force=false);
 
         // used to set and bin ride data
-        void setArraysFromRide(RideFile *ride, HistData &standard, const Zones *zones, RideFileInterval hover);
+        void setArraysFromRide(RideFile *ride, HistData &standard, const Zones *zones, IntervalItem *hover);
         void binData(HistData &standard, QVector<double>&, QVector<double>&, QVector<double>&, QVector<double>&);
 
         // set data from the compare intervals -or- dateranges
@@ -154,15 +162,14 @@ class PowerHist : public QwtPlot
         void setData(RideFileCache *source);
 
         // set data from metrics
-        void setData(QList<SummaryMetrics>&results, QString totalMetric, QString distMetric,
-                     bool isFiltered, QStringList files, HistData *data);
+        void setData(Specification spec, QString totalMetric, QString distMetric, HistData *data);
 
         void setlnY(bool value);
         void setWithZeros(bool value);
         void setZoned(bool value);
         void setCPZoned(bool value);
         void setSumY(bool value);
-        void configChanged();
+        void configChanged(qint32);
         void setAxisTitle(int axis, QString label);
         void setYMax();
         void setBinWidth(double value);
@@ -177,7 +184,7 @@ class PowerHist : public QwtPlot
 
         // react to plot signals
         void pointHover(QwtPlotCurve *curve, int index);
-        void intervalHover(RideFileInterval);
+        void intervalHover(IntervalItem*);
 
         // get told to refresh
         void recalc(bool force=false); // normal mode recalc
@@ -198,6 +205,7 @@ class PowerHist : public QwtPlot
         void refreshPaceZoneLabels();
         void setParameterAxisTitle();
         bool isSelected(const RideFilePoint *p, double);
+        bool isSelected(const double t, double sample);
         void percentify(QVector<double> &, double factor); // and a function to convert
 
         bool shadeZones() const; // check if zone shading is both wanted and possible
@@ -596,11 +604,11 @@ public:
     {
 	RideItem *rideItem = parent->rideItem;
 
-    // only for running activities
-	if (! rideItem || ! rideItem->isRun())
+    // only for running and swimming activities
+	if (! rideItem || ! (rideItem->isRun || rideItem->isSwim))
 	    return;
 
-	const PaceZones *zones = parent->context->athlete->paceZones();
+	const PaceZones *zones = parent->context->athlete->paceZones(rideItem->isSwim);
 	int zone_range = zones ? zones->whichRange(rideItem->dateTime.date()) : -1;
 
     // unit conversion factor for imperial units
@@ -649,11 +657,11 @@ public:
 
 	RideItem *rideItem = parent->rideItem;
 
-    // only for running activities
-	if (! rideItem || ! rideItem->isRun())
+    // only for running and swimming activities
+	if (! rideItem || ! (rideItem->isRun || rideItem->isSwim))
 	    return;
 
-	const PaceZones *zones = parent->context->athlete->paceZones();
+	const PaceZones *zones = parent->context->athlete->paceZones(rideItem->isSwim);
 	int zone_range = zones ? zones->whichRange(rideItem->dateTime.date()) : -1;
 
     // unit conversion factor for imperial units

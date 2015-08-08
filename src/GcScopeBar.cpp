@@ -21,6 +21,7 @@
 #include "DiarySidebar.h"
 #include "Context.h"
 #include "QtMacButton.h"
+#include "HelpWhatsThis.h"
 
 GcScopeBar::GcScopeBar(Context *context) : QWidget(context->mainWindow), context(context)
 {
@@ -43,9 +44,7 @@ GcScopeBar::GcScopeBar(Context *context) : QWidget(context->mainWindow), context
     layout->addWidget(searchLabel);
     searchLabel->hide();
 
-#ifdef GC_HAVE_LUCENE
     connect(context, SIGNAL(filterChanged()), this, SLOT(setHighlighted()));
-#endif
     connect(context, SIGNAL(compareIntervalsStateChanged(bool)), this, SLOT(setCompare()));
     connect(context, SIGNAL(compareDateRangesStateChanged(bool)), this, SLOT(setCompare()));
 
@@ -56,9 +55,6 @@ GcScopeBar::GcScopeBar(Context *context) : QWidget(context->mainWindow), context
     diary = new QtMacButton(this, QtMacButton::Recessed);
 #endif
     anal = new QtMacButton(this, QtMacButton::Recessed);
-#ifdef GC_HAVE_INTERVALS
-    interval = new QtMacButton(this, QtMacButton::Recessed);
-#endif
     train = new QtMacButton(this, QtMacButton::Recessed);
 #else
     // Windows / Linux uses GcScopeButton - pushbutton
@@ -67,9 +63,6 @@ GcScopeBar::GcScopeBar(Context *context) : QWidget(context->mainWindow), context
     diary = new GcScopeButton(this);
 #endif
     anal = new GcScopeButton(this);
-#ifdef GC_HAVE_INTERVALS
-    interval = new GcScopeButton(this);
-#endif
     train = new GcScopeButton(this);
 #endif
 
@@ -78,28 +71,35 @@ GcScopeBar::GcScopeBar(Context *context) : QWidget(context->mainWindow), context
     layout->addWidget(home);
     connect(home, SIGNAL(clicked(bool)), this, SLOT(clickedHome()));
 
+    HelpWhatsThis *helpHome = new HelpWhatsThis(home);
+    home->setWhatsThis(helpHome->getWhatsThisText(HelpWhatsThis::ScopeBar_Trends));
+
 #ifdef GC_HAVE_ICAL
     diary->setText(tr("Diary"));
     layout->addWidget(diary);
     connect(diary, SIGNAL(clicked(bool)), this, SLOT(clickedDiary()));
+
+    HelpWhatsThis *helpDiary = new HelpWhatsThis(diary);
+    diary->setWhatsThis(helpDiary->getWhatsThisText(HelpWhatsThis::ScopeBar_Diary));
+
 #endif
 
-    anal->setText(tr("Rides"));
+    anal->setText(tr("Activities"));
     anal->setWidth(70);
     anal->setChecked(true);
     layout->addWidget(anal);
     connect(anal, SIGNAL(clicked(bool)), this, SLOT(clickedAnal()));
 
-#ifdef GC_HAVE_INTERVALS
-    interval->setText(tr("Intervals"));
-    interval->setWidth(70);
-    layout->addWidget(interval);
-    connect(interval, SIGNAL(clicked(bool)), this, SLOT(clickedInterval()));
-#endif
+    HelpWhatsThis *helpAnal = new HelpWhatsThis(anal);
+    anal->setWhatsThis(helpAnal->getWhatsThisText(HelpWhatsThis::ScopeBar_Rides));
 
     train->setText(tr("Train"));
     layout->addWidget(train);
     connect(train, SIGNAL(clicked(bool)), this, SLOT(clickedTrain()));
+
+    HelpWhatsThis *helpTrain = new HelpWhatsThis(train);
+    train->setWhatsThis(helpTrain->getWhatsThisText(HelpWhatsThis::ScopeBar_Train));
+
 
     //layout->addWidget(traintool); //XXX!!! eek
 
@@ -108,24 +108,23 @@ GcScopeBar::GcScopeBar(Context *context) : QWidget(context->mainWindow), context
     // suffer from RSI from typing and writing more than any other nation ;)
     QFontMetrics fontMetric(font);
     int width = fontMetric.width(tr("Trends"));
-    home->setWidth(width+20);
+    home->setWidth(width+30);
 
-    width = fontMetric.width(tr("Rides"));
-    anal->setWidth(width+20);
+    width = fontMetric.width(tr("Activities"));
+    anal->setWidth(width+30);
 
     width = fontMetric.width(tr("Train"));
-    train->setWidth(width+20);
+    train->setWidth(width+30);
 
 #ifdef GC_HAVE_ICAL
     width = fontMetric.width(tr("Diary"));
-    diary->setWidth(width+20);
+    diary->setWidth(width+30);
 #endif
 }
 
 void
 GcScopeBar::setHighlighted()
 {
-#ifdef GC_HAVE_LUCENE
     if (context->isfiltered) {
         searchLabel->setHighlighted(true);
         searchLabel->show();
@@ -147,7 +146,6 @@ GcScopeBar::setHighlighted()
 #endif
 #endif
     }
-#endif
 }
 
 void
@@ -210,9 +208,6 @@ GcScopeBar::clickedHome()
     diary->setChecked(false);
 #endif
     anal->setChecked(false);
-#ifdef GC_HAVE_INTERVALS
-    interval->setChecked(false);
-#endif
     train->setChecked(false);
     emit selectHome();
 }
@@ -225,9 +220,6 @@ GcScopeBar::clickedDiary()
     diary->setChecked(true);
 #endif
     anal->setChecked(false);
-#ifdef GC_HAVE_INTERVALS
-    interval->setChecked(false);
-#endif
     train->setChecked(false);
     emit selectDiary();
 }
@@ -240,9 +232,6 @@ GcScopeBar::clickedAnal()
     diary->setChecked(false);
 #endif
     anal->setChecked(true);
-#ifdef GC_HAVE_INTERVALS
-    interval->setChecked(false);
-#endif
     train->setChecked(false);
     emit selectAnal();
 }
@@ -255,9 +244,6 @@ GcScopeBar::clickedInterval()
     diary->setChecked(false);
 #endif
     anal->setChecked(false);
-#ifdef GC_HAVE_INTERVALS
-    interval->setChecked(true);
-#endif
     train->setChecked(false);
     emit selectInterval();
 }
@@ -270,9 +256,6 @@ GcScopeBar::clickedTrain()
     diary->setChecked(false);
 #endif
     anal->setChecked(false);
-#ifdef GC_HAVE_INTERVALS
-    interval->setChecked(false);
-#endif
     train->setChecked(true);
     emit selectTrain();
 }
@@ -285,15 +268,9 @@ GcScopeBar::selected()
     if (diary->isChecked()) return 1;
     if (anal->isChecked()) return 2;
     if (train->isChecked()) return 3;
-#ifdef GC_HAVE_INTERVALS
-    if (interval->isChecked()) return 4;
-#endif
 #else
     if (anal->isChecked()) return 1;
     if (train->isChecked()) return 2;
-#ifdef GC_HAVE_INTERVALS
-    if (interval->isChecked()) return 3;
-#endif
 #endif
 
     // never gets here - shutup compiler
@@ -312,9 +289,6 @@ GcScopeBar::setSelected(int index)
     diary->setChecked(false);
 #endif
     anal->setChecked(false);
-#ifdef GC_HAVE_INTERVALS
-    interval->setChecked(false);
-#endif
     train->setChecked(false);
 
 #ifdef GC_HAVE_ICAL
@@ -323,18 +297,12 @@ GcScopeBar::setSelected(int index)
         case 1 : diary->setChecked(true); break;
         case 2 : anal->setChecked(true); break;
         case 3 : train->setChecked(true); break;
-#ifdef GC_HAVE_INTERVALS
-        case 4 : interval->setChecked(true); break;
-#endif
     }
 #else
     switch (index) {
         case 0 : home->setChecked(true); break;
         case 1 : anal->setChecked(true); break;
         case 2 : train->setChecked(true); break;
-#ifdef GC_HAVE_INTERVALS
-        case 3 : interval->setChecked(true); break;
-#endif
     }
 #endif
 }
@@ -370,37 +338,37 @@ GcScopeButton::paintEvent(QPaintEvent *)
 
     if (checked && underMouse()) {
         painter.setBrush(QBrush(QColor(150,150,150)));     
-        painter.drawRoundedRect(body, 19, 11);
+        painter.drawRoundedRect(body, 7,6);
         if (highlighted) {
             QColor over = GColor(CCALCURRENT);
             over.setAlpha(180);
             painter.setBrush(over);
-            painter.drawRoundedRect(body, 19, 11);
+            painter.drawRoundedRect(body, 7,6);
         }
         if (red) {
             QColor over = QColor(Qt::red);
             over.setAlpha(180);
             painter.setBrush(over);
-            painter.drawRoundedRect(body, 19, 11);
+            painter.drawRoundedRect(body, 7,6);
         }
     } else if (checked && !underMouse()) {
         painter.setBrush(QBrush(QColor(120,120,120)));     
-        painter.drawRoundedRect(body, 19, 11);
+        painter.drawRoundedRect(body, 7,6);
         if (highlighted) {
             QColor over = GColor(CCALCURRENT);
             over.setAlpha(180);
             painter.setBrush(over);
-            painter.drawRoundedRect(body, 19, 11);
+            painter.drawRoundedRect(body, 7,6);
         }
         if (red) {
             QColor over = QColor(Qt::red);
             over.setAlpha(180);
             painter.setBrush(over);
-            painter.drawRoundedRect(body, 19, 11);
+            painter.drawRoundedRect(body, 7,6);
         }
     } else if (!checked && underMouse()) {
         painter.setBrush(QBrush(QColor(180,180,180)));     
-        painter.drawRoundedRect(body, 19, 11);
+        painter.drawRoundedRect(body, 7,6);
     } else if (!checked && !underMouse()) {
     }
 

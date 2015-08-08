@@ -24,6 +24,7 @@
 #include <qwt_plot_canvas.h>
 #include <qwt_plot_grid.h>
 #include "RealtimePlot.h"
+#include "Context.h"
 #include "Colors.h"
 
 
@@ -211,7 +212,7 @@ QRectF RealtimehhbData::boundingRect() const
 //void RealtimeLodData::addData(double v) { lodData[lodCur++] = v; if (lodCur==50) lodCur=0; }
 
 
-RealtimePlot::RealtimePlot() : 
+RealtimePlot::RealtimePlot(Context *context) : 
     pwrCurve(NULL),
     showPowerState(Qt::Checked),
     showPow30sState(Qt::Checked),
@@ -223,7 +224,8 @@ RealtimePlot::RealtimePlot() :
     showHHbState(Qt::Checked),
     showtHbState(Qt::Checked),
     showSmO2State(Qt::Checked),
-    smooth(0)
+    smooth(0),
+    context(context)
 {
     //insertLegend(new QwtLegend(), QwtPlot::BottomLegend);
     pwr30Data = new Realtime30PwrData;
@@ -359,7 +361,11 @@ RealtimePlot::RealtimePlot() :
 //    lodCurve->attach(this);
 //    lodCurve->setYAxis(QwtPlot::yLeft);
     static_cast<QwtPlotCanvas*>(canvas())->setFrameStyle(QFrame::NoFrame);
-    configChanged(); // set colors
+
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
+
+    // set to current config
+    configChanged(CONFIG_APPEARANCE); // set colors
 }
 
 void
@@ -377,7 +383,7 @@ RealtimePlot::setAxisTitle(int axis, QString label)
 }
 
 void
-RealtimePlot::configChanged()
+RealtimePlot::configChanged(qint32)
 {
     double width = appsettings->value(this, GC_LINEWIDTH, 0.5).toDouble();
 
@@ -421,6 +427,8 @@ RealtimePlot::configChanged()
     QPen thbpen = QPen(GColor(CTHB));
     thbpen.setWidth(width);
     thbCurve->setPen(thbpen);
+
+    replot();
 }
 
 void

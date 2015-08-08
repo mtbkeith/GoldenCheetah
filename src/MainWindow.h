@@ -86,10 +86,9 @@ class MainWindow : public QMainWindow
         bool eventFilter(QObject*,QEvent*);
 
         // GUI
-#ifndef Q_OS_MAC
         void toggleFullScreen();
-#endif
         void aboutDialog();
+        void helpWindow();
         void helpView();
         void logBug();
         void support();
@@ -160,7 +159,6 @@ class MainWindow : public QMainWindow
 
         // Measures View
         void downloadMeasures();
-        void downloadMeasuresFromZeo();
 
         // Activity Collection
         void addIntervals(); // pass thru to tab
@@ -172,7 +170,7 @@ class MainWindow : public QMainWindow
         void exportBatch();
         void generateHeatMap();
         void exportMetrics();
-#ifdef GC_HAVE_LIBOAUTH
+#ifdef GC_HAVE_KQOAUTH
         void tweetRide();
 #endif
         void share();
@@ -196,7 +194,7 @@ class MainWindow : public QMainWindow
         void saveGCState(Context *);
         void restoreGCState(Context *);
 
-        void configChanged();
+        void configChanged(qint32);
 
     private:
 
@@ -208,9 +206,7 @@ class MainWindow : public QMainWindow
         QTFullScreen *fullScreen;
 #endif
 
-#ifdef GC_HAVE_LUCENE
         SearchFilterBox *searchBox;
-#endif
 
 #ifdef Q_OS_MAC
         // Mac Native Support
@@ -243,7 +239,9 @@ class MainWindow : public QMainWindow
         QAction *styleAction;
         QAction *showhideSidebar;
         QAction *showhideLowbar;
+#if (!defined Q_OS_MAC) || (QT_VERSION >= 0x50201) // not on a Mac
         QAction *showhideToolbar;
+#endif
         QAction *showhideTabbar;
 
         QAction *tweetAction;

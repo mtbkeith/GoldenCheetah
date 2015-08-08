@@ -97,7 +97,7 @@ MUPlot::MUPlot(MUWidget *muw, CriticalPowerWindow *parent, Context *context)
     setAxisScaleDiv(xBottom,QwtScaleDiv(0.0f,1.0f,xtick));
 
     // now color everything we created
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 
     // set to a 2 Normal Model
     setModel(2);
@@ -110,7 +110,7 @@ MUPlot::MUPlot(MUWidget *muw, CriticalPowerWindow *parent, Context *context)
 
 // set colours mostly
 void
-MUPlot::configChanged()
+MUPlot::configChanged(qint32)
 {
     QPalette palette;
     palette.setBrush(QPalette::Window, QBrush(GColor(CPLOTBACKGROUND)));
@@ -165,7 +165,7 @@ MUPlot::totalY()
 }
 
 // We are going to support multiple models; normal, normal-skew, linear
-// So for now lets make it a paramter for the model curve creation
+// So for now lets make it a parameter for the model curve creation
 // The model may end up being comprised of 'sub models' for each fibre type
 void
 MUPlot::setModel(int model)
@@ -235,8 +235,7 @@ MUPlot::setModel(int model)
             fastCurve->setData(fastNormal = new MUNormal(MU_FASTMEAN, 0.05f));
             fastCurve->attach(this);
 
-            QColor handleColor = QColor(Qt::magenta); // customise (?)
-            handleColor.darker(30);
+            QColor handleColor = QColor(Qt::magenta).darker(30); // customise (?)
             handleColor.setAlpha(64);
 
             // now a mean line
@@ -273,8 +272,7 @@ MUPlot::setModel(int model)
             slowCurve->setData(slowNormal = new MUNormal(MU_SLOWMEAN, 0.05f));
             slowCurve->attach(this);
 
-            QColor handleColor = GColor(CCP);
-            handleColor.darker(30);
+            QColor handleColor = GColor(CCP).darker(30);
             handleColor.setAlpha(64);
 
             // now a mean line

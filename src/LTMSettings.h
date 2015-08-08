@@ -34,12 +34,19 @@
 #include <qwt_symbol.h>
 
 #include "RideFile.h" // for SeriesType
+#include "Specification.h" // for SeriesType
 
 class LTMTool;
 class LTMSettings;
-class SummaryMetrics;
 class Context;
 class RideMetric;
+class RideBest;
+
+// change history for LTMSettings
+// Prior to 13 no history was maintained
+// Date        Who              Description
+// 25 Jul 2015 Mark Liversedge  Update to charts.xml to show version number
+#define LTM_VERSION_NUMBER 13
 
 // group by settings
 #define LTM_DAY     1
@@ -53,9 +60,10 @@ class RideMetric;
 #define METRIC_DB        1
 #define METRIC_PM        2
 #define METRIC_META      3
-#define METRIC_MEASURE   4
+#define METRIC_MEASURE   4 // DEPRECATED DO NOT USE
 #define METRIC_BEST      5
 #define METRIC_ESTIMATE  6
+#define METRIC_STRESS    7
 
 // type of estimate
 #define ESTIMATE_WPRIME  0
@@ -64,21 +72,29 @@ class RideMetric;
 #define ESTIMATE_PMAX    3
 #define ESTIMATE_BEST    4
 #define ESTIMATE_EI      5
+#define ESTIMATE_VO2MAX  6
+
+// type of stress
+#define STRESS_STS       0
+#define STRESS_LTS       1
+#define STRESS_SB        2
+#define STRESS_RR        3
 
 // We catalogue each metric and the curve settings etc here
 class MetricDetail {
     public:
 
-    MetricDetail() : type(METRIC_DB), stack(false), model(""), name(""), metric(NULL), smooth(false), 
-                     trendtype(0), topN(0), lowestN(0), topOut(0), baseline(0.0), 
+    MetricDetail() : type(METRIC_DB), stack(false), hidden(false), model(""), name(""), metric(NULL), stressType(0),
+                     smooth(false), trendtype(0), topN(0), lowestN(0), topOut(0), baseline(0.0), 
                      curveStyle(QwtPlotCurve::Lines), symbolStyle(QwtSymbol::NoSymbol),
                      penColor(Qt::black), penAlpha(0), penWidth(1.0), penStyle(0),
-                     brushColor(Qt::black), brushAlpha(0), fillCurve(false), labels(false) {}
+                     brushColor(Qt::black), brushAlpha(0), fillCurve(false), labels(false), curve(NULL) {}
 
     bool operator< (MetricDetail right) const { return name < right.name; }
 
     int type;
     bool stack; // should this be stacked?
+    bool hidden; // should this be hidden ? (toggled via clicking on legend)
 
     QString model; // short code for model selected
     int estimate; // 0-4 for W', CP, FTP, PMAX
@@ -96,6 +112,9 @@ class MetricDetail {
     int duration;       // n x units below for seconds
     int duration_units; // 1=secs, 60=mins, 3600=hours
     RideFile::SeriesType series; // what series are we doing the peak for
+
+    // for STRESS
+    int stressType;     // 0-LTS 1-STS 2-SB 3-RR
 
     // GENERAL SETTINGS FOR A METRIC
     QString uname, uunits; // user specified name and units (axis choice)
@@ -132,6 +151,9 @@ class MetricDetail {
 
     // text labels against values
     bool labels;
+
+    // curve on the chart to spot this...
+    QwtPlotCurve *curve;
 };
 
 // so we can marshal and unmarshall LTMSettings when we save
@@ -148,12 +170,13 @@ class LTMSettings {
         LTMSettings() {
             // we need to register the stream operators
             qRegisterMetaTypeStreamOperators<LTMSettings>("LTMSettings");
-            data = measures = bests = NULL;
+            bests = NULL;
             ltmTool = NULL;
         }
 
         void writeChartXML(QDir, QList<LTMSettings>);
         void readChartXML(QDir, bool, QList<LTMSettings>&charts);
+        void translateMetrics(bool useMetricUnits);
 
         QString name;
         QString title;
@@ -167,10 +190,9 @@ class LTMSettings {
         bool stack;
         int stackWidth;
 
+        Specification specification;
         QList<MetricDetail> metrics;
-        QList<SummaryMetrics> *data;
-        QList<SummaryMetrics> *measures;
-        QList<SummaryMetrics> *bests;
+        QList<RideBest> *bests;
 
         LTMTool *ltmTool;
         QString field1, field2;

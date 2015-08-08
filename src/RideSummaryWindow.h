@@ -30,23 +30,19 @@
 #include <QtConcurrent>
 #endif
 
-#include "SummaryMetrics.h"
 #include "RideFileCache.h"
 #include "ExtendedCriticalPower.h"
 
-#ifdef GC_HAVE_LUCENE
 #include "SearchFilterBox.h"
-#endif
 
+#include "Specification.h"
 
 class RideSummaryWindow : public GcChartWindow
 {
     Q_OBJECT
     G_OBJECT
 
-#ifdef GC_HAVE_LUCENE
     Q_PROPERTY(QString filter READ filter WRITE setFilter USER true)
-#endif
     Q_PROPERTY(QDate fromDate READ fromDate WRITE setFromDate USER true)
     Q_PROPERTY(QDate toDate READ toDate WRITE setToDate USER true)
     Q_PROPERTY(QDate startDate READ startDate WRITE setStartDate USER true)
@@ -76,13 +72,11 @@ class RideSummaryWindow : public GcChartWindow
         void setLastNX(int x) { dateSetting->setLastNX(x); }
         int prevN() { return dateSetting->prevN(); }
         void setPrevN(int x) { dateSetting->setPrevN(x); }
-#ifdef GC_HAVE_LUCENE
         bool isFiltered() const { if (!ridesummary) return (filtered || context->ishomefiltered || context->isfiltered);
                                   else return false; }
         // filter
         QString filter() const { return ridesummary ? "" : searchBox->filter(); }
         void setFilter(QString x) { if (!ridesummary) searchBox->setFilter(x); }
-#endif
 
         bool isCompare() const { return ((ridesummary && context->isCompareIntervals)
                                       || (!ridesummary && context->isCompareDateRanges)); }
@@ -92,6 +86,7 @@ class RideSummaryWindow : public GcChartWindow
     protected slots:
 
         void refresh();
+        void refresh(QDate);
         void rideSelected();
         void dateRangeChanged(DateRange);
         void rideItemChanged();
@@ -102,16 +97,14 @@ class RideSummaryWindow : public GcChartWindow
         void useStandardRange();
         void useThruToday();
 
-#ifdef GC_HAVE_LUCENE
         void clearFilter();
         void setFilter(QStringList);
-#endif
 
         // compare mode started or items to compare changed
         void compareChanged();
 
         // config changed
-        void configChanged();
+        void configChanged(qint32);
 
         // model estimate progress updates
         void modelProgress(int year, int month);
@@ -131,27 +124,24 @@ class RideSummaryWindow : public GcChartWindow
         RideItem *_connected;
         bool ridesummary; // do we summarise ride or daterange?
 
-        QList<SummaryMetrics> data; // when in date range mode
+        Specification specification;
         DateRange current;
 
         DateSettingsEdit *dateSetting;
         bool useCustom;
         bool useToToday;
         DateRange custom;
-#ifdef GC_HAVE_LUCENE
         SearchFilterBox *searchBox;
-#endif
         QStringList filters; // empty when no lucene
         bool filtered; // are we using a filter?
 
         RideFileCache *bestsCache;
-        ExtendedCriticalPower *ecp;
-        Model_eCP cpModel;
 
         QString WPrimeString, CPString, FTPString, PMaxString;
         QString WPrimeStringWPK, CPStringWPK, FTPStringWPK, PMaxStringWPK;
 
         bool force; // to force a replot
+        QTime lastupdate;
 
         QFuture<void> future; // used by QtConcurrent
 };

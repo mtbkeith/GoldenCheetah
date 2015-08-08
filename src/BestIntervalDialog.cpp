@@ -22,14 +22,18 @@
 #include "IntervalItem.h"
 #include "RideFile.h"
 #include "RideItem.h"
+#include "HelpWhatsThis.h"
 #include <QMap>
-#include <math.h>
+#include <cmath>
 
 BestIntervalDialog::BestIntervalDialog(Context *context) :
     context(context)
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle("Find Intervals");
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::FindIntervals));
+
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     QHBoxLayout *intervalLengthLayout = new QHBoxLayout;
@@ -147,7 +151,7 @@ BestIntervalDialog::findClicked()
 {
     const RideFile *ride = context->ride ? context->ride->ride() : NULL;
     if (!ride) {
-        QMessageBox::critical(this, tr("Select Ride"), tr("No ride selected!"));
+        QMessageBox::critical(this, tr("Select Activity"), tr("No activity selected!"));
         return;
     }
 
@@ -298,6 +302,55 @@ BestIntervalDialog::findBests(const RideFile *ride, double windowSizeSecs,
 }
 
 void
+BestIntervalDialog::findBestsKPH(const RideFile *ride, double windowSizeSecs,
+                              int maxIntervals, QList<BestInterval> &results)
+{
+    QList<BestInterval> bests;
+
+    double secsDelta = ride->recIntSecs();
+    double totalKPH = 0.0;
+    QList<const RideFilePoint*> window;
+
+    // ride is shorter than the window size!
+    if (windowSizeSecs > ride->dataPoints().last()->secs + secsDelta) return;
+
+    // We're looking for intervals with durations in [windowSizeSecs, windowSizeSecs + secsDelta).
+    foreach (const RideFilePoint *point, ride->dataPoints()) {
+        // Discard points until interval duration is < windowSizeSecs + secsDelta.
+        while (!window.empty() && (intervalDuration(window.first(), point, ride) >= windowSizeSecs + secsDelta)) {
+            totalKPH -= window.first()->kph;
+            window.takeFirst();
+        }
+        // Add points until interval duration is >= windowSizeSecs.
+        totalKPH += point->kph;
+        window.append(point);
+        double duration = intervalDuration(window.first(), window.last(), ride);
+        if (duration >= windowSizeSecs) {
+            double start = window.first()->secs;
+            double stop = start + duration;
+            double avg = totalKPH * secsDelta / duration;
+            bests.append(BestInterval(start, stop, avg));
+        }
+    }
+
+    std::sort(bests.begin(), bests.end(), CompareBests());
+
+    while (!bests.empty() && (results.size() < maxIntervals)) {
+        BestInterval candidate = bests.takeFirst();
+        bool overlaps = false;
+        foreach (const BestInterval &existing, results) {
+            if (intervalsOverlap(candidate, existing)) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (!overlaps)
+            results.append(candidate);
+    }
+
+}
+
+void
 BestIntervalDialog::doneClicked()
 {
     clearResultsTable(resultsTable); // clear out that table!
@@ -307,6 +360,8 @@ BestIntervalDialog::doneClicked()
 void
 BestIntervalDialog::addClicked()
 {
+//XXX REFACTOR UPDATE WHEN DECIDE HOW TO ADD AN INTERVAL
+#if 0
     // run through the table row by row
     // and when the checkbox is shown
     // get name from column 2
@@ -327,11 +382,13 @@ BestIntervalDialog::addClicked()
                 new IntervalItem(ride, name, start, stop,
                                  ride->timeToDistance(start),
                                  ride->timeToDistance(stop),
-                                 allIntervals->childCount()+1);
+                                 allIntervals->childCount()+1,
+                                 RideFileInterval::PEAKPOWER); // TODO not always PEAK...
             last->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled);
             // add
             allIntervals->addChild(last);
         }
     }
     context->athlete->updateRideFileIntervals();
+#endif
 }

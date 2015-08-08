@@ -20,24 +20,61 @@
 #define _GC_IntervalItem_h 1
 #include "GoldenCheetah.h"
 
+#include "RideItem.h"
+#include "RideItem.h"
 #include <QtGui>
 #include <QDialog>
 #include <QLabel>
-#include <QTreeWidgetItem>
 #include <QLineEdit>
 
-class RideFile;
-
-class IntervalItem : public QTreeWidgetItem
+class IntervalItem
 {
-    public:
-        const RideFile *ride;
-        double start, stop; // by Time
-        double startKM, stopKM; // by Distance
-        int displaySequence;
 
-        IntervalItem(const RideFile *, QString, double, double, double, double, int);
+    public:
+
+        // constructors and accessors
+        IntervalItem(const RideItem *, QString, double, double, double, double, int, QColor, RideFileInterval::IntervalType);
+        IntervalItem();
+
+        // ride item we are in
+        RideItem* rideItem() { return rideItem_; }
+        RideItem* rideItem_;
+
+        // set from other
+        void setFrom(IntervalItem &other);
+
+        // change basic values, will also apply to ridefile
+        void setValues(QString name, double duration1, double duration2, 
+                                     double distance1, double distance2);
+
+        // is this interval currently selected ?
+        bool selected;
+
+        // access the metric value
+        double getForSymbol(QString name, bool useMetricUnits=true);
+
+        // as a well formatted string
+        QString getStringForSymbol(QString name, bool useMetricUnits=true);
+
+        // interval details
+        QString name;                   // name
+        RideFileInterval::IntervalType type; // type User, Hill etc
+        double start, stop;                  // by Time
+        double startKM, stopKM;              // by Distance
+        int displaySequence;                 // order to display on ride plots
+        QColor color;                        // color to use on plots that differentiate by color
+        QUuid route;                         // the route this interval is for
+
+        // order to show on plot
         void setDisplaySequence(int seq) { displaySequence = seq; }
+
+        // precomputed metrics
+        void refresh();
+        QVector<double> metrics_;
+        QVector<double> &metrics() { return metrics_; }
+
+        // extracted sample data
+        RideFileInterval *rideInterval;
 
         // used by qSort()
         bool operator< (IntervalItem right) const {
@@ -63,6 +100,7 @@ class RenameIntervalDialog : public QDialog
         QLineEdit *nameEdit;
 };
 
+class ColorButton;
 class EditIntervalDialog : public QDialog
 {
     Q_OBJECT
@@ -82,6 +120,7 @@ class EditIntervalDialog : public QDialog
         QPushButton *applyButton, *cancelButton;
         QLineEdit *nameEdit;
         QTimeEdit *fromEdit, *toEdit;
+        ColorButton *colorEdit;
 };
 
 #endif // _GC_IntervalItem_h

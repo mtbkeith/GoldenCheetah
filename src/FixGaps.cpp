@@ -19,6 +19,7 @@
 #include "DataProcessor.h"
 #include "Settings.h"
 #include "Units.h"
+#include "HelpWhatsThis.h"
 #include <algorithm>
 #include <QVector>
 
@@ -37,6 +38,9 @@ class FixGapsConfig : public DataProcessorConfig
 
     public:
         FixGapsConfig(QWidget *parent) : DataProcessorConfig(parent) {
+
+            HelpWhatsThis *help = new HelpWhatsThis(parent);
+            parent->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Edit_FixGapsInRecording));
 
             layout = new QHBoxLayout(this);
 
@@ -194,11 +198,23 @@ FixGaps::postProcess(RideFile *ride, DataProcessorConfig *config=0)
                 double rtedelta = (point->rte - last->rte) / (double) count;
                 double lpsdelta = (point->lps - last->lps) / (double) count;
                 double rpsdelta = (point->rps - last->rps) / (double) count;
+                double lpcodelta = (point->lpco - last->lpco) / (double) count;
+                double rpcodelta = (point->rpco - last->rpco) / (double) count;
+                double lppbdelta = (point->lppb - last->lppb) / (double) count;
+                double rppbdelta = (point->rppb - last->rppb) / (double) count;
+                double lppedelta = (point->lppe - last->lppe) / (double) count;
+                double rppedelta = (point->rppe - last->rppe) / (double) count;
+                double lpppbdelta = (point->lpppb - last->lpppb) / (double) count;
+                double rpppbdelta = (point->rpppb - last->rpppb) / (double) count;
+                double lpppedelta = (point->lpppe - last->lpppe) / (double) count;
+                double rpppedelta = (point->rpppe - last->rpppe) / (double) count;
                 double smo2delta = (point->smo2 - last->smo2) / (double) count;
                 double thbdelta = (point->thb - last->thb) / (double) count;
                 double rcontactdelta = (point->rcontact - last->rcontact) / (double) count;
                 double rcaddelta = (point->rcad - last->rcad) / (double) count;
                 double rvertdelta = (point->rvert - last->rvert) / (double) count;
+                double tcoredelta = (point->tcore - last->tcore) / (double) count;
+
 
                 // add the points
                 for(int i=0; i<count; i++) {
@@ -220,11 +236,22 @@ FixGaps::postProcess(RideFile *ride, DataProcessorConfig *config=0)
                                                            last->rte + ((i+1)*rtedelta),
                                                            last->lps + ((i+1)*lpsdelta),
                                                            last->rps + ((i+1)*rpsdelta),
+                                                           last->lpco + ((i+1)*lpcodelta),
+                                                           last->rpco + ((i+1)*rpcodelta),
+                                                           last->lppb + ((i+1)*lppbdelta),
+                                                           last->rppb + ((i+1)*rppbdelta),
+                                                           last->lppe + ((i+1)*lppedelta),
+                                                           last->rppe + ((i+1)*rppedelta),
+                                                           last->lpppb + ((i+1)*lpppbdelta),
+                                                           last->rpppb + ((i+1)*rpppbdelta),
+                                                           last->lpppe + ((i+1)*lpppedelta),
+                                                           last->rpppe + ((i+1)*rpppedelta),
                                                            last->smo2 + ((i+1)*smo2delta),
                                                            last->thb + ((i+1)*thbdelta),
                                                            last->rvert + ((i+1)*rvertdelta),
                                                            last->rcad + ((i+1)*rcaddelta),
                                                            last->rcontact + ((i+1)*rcontactdelta),
+                                                           last->tcore + ((i+1)*tcoredelta),
                                                            last->interval);
 
                     ride->command->insertPoint(position++, add);
@@ -256,8 +283,12 @@ FixGaps::postProcess(RideFile *ride, DataProcessorConfig *config=0)
                                                            0,
                                                            0,
                                                            0.0, 0.0, 0.0, 0.0, //pedal torque / smoothness
+                                                           0.0, 0.0, // pedal platform offset
+                                                           0.0, 0.0, 0.0, 0.0, //pedal power phase
+                                                           0.0, 0.0, 0.0, 0.0, //pedal peak power phase
                                                            0.0, 0.0, // smO2 / thb
                                                            0.0, 0.0, 0.0, // running dynamics
+                                                           0.0,
                                                            last->interval);
                     ride->command->insertPoint(position++, add);
                 }

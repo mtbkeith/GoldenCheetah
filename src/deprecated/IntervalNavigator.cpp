@@ -16,14 +16,16 @@
  * Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
+#include "IntervalNavigator.h"
 #include "Athlete.h"
 #include "Context.h"
 #include "Colors.h"
 #include "RideItem.h"
-#include "IntervalNavigator.h"
 #include "IntervalNavigatorProxy.h"
+#include "RideCache.h"
 #include "SearchFilterBox.h"
 #include "TabView.h"
+#include "HelpWhatsThis.h"
 
 #include <QtGui>
 #include <QString>
@@ -54,20 +56,13 @@ IntervalNavigator::IntervalNavigator(Context *context, QString type, bool mainwi
     if (mainwindow) mainLayout->setContentsMargins(0,0,0,0);
     else mainLayout->setContentsMargins(2,2,2,2); // so we can resize!
 
-    if (type == "Best")
+    /*if (type == "Best")
         sqlModel = context->athlete->sqlBestIntervalsModel;
     else
-        sqlModel= context->athlete->sqlRouteIntervalsModel;
-
-    //QString filter = QString("type='%1'").arg(type);
-    //context->athlete->sqlIntervalsModel->setFilter(filter);
-    sqlModel->select();
-
-
-    while (sqlModel->canFetchMore(QModelIndex())) sqlModel->fetchMore(QModelIndex());
+        sqlModel= context->athlete->sqlRouteIntervalsModel;*/
 
     searchFilter = new IntervalSearchFilter(this);
-    searchFilter->setSourceModel(sqlModel); // filter out/in search results
+    searchFilter->setSourceModel(context->athlete->rideCache->intervalModel()); // filter out/in search results
 
 
     groupByModel = new IntervalGroupByModel(this);
@@ -77,12 +72,12 @@ IntervalNavigator::IntervalNavigator(Context *context, QString type, bool mainwi
     sortModel->setSourceModel(groupByModel);
     sortModel->setDynamicSortFilter(true);
 
-#ifdef GC_HAVE_LUCENE
     if (!mainwindow) {
         searchFilterBox = new SearchFilterBox(this, context, false);
         mainLayout->addWidget(searchFilterBox);
+        HelpWhatsThis *searchHelp = new HelpWhatsThis(searchFilterBox);
+        searchFilterBox->setWhatsThis(searchHelp->getWhatsThisText(HelpWhatsThis::SearchFilterBox));
     }
-#endif
 
     // get setup
     tableView = new IntervalGlobalTreeView;
@@ -121,10 +116,10 @@ IntervalNavigator::IntervalNavigator(Context *context, QString type, bool mainwi
 
 
     // refresh when database is updated
-    connect(context->athlete->metricDB, SIGNAL(dataChanged()), this, SLOT(refresh()));
+    //XXXREFRESH connect(context->athlete->metricDB, SIGNAL(dataChanged()), this, SLOT(refresh()));
 
     // refresh when config changes (metric/imperial?)
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     // refresh when rides added/removed
     connect(context, SIGNAL(rideAdded(RideItem*)), this, SLOT(refresh()));
     connect(context, SIGNAL(rideDeleted(RideItem*)), this, SLOT(refresh()));
@@ -140,18 +135,21 @@ IntervalNavigator::IntervalNavigator(Context *context, QString type, bool mainwi
     //connect(tableView,SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(showTreeContextMenuPopup(const QPoint &)));
     connect(tableView->header(), SIGNAL(sortIndicatorChanged(int,Qt::SortOrder)), this, SLOT(setSortBy(int,Qt::SortOrder)));
 
-#ifdef GC_HAVE_LUCENE
+    // repaint etc when background refresh is working
+    connect(context, SIGNAL(refreshStart()), this, SLOT(backgroundRefresh()));
+    connect(context, SIGNAL(refreshEnd()), this, SLOT(backgroundRefresh()));
+    connect(context, SIGNAL(refreshUpdate(QDate)), this, SLOT(backgroundRefresh())); // we might miss 1st one
+
     if (!mainwindow) {
         connect(searchFilterBox, SIGNAL(searchResults(QStringList)), this, SLOT(searchStrings(QStringList)));
         connect(searchFilterBox, SIGNAL(searchClear()), this, SLOT(clearSearch()));
     }
-#endif
 
     // we accept drag and drop operations
     setAcceptDrops(true);
 
     // lets go
-    configChanged();
+    configChanged(CONFIG_APPEARANCE | CONFIG_NOTECOLOR);
 }
 
 IntervalColumnChooser::IntervalColumnChooser(QList<QString>&logicalHeadings)
@@ -225,7 +223,7 @@ IntervalNavigator::~IntervalNavigator()
 }
 
 void
-IntervalNavigator::configChanged()
+IntervalNavigator::configChanged(qint32)
 {
     ColorEngine ce(context);
     fontHeight = QFontMetrics(QFont()).height();
@@ -260,15 +258,16 @@ IntervalNavigator::configChanged()
 void
 IntervalNavigator::refresh()
 {
-    //QString filter = QString("type='%1'").arg(type);
-    //context->athlete->sqlIntervalsModel->setFilter(filter);
-    sqlModel->select();
-    while (sqlModel->canFetchMore(QModelIndex()))
-        sqlModel->fetchMore(QModelIndex());
-
     active=false;
 
     setWidth(geometry().width());
+    cursorRide();
+}
+
+void
+IntervalNavigator::backgroundRefresh()
+{
+    tableView->doItemsLayout();
 }
 
 void
@@ -802,11 +801,8 @@ IntervalNavigator::setColumnWidth(int x, bool resized, int logicalIndex, int old
 
 }
 
-
-
-
 //
-// This function is called for every row in the metricDB
+// This function is called for every row in the ride list
 // and wants to know what group string or 'name' you want
 // to put this row into. It is passed the heading value
 // as a string, and the row value for this column.
@@ -856,7 +852,7 @@ IntervalNavigator::showColumnChooser()
 void
 IntervalNavigator::selectRide(const QModelIndex &index)
 {
-    QModelIndex fileIndex = tableView->model()->index(index.row(), 3, index.parent()); // column 2 for filename ?
+    QModelIndex fileIndex = tableView->model()->index(index.row(), 2, index.parent()); // column 2 for filename ?
 
     QString filename = tableView->model()->data(fileIndex, Qt::DisplayRole).toString();
 
@@ -865,11 +861,11 @@ IntervalNavigator::selectRide(const QModelIndex &index)
     // interval
     // start : 10
     // stop : 11
-    fileIndex = tableView->model()->index(index.row(), 6, index.parent()); // column 10 for start ?
+    fileIndex = tableView->model()->index(index.row(), 3, index.parent()); // column 6 for date ?
     QDateTime date = tableView->model()->data(fileIndex, Qt::DisplayRole).toDateTime();
-    fileIndex = tableView->model()->index(index.row(), 10, index.parent()); // column 10 for start ?
+    fileIndex = tableView->model()->index(index.row(), 4, index.parent()); // column 10 for start ?
     int startInterval = tableView->model()->data(fileIndex, Qt::DisplayRole).toInt();
-    fileIndex = tableView->model()->index(index.row(), 11, index.parent()); // column 11 for stop ?
+    fileIndex = tableView->model()->index(index.row(), 5, index.parent()); // column 11 for stop ?
     int stopInterval = tableView->model()->data(fileIndex, Qt::DisplayRole).toInt();
 
     const RideFile *ride = context->ride ? context->ride->ride() : NULL;
@@ -882,7 +878,9 @@ IntervalNavigator::selectRide(const QModelIndex &index)
         const RideFilePoint *p = ride->dataPoints()[i];
         f->appendPoint(p->secs, p->cad, p->hr, p->km, p->kph, p->nm,
                       p->watts, p->alt, p->lon, p->lat, p->headwind, p->slope, p->temp, p->lrbalance,
-                      p->lte, p->rte, p->lps, p->rps, p->smo2, p->thb,
+                      p->lte, p->rte, p->lps, p->rps,
+                      p->lpco, p->rpco, p->lppb, p->rppb, p->lppe, p->rppe, p->lpppb, p->rpppb, p->lpppe, p->rpppe,
+                      p->smo2, p->thb,
                       p->rvert, p->rcad, p->rcontact, 0);
 
         // derived data
@@ -892,13 +890,17 @@ IntervalNavigator::selectRide(const QModelIndex &index)
         l->apower = p->apower;
     }
 
-    f->clearIntervals();
-    f->addInterval(start, end, "1");
+    //f->clearIntervals();
+    //f->addInterval(start, end, "1");
 
     RideItem* rideItem = new RideItem(f, date, context );
+    rideItem->refresh();
 
     // emit signal!
     context->notifyRideSelected(rideItem);
+
+    // lets notify others
+    //context->athlete->selectRideFile(filename);
 }
 
 // user cursor moved to ride

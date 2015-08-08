@@ -26,6 +26,11 @@
 // use stc strtod to bypass Qt toDouble() issues
 #include <stdlib.h>
 
+// TCX XML Structure uses the following 2 Schema Definitions
+// -- main schema http://www8.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd
+// -- extension schema http://www8.garmin.com/xmlschemas/ActivityExtensionv2.xsd
+
+
 TcxParser::TcxParser (RideFile* rideFile, QList<RideFile*> *rides) : rideFile(rideFile), rides(rides)
 {
     isGarminSmartRecording = appsettings->value(NULL, GC_GARMIN_SMARTRECORD,Qt::Checked);
@@ -57,6 +62,13 @@ TcxParser::startElement( const QString&, const QString&, const QString& qName, c
 
         // if caller is looking for rides...
         if (rides) rides->append(rideFile);
+
+        // Sport ("Biking", "Running", "Other")
+        swim = NotSwim;
+        QString sport = qAttributes.value("Sport");
+        if (sport == "Biking") rideFile->setTag("Sport", "Bike");
+        else if (sport == "Running") rideFile->setTag("Sport", "Run");
+        else if (sport == "Other") swim = MayBeSwim;
 
     } else if (qName == "Lap") {
 
@@ -100,11 +112,12 @@ TcxParser::endElement( const QString&, const QString&, const QString& qName)
         secs = start_time.secsTo(time);
 
     } else if (qName == "DistanceMeters") { distance = buffer.toDouble() / 1000; }
-    else if (qName == "Watts" || qName == "ns3:Watts") { power = buffer.toDouble(); }
-    else if (qName == "Speed" || qName == "ns3:Speed") { speed = buffer.toDouble() * 3.6; }
+    else if (qName == "TotalTimeSeconds") { lapSecs = buffer.toDouble(); }
+    else if (qName == "Watts" || qName.endsWith( ":Watts")) { power = buffer.toDouble(); }          //TCX Extension Fields may use a namespace prefix
+    else if (qName == "Speed" || qName.endsWith(":Speed")) { speed = buffer.toDouble() * 3.6; }     //TCX Extension Fields may use a namespace prefix
+    else if (qName == "RunCadence" || qName.endsWith( ":RunCadence")) { rcad = buffer.toDouble(); } //TCX Extension Fields may use a namespace prefix
     else if (qName == "Value") { hr = buffer.toDouble(); }
     else if (qName == "Cadence") { cadence = buffer.toDouble(); }
-    else if (qName == "RunCadence") { rcad = buffer.toDouble(); }
     else if (qName == "AltitudeMeters") {
         // on Suunto TCX files there are lots of 0 values between valid ones, skip these
         if (buffer.toDouble() != 0) {
@@ -154,6 +167,13 @@ TcxParser::endElement( const QString&, const QString&, const QString& qName)
 
         if (lat == 0 && lon == 0) badgps = true;
 
+        // If sport was Other and we have distance but no GPS data
+        // we assume it is a pool swimming activity
+        if (swim == MayBeSwim && badgps && distance > 0) {
+            swim = Swim;
+            rideFile->setTag("Sport", "Swim");
+        }
+
         // for smart recording, the delta_t will not be constant
         // average all the calculations based on the previous
         // point.
@@ -164,7 +184,9 @@ TcxParser::endElement( const QString&, const QString&, const QString& qName)
             rideFile->appendPoint(secs, cadence, hr, distance, speed, torque,
                                   power, alt, lon, lat, headwind, 0.0, RideFile::NoTemp, 0.0, 
                                   0.0,0.0,0.0,0.0,0.0,0.0,
+                                  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                   0.0,rcad,0.0, // no running dynamics in the schema ?
+                                  0.0, //tcore
                                   lap);
 
         } else {
@@ -185,23 +207,27 @@ TcxParser::endElement( const QString&, const QString&, const QString& qName)
 
             if (prevPoint->lat == 0 && prevPoint->lon == 0) badgps = true;
             // Smart Recording High Water Mark.
-            if ((isGarminSmartRecording.toInt() == 0) || (deltaSecs == 1) || (deltaSecs >= GarminHWM.toInt())) {
+            if ((isGarminSmartRecording.toInt() == 0) || (deltaSecs == 1) || (deltaSecs >= GarminHWM.toInt() && swim != Swim)) {
 
                 // no smart recording, or delta exceeds HW treshold, just insert the data
                 rideFile->appendPoint(secs, cadence, hr, distance, speed, torque, power,
                                       alt, lon, lat, headwind, 0.0, RideFile::NoTemp, 0.0, 
-                                      0.0,0.0,0.0,0.0,0.0,0.0,
+                                      0.0,0.0,0.0,0.0,
+                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                      0.0,0.0,
                                       0.0, // vertical oscillation
                                       rcad, // run cadence
                                       0.0, // gct
+                                      0.0, // tcore
                                       lap);
 
             } else {
 
-                // smart recording is on and delta is less than GarminHWM seconds.
-                for(int i = 1; i <= deltaSecs; i++) {
+                // smart recording is on and delta is less than GarminHWM seconds
+                // or it is pool swimming and we limit expansion for safety
+                for(int i = 1; i <= deltaSecs && i <= 10*GarminHWM.toInt(); i++) {
                     double weight = i/ deltaSecs;
-                    double kph = prevPoint->kph + (deltaSpeed *weight);
+                    double kph = (swim == Swim) ? speed : prevPoint->kph + (deltaSpeed *weight);
                     // need to make sure speed goes to zero
                     kph = kph > 0.35 ? kph : 0;
                     double cad = prevPoint->cad + (deltaCad * weight);
@@ -224,10 +250,12 @@ TcxParser::endElement( const QString&, const QString&, const QString& qName)
                                           RideFile::NoTemp,
                                           0.0,
                                           0.0,0.0,0.0,0.0,
+                                          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                           0.0,0.0,
                                           0.0, // vertical oscillation
                                           prevPoint->rcad + (deltarcad * weight),// run cadence
                                           0.0, // gct
+                                          0.0, //tcore
                                           lap);
                 }
                 prevPoint = rideFile->dataPoints().back();
@@ -235,6 +263,36 @@ TcxParser::endElement( const QString&, const QString&, const QString& qName)
         }
         last_distance = distance;
         last_time = time;
+    } else if (qName == "Lap") {
+        // for pool swimming, laps with distance 0 are pauses, without trackpoints
+        // expand only if Smart Recording is enabled
+        if (swim == Swim && distance == 0 && isGarminSmartRecording.toInt()) {
+            // fill in the pause, partially if too long
+            for(int i = 1; i <= round(lapSecs) && i <= 10*GarminHWM.toInt(); i++)
+                rideFile->appendPoint(secs + i,
+                                      0.0,
+                                      0.0,
+                                      last_distance,
+                                      0.0,
+                                      0.0,
+                                      0.0,
+                                      0.0,
+                                      0.0, // lon
+                                      0.0, // lat
+                                      0.0, // headwind
+                                      0.0,
+                                      RideFile::NoTemp,
+                                      0.0,
+                                      0.0,0.0,0.0,0.0,
+                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                      0.0,0.0,
+                                      0.0, // vertical oscillation
+                                      0.0, // run cadence
+                                      0.0, // gct
+                                      0.0, // tcore
+                                      lap);
+            last_time = last_time.addSecs(round(lapSecs));
+        }
     }
     return true;
 }

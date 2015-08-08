@@ -29,7 +29,7 @@
 #include "Context.h"
 #include "RideItem.h"
 #include "IntervalItem.h"
-#include "math.h"
+#include "cmath"
 #include "Units.h" // for MILES_PER_KM
 
 
@@ -40,7 +40,7 @@ class ScatterSettings
 {
     public:
         ScatterSettings() : ride(NULL), x(0), y(0), crop(false), ignore(false), frame(false),
-                             gridlines(false), secStart(0), secEnd(0) {}
+                             gridlines(false), compareMode(0), trendLine(0), secStart(0), secEnd(0), smoothing(0) {}
 
         RideItem *ride;   // ride to use
         int x,y;  // which channels to use
@@ -48,8 +48,11 @@ class ScatterSettings
              ignore,      // ignore zeroes on x or y
              frame,       // frame intervals
              gridlines;   // show gridlines
+        int compareMode,
+            trendLine;
         int secStart,
             secEnd;       // what time slice to show?
+        int smoothing;
         QList<IntervalItem *> intervals; // intervals to apply
 };
 
@@ -64,6 +67,9 @@ class ScatterWindow : public GcChartWindow
     Q_PROPERTY(bool ignore READ isIgnore WRITE set_Ignore USER true)
     Q_PROPERTY(bool grid READ isGrid WRITE set_Grid USER true)
     Q_PROPERTY(bool frame READ isFrame WRITE set_Frame USER true)
+    Q_PROPERTY(int compareMode READ get_compareMode WRITE set_compareMode USER true)
+    Q_PROPERTY(int trendLine READ get_trendLine WRITE set_trendLine USER true)
+    Q_PROPERTY(int smoothing READ get_smoothing WRITE set_smoothing USER true)
 
     public:
 
@@ -86,8 +92,16 @@ class ScatterWindow : public GcChartWindow
         void set_Ignore(bool x) { ignore->setChecked(x); }
         bool isFrame() const { return frame->isChecked(); }
         void set_Frame(bool x) { frame->setChecked(x); }
+        int get_compareMode() const { return compareMode->currentIndex(); }
+        void set_compareMode(int x) { compareMode->setCurrentIndex(x); }
+        int get_trendLine() const { return trendLine->currentIndex(); }
+        void set_trendLine(int x) { trendLine->setCurrentIndex(x); }
+        int get_smoothing() const { return smoothSlider->value();  }
+        void set_smoothing(int x) { smoothSlider->setValue(x); }
 
     public slots:
+
+        void forceReplot();
         void rideSelected();
         void intervalSelected();
         void setData();
@@ -96,7 +110,7 @@ class ScatterWindow : public GcChartWindow
         void ySelectorChanged(int);
         void rxSelectorChanged(int);
         void rySelectorChanged(int);
-        void configChanged();
+        void configChanged(qint32);
 
         // these set the plot when the properties change
         void setGrid();
@@ -104,6 +118,10 @@ class ScatterWindow : public GcChartWindow
         void setIgnore();
         void setrFrame();
         void setrIgnore();
+        void setCompareMode(int);
+        void setTrendLine(int);
+        void setSmoothingFromSlider();
+        void setSmoothingFromLineEdit();
 
         // compare mode started or items to compare changed
         void compareChanged();
@@ -119,6 +137,7 @@ class ScatterWindow : public GcChartWindow
 
         // Ride to plot - captured from rideSelected signal
         RideItem *ride;
+        bool stale;
 
         // layout
         ScatterPlot *scatterPlot;
@@ -134,15 +153,24 @@ class ScatterWindow : public GcChartWindow
         QCheckBox   *ignore,
                     *grid,
                     *frame;
+        QComboBox   *compareMode,
+                    *trendLine;
+
+        QSlider *smoothSlider;
+        QLineEdit *smoothLineEdit;
 
         RideItem *current;
+
+        bool firstShow;
+        bool event(QEvent *event);
 
     private:
         // reveal controls
         QxtStringSpinBox    *rxSelector,
                             *rySelector;
         QCheckBox           *rFrameInterval,
-                            *rIgnore;
+                            *rIgnore,
+                            *rXAxisFromReference;
 
         void addStandardChannels(QComboBox *);
         void addrStandardChannels(QxtStringSpinBox *box);

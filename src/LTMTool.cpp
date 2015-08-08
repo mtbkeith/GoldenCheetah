@@ -22,8 +22,10 @@
 #include "Athlete.h"
 #include "Settings.h"
 #include "Units.h"
+#include "HelpWhatsThis.h"
 #include <QApplication>
 #include <QtGui>
+
 
 // charts.xml support
 #include "LTMChartParser.h"
@@ -41,7 +43,7 @@
 // PDModel estimate support
 #include "PDModel.h"
 
-LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mainWindow), settings(settings), context(context), active(false), _amFiltered(false), editing(false)
+LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mainWindow), settings(settings), context(context), active(false), _amFiltered(false)
 {
     setStyleSheet("QFrame { FrameStyle = QFrame::NoFrame };"
                   "QWidget { background = Qt::white; border:0 px; margin: 2px; };");
@@ -52,23 +54,27 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
     mainLayout->setSpacing(0);
     setContentsMargins(0,0,0,0);
 
-    QWidget *basicsettings = new QWidget(this);
-    mainLayout->addWidget(basicsettings);
-    QFormLayout *basicsettingsLayout = new QFormLayout(basicsettings);
-    basicsettingsLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    basicsettings = new QWidget(this);
+    HelpWhatsThis *basicHelp = new HelpWhatsThis(basicsettings);
+    basicsettings->setWhatsThis(basicHelp->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends_Config_Basic));
 
-#ifdef GC_HAVE_LUCENE
+    QFormLayout *basicsettingsLayout = new QFormLayout(basicsettings);
+
     searchBox = new SearchFilterBox(this, context);
+    HelpWhatsThis *searchHelp = new HelpWhatsThis(searchBox);
+    searchBox->setWhatsThis(searchHelp->getWhatsThisText(HelpWhatsThis::SearchFilterBox));
     connect(searchBox, SIGNAL(searchClear()), this, SLOT(clearFilter()));
     connect(searchBox, SIGNAL(searchResults(QStringList)), this, SLOT(setFilter(QStringList)));
 
     basicsettingsLayout->addRow(new QLabel(tr("Filter")), searchBox);
     basicsettingsLayout->addRow(new QLabel(tr(""))); // spacing
-#endif
 
     // Basic Controls
-    QWidget *basic = new QWidget(this);
+    basic = new QWidget(this);
+
     basic->setContentsMargins(0,0,0,0);
+    HelpWhatsThis *presetHelp = new HelpWhatsThis(basic);
+    basic->setWhatsThis(presetHelp->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends_Config_Preset));
     QVBoxLayout *basicLayout = new QVBoxLayout(basic);
     basicLayout->setContentsMargins(0,0,0,0);
     basicLayout->setSpacing(5);
@@ -80,6 +86,8 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
 #endif
 
     dateSetting = new DateSettingsEdit(this);
+    HelpWhatsThis *dateSettingHelp = new HelpWhatsThis(dateSetting);
+    dateSetting->setWhatsThis(dateSettingHelp->getWhatsThisText(HelpWhatsThis::ChartTrends_DateRange));
     basicsettingsLayout->addRow(new QLabel(tr("Date range")), dateSetting);
     basicsettingsLayout->addRow(new QLabel(tr(""))); // spacing
 
@@ -118,30 +126,16 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
     stackSlider->setValue(3);
     stackSlider->setFixedWidth(100);
     basicsettingsLayout->addRow(new QLabel(tr("Stack Zoom")), stackSlider);
+    // use separate line to distinguish from the operational buttons for the Table View
+
+    usePreset = new QCheckBox(tr("Use sidebar chart settings"));
+    usePreset->setChecked(false);
+    basicsettingsLayout->addRow(new QLabel(""), new QLabel());
+    basicsettingsLayout->addRow(new QLabel(""), usePreset);
 
     // controls
     QGridLayout *presetLayout = new QGridLayout;
     basicLayout->addLayout(presetLayout);
-
-    importButton = new QPushButton(tr("Import..."));
-    exportButton = new QPushButton(tr("Export..."));
-    upButton = new QPushButton(tr("Move up"));
-    downButton = new QPushButton(tr("Move down"));
-    renameButton = new QPushButton(tr("Rename"));
-    deleteButton = new QPushButton(tr("Delete"));
-    newButton = new QPushButton(tr("Add Current")); // connected in LTMWindow.cpp
-    connect(newButton, SIGNAL(clicked()), this, SLOT(addCurrent()));
-
-    QVBoxLayout *actionButtons = new QVBoxLayout;
-    actionButtons->addWidget(renameButton);
-    actionButtons->addWidget(deleteButton);
-    actionButtons->addWidget(upButton);
-    actionButtons->addWidget(downButton);
-    actionButtons->addStretch();
-    actionButtons->addWidget(importButton);
-    actionButtons->addWidget(exportButton);
-    actionButtons->addStretch();
-    actionButtons->addWidget(newButton);
 
     charts = new QTreeWidget;
 #ifdef Q_OS_MAC
@@ -151,31 +145,25 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
     charts->setColumnCount(1);
     charts->setSelectionMode(QAbstractItemView::SingleSelection);
     charts->setEditTriggers(QAbstractItemView::SelectedClicked); // allow edit
-    charts->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     charts->setIndentation(0);
 
-    applyButton = new QPushButton(tr("Apply")); // connected in LTMWindow.cpp
+    applyButton = new QPushButton(tr("Apply")); // connected in LTMWindow.cpp (weird!?)
+    newButton = new QPushButton(tr("Add Current")); // connected in LTMWindow.cpp
+    connect(newButton, SIGNAL(clicked()), this, SLOT(addCurrent()));
+
     QHBoxLayout *buttons = new QHBoxLayout;
     buttons->addWidget(applyButton);
     buttons->addStretch();
+    buttons->addWidget(newButton);
     basicLayout->addLayout(buttons);
 
     presetLayout->addWidget(charts, 0,0);
-    presetLayout->addLayout(actionButtons, 0,1,1,2);
 
     // connect up slots
-    connect(upButton, SIGNAL(clicked()), this, SLOT(upClicked()));
-    connect(downButton, SIGNAL(clicked()), this, SLOT(downClicked()));
-    connect(renameButton, SIGNAL(clicked()), this, SLOT(renameClicked()));
-    connect(deleteButton, SIGNAL(clicked()), this, SLOT(deleteClicked()));
-    connect(importButton, SIGNAL(clicked()), this, SLOT(importClicked()));
-    connect(exportButton, SIGNAL(clicked()), this, SLOT(exportClicked()));
-    connect(charts, SIGNAL(itemChanged(QTreeWidgetItem*,int)), this, SLOT(editingFinished()));
-    connect(charts, SIGNAL(itemClicked(QTreeWidgetItem*,int)), this, SLOT(editingStarted()));
-
     tabs = new QTabWidget(this);
-
     mainLayout->addWidget(tabs);
+    tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
     basic->setContentsMargins(20,20,20,20);
 
     // initialise the metrics catalogue and user selector
@@ -201,8 +189,8 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
 
         // set default for the user overiddable fields
         adds.uname  = adds.name;
-        adds.units = "";
-        adds.uunits = adds.metric->units(context->athlete->useMetricUnits);
+        adds.units = adds.metric->units(context->athlete->useMetricUnits);
+        adds.uunits = adds.units;
 
         // default units to metric name if it is blank
         if (adds.uunits == "") adds.uunits = adds.name;
@@ -241,41 +229,14 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
         }
     }
 
-    // measures
-    QList<FieldDefinition> measureDefinitions;
-    QList<KeywordDefinition> keywordDefinitions; //NOTE: not used in measures.xml
-    QString filename = context->athlete->home->config().absolutePath()+"/measures.xml";
-    QString colorfield;
-    if (!QFile(filename).exists()) filename = ":/xml/measures.xml";
-    RideMetadata::readXML(filename, keywordDefinitions, measureDefinitions, colorfield);
-
-    foreach (FieldDefinition field, measureDefinitions) {
-        if (!sp.isMetric(field.name) && (field.type == 3 || field.type == 4)) {
-            MetricDetail measure;
-            measure.type = METRIC_MEASURE;
-            QString underscored = field.name;
-            measure.symbol = QString("%1_m").arg(field.name); // we don't bother with '_' for measures
-            measure.metric = NULL; // not a factory metric
-            measure.penColor = QColor(Qt::blue);
-            measure.curveStyle = QwtPlotCurve::Lines;
-            measure.symbolStyle = QwtSymbol::NoSymbol;
-            measure.smooth = false;
-            measure.trendtype = 0;
-            measure.topN = 1;
-            measure.uname = "";
-            measure.name = QString("%1 (m)").arg(sp.displayName(field.name));
-            measure.units = "";
-            measure.uunits = "";
-            metrics.append(measure);
-        }
-    }
-
     // sort the list
     qSort(metrics);
 
     // custom widget
-    QWidget *custom = new QWidget(this);
+    custom = new QWidget(this);
     custom->setContentsMargins(20,20,20,20);
+    HelpWhatsThis *curvesHelp = new HelpWhatsThis(custom);
+    custom->setWhatsThis(curvesHelp->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends_Config_Curves));
     QVBoxLayout *customLayout = new QVBoxLayout(custom);
     customLayout->setContentsMargins(0,0,0,0);
     customLayout->setSpacing(5);
@@ -295,7 +256,6 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
     customLayout->addWidget(customTable);
     connect(customTable, SIGNAL(cellDoubleClicked(int, int)), this, SLOT(doubleClicked(int, int)));
 
-
     // custom buttons
     editCustomButton = new QPushButton(tr("Edit"));
     connect(editCustomButton, SIGNAL(clicked()), this, SLOT(editMetric()));
@@ -303,19 +263,30 @@ LTMTool::LTMTool(Context *context, LTMSettings *settings) : QWidget(context->mai
     addCustomButton = new QPushButton("+");
     connect(addCustomButton, SIGNAL(clicked()), this, SLOT(addMetric()));
 
-    deleteCustomButton = new QPushButton("- ");
+    deleteCustomButton = new QPushButton("-");
     connect(deleteCustomButton, SIGNAL(clicked()), this, SLOT(deleteMetric()));
 
-    usePreset = new QCheckBox(tr("Use sidebar chart settings"));
-    usePreset->setChecked(false);
-
 #ifndef Q_OS_MAC
+    upCustomButton = new QToolButton(this);
+    downCustomButton = new QToolButton(this);
+    upCustomButton->setArrowType(Qt::UpArrow);
+    downCustomButton->setArrowType(Qt::DownArrow);
+    upCustomButton->setFixedSize(20,20);
+    downCustomButton->setFixedSize(20,20);
     addCustomButton->setFixedSize(20,20);
     deleteCustomButton->setFixedSize(20,20);
+#else
+    upCustomButton = new QPushButton(tr("Up"));
+    downCustomButton = new QPushButton(tr("Down"));
 #endif
+    connect(upCustomButton, SIGNAL(clicked()), this, SLOT(moveMetricUp()));
+    connect(downCustomButton, SIGNAL(clicked()), this, SLOT(moveMetricDown()));
+
+
     QHBoxLayout *customButtons = new QHBoxLayout;
     customButtons->setSpacing(2);
-    customButtons->addWidget(usePreset);
+    customButtons->addWidget(upCustomButton);
+    customButtons->addWidget(downCustomButton);
     customButtons->addStretch();
     customButtons->addWidget(editCustomButton);
     customButtons->addStretch();
@@ -1108,81 +1079,81 @@ QList<MetricDetail> LTMTool::providePMmetrics() {
     trimpLTR.uunits = tr("Ramp");
     metrics.append(trimpLTR);
 
-    // GOVSS LTS
-    MetricDetail govssLTS;
-    govssLTS.type = METRIC_PM;
-    govssLTS.symbol = "govss_lts";
-    govssLTS.metric = NULL; // not a factory metric
-    govssLTS.penColor = QColor(Qt::blue);
-    govssLTS.curveStyle = QwtPlotCurve::Lines;
-    govssLTS.symbolStyle = QwtSymbol::NoSymbol;
-    govssLTS.smooth = false;
-    govssLTS.trendtype = 0;
-    govssLTS.topN = 1;
-    govssLTS.uname = govssLTS.name = tr("GOVSS Long Term Stress");
-    govssLTS.units = "Stress";
-    govssLTS.uunits = tr("Stress");
-    metrics.append(govssLTS);
+    // TriScore LTS
+    MetricDetail triscoreLTS;
+    triscoreLTS.type = METRIC_PM;
+    triscoreLTS.symbol = "triscore_lts";
+    triscoreLTS.metric = NULL; // not a factory metric
+    triscoreLTS.penColor = QColor(Qt::blue);
+    triscoreLTS.curveStyle = QwtPlotCurve::Lines;
+    triscoreLTS.symbolStyle = QwtSymbol::NoSymbol;
+    triscoreLTS.smooth = false;
+    triscoreLTS.trendtype = 0;
+    triscoreLTS.topN = 1;
+    triscoreLTS.uname = triscoreLTS.name = tr("TriScore Long Term Stress");
+    triscoreLTS.units = "Stress";
+    triscoreLTS.uunits = tr("Stress");
+    metrics.append(triscoreLTS);
 
-    MetricDetail govssSTS;
-    govssSTS.type = METRIC_PM;
-    govssSTS.symbol = "govss_sts";
-    govssSTS.metric = NULL; // not a factory metric
-    govssSTS.penColor = QColor(Qt::magenta);
-    govssSTS.curveStyle = QwtPlotCurve::Lines;
-    govssSTS.symbolStyle = QwtSymbol::NoSymbol;
-    govssSTS.smooth = false;
-    govssSTS.trendtype = 0;
-    govssSTS.topN = 1;
-    govssSTS.uname = govssSTS.name = tr("GOVSS Short Term Stress");
-    govssSTS.units = "Stress";
-    govssSTS.uunits = tr("Stress");
-    metrics.append(govssSTS);
+    MetricDetail triscoreSTS;
+    triscoreSTS.type = METRIC_PM;
+    triscoreSTS.symbol = "triscore_sts";
+    triscoreSTS.metric = NULL; // not a factory metric
+    triscoreSTS.penColor = QColor(Qt::magenta);
+    triscoreSTS.curveStyle = QwtPlotCurve::Lines;
+    triscoreSTS.symbolStyle = QwtSymbol::NoSymbol;
+    triscoreSTS.smooth = false;
+    triscoreSTS.trendtype = 0;
+    triscoreSTS.topN = 1;
+    triscoreSTS.uname = triscoreSTS.name = tr("TriScore Short Term Stress");
+    triscoreSTS.units = "Stress";
+    triscoreSTS.uunits = tr("Stress");
+    metrics.append(triscoreSTS);
 
-    MetricDetail govssSB;
-    govssSB.type = METRIC_PM;
-    govssSB.symbol = "govss_sb";
-    govssSB.metric = NULL; // not a factory metric
-    govssSB.penColor = QColor(Qt::yellow);
-    govssSB.curveStyle = QwtPlotCurve::Steps;
-    govssSB.symbolStyle = QwtSymbol::NoSymbol;
-    govssSB.smooth = false;
-    govssSB.trendtype = 0;
-    govssSB.topN = 1;
-    govssSB.uname = govssSB.name = tr("GOVSS Stress Balance");
-    govssSB.units = "Stress Balance";
-    govssSB.uunits = tr("Stress Balance");
-    metrics.append(govssSB);
+    MetricDetail triscoreSB;
+    triscoreSB.type = METRIC_PM;
+    triscoreSB.symbol = "triscore_sb";
+    triscoreSB.metric = NULL; // not a factory metric
+    triscoreSB.penColor = QColor(Qt::yellow);
+    triscoreSB.curveStyle = QwtPlotCurve::Steps;
+    triscoreSB.symbolStyle = QwtSymbol::NoSymbol;
+    triscoreSB.smooth = false;
+    triscoreSB.trendtype = 0;
+    triscoreSB.topN = 1;
+    triscoreSB.uname = triscoreSB.name = tr("TriScore Stress Balance");
+    triscoreSB.units = "Stress Balance";
+    triscoreSB.uunits = tr("Stress Balance");
+    metrics.append(triscoreSB);
 
-    MetricDetail govssSTR;
-    govssSTR.type = METRIC_PM;
-    govssSTR.symbol = "govss_sr";
-    govssSTR.metric = NULL; // not a factory metric
-    govssSTR.penColor = QColor(Qt::darkGreen);
-    govssSTR.curveStyle = QwtPlotCurve::Steps;
-    govssSTR.symbolStyle = QwtSymbol::NoSymbol;
-    govssSTR.smooth = false;
-    govssSTR.trendtype = 0;
-    govssSTR.topN = 1;
-    govssSTR.uname = govssSTR.name = tr("GOVSS STS Ramp");
-    govssSTR.units = "Ramp";
-    govssSTR.uunits = tr("Ramp");
-    metrics.append(govssSTR);
+    MetricDetail triscoreSTR;
+    triscoreSTR.type = METRIC_PM;
+    triscoreSTR.symbol = "triscore_sr";
+    triscoreSTR.metric = NULL; // not a factory metric
+    triscoreSTR.penColor = QColor(Qt::darkGreen);
+    triscoreSTR.curveStyle = QwtPlotCurve::Steps;
+    triscoreSTR.symbolStyle = QwtSymbol::NoSymbol;
+    triscoreSTR.smooth = false;
+    triscoreSTR.trendtype = 0;
+    triscoreSTR.topN = 1;
+    triscoreSTR.uname = triscoreSTR.name = tr("TriScore STS Ramp");
+    triscoreSTR.units = "Ramp";
+    triscoreSTR.uunits = tr("Ramp");
+    metrics.append(triscoreSTR);
 
-    MetricDetail govssLTR;
-    govssLTR.type = METRIC_PM;
-    govssLTR.symbol = "govss_lr";
-    govssLTR.metric = NULL; // not a factory metric
-    govssLTR.penColor = QColor(Qt::darkBlue);
-    govssLTR.curveStyle = QwtPlotCurve::Steps;
-    govssLTR.symbolStyle = QwtSymbol::NoSymbol;
-    govssLTR.smooth = false;
-    govssLTR.trendtype = 0;
-    govssLTR.topN = 1;
-    govssLTR.uname = govssLTR.name = tr("GOVSS LTS Ramp");
-    govssLTR.units = "Ramp";
-    govssLTR.uunits = tr("Ramp");
-    metrics.append(govssLTR);
+    MetricDetail triscoreLTR;
+    triscoreLTR.type = METRIC_PM;
+    triscoreLTR.symbol = "triscore_lr";
+    triscoreLTR.metric = NULL; // not a factory metric
+    triscoreLTR.penColor = QColor(Qt::darkBlue);
+    triscoreLTR.curveStyle = QwtPlotCurve::Steps;
+    triscoreLTR.symbolStyle = QwtSymbol::NoSymbol;
+    triscoreLTR.smooth = false;
+    triscoreLTR.trendtype = 0;
+    triscoreLTR.topN = 1;
+    triscoreLTR.uname = triscoreLTR.name = tr("TriScore LTS Ramp");
+    triscoreLTR.units = "Ramp";
+    triscoreLTR.uunits = tr("Ramp");
+    metrics.append(triscoreLTR);
 
     // done
 
@@ -1190,6 +1161,25 @@ QList<MetricDetail> LTMTool::providePMmetrics() {
 
 }
 
+void
+LTMTool::hideBasic()
+{
+    // first make sure use sidebar is false
+    usePreset->setChecked(false);
+    if (tabs->count() == 3) {
+
+        tabs->removeTab(0);
+        basicsettings->hide(); // it doesn't get deleted
+
+        // resize etc
+        tabs->updateGeometry();
+        basic->updateGeometry();
+        custom->updateGeometry();
+
+        // choose curves tab
+        tabs->setCurrentIndex(1);
+    }
+}
 
 void
 LTMTool::usePresetChanged()
@@ -1198,6 +1188,16 @@ LTMTool::usePresetChanged()
     editCustomButton->setEnabled(!usePreset->isChecked());
     addCustomButton->setEnabled(!usePreset->isChecked());
     deleteCustomButton->setEnabled(!usePreset->isChecked());
+    upCustomButton->setEnabled(!usePreset->isChecked());
+    downCustomButton->setEnabled(!usePreset->isChecked());
+
+    // yuck .. this doesn't work nicely !
+    //basic->setHidden(usePreset->isChecked());
+    //custom->setHidden(usePreset->isChecked());
+    // so instead we disable
+    charts->setEnabled(!usePreset->isChecked());
+    newButton->setEnabled(!usePreset->isChecked());
+    applyButton->setEnabled(!usePreset->isChecked());
 }
 
 void
@@ -1208,7 +1208,7 @@ LTMTool::presetsChanged()
     foreach(LTMSettings chart, context->athlete->presets) {
         QTreeWidgetItem *add;
         add = new QTreeWidgetItem(charts->invisibleRootItem());
-        add->setFlags(add->flags() | Qt::ItemIsEditable);
+        add->setFlags(add->flags() & ~Qt::ItemIsEditable);
         add->setText(0, chart.name);
     }
 
@@ -1218,7 +1218,7 @@ LTMTool::presetsChanged()
 }
 
 void
-LTMTool::refreshCustomTable()
+LTMTool::refreshCustomTable(int indexSelectedItem)
 {
     // clear then repopulate custom table settings to reflect
     // the current LTMSettings.
@@ -1229,19 +1229,22 @@ LTMTool::refreshCustomTable()
     header << tr("Type") << tr("Details"); 
     customTable->setHorizontalHeaderLabels(header);
 
+    QTableWidgetItem *selected = new QTableWidgetItem();
     // now lets add a row for each metric
     customTable->setRowCount(settings->metrics.count());
     int i=0;
     foreach (MetricDetail metricDetail, settings->metrics) {
 
         QTableWidgetItem *t = new QTableWidgetItem();
-        if (metricDetail.type != 5 && metricDetail.type != 6)
+        if (metricDetail.type < 5)
             t->setText(tr("Metric")); // only metrics .. for now ..
         else if (metricDetail.type == 5)
             t->setText(tr("Peak"));
-        else
+        else if (metricDetail.type == 6)
             t->setText(tr("Estimate"));
-        
+        else if (metricDetail.type == 7)
+            t->setText(tr("Stress"));
+
         t->setFlags(t->flags() & (~Qt::ItemIsEditable));
         customTable->setItem(i,0,t);
 
@@ -1256,8 +1259,18 @@ LTMTool::refreshCustomTable()
         t->setFlags(t->flags() & (~Qt::ItemIsEditable));
         customTable->setItem(i,1,t);
 
+        // keep the selected item from previous step (relevant for moving up/down)
+        if (indexSelectedItem == i) {
+            selected = t;
+        }
+
         i++;
     }
+
+    if (selected) {
+      customTable->setCurrentItem(selected);
+    }
+
 }
 
 void
@@ -1330,6 +1343,40 @@ LTMTool::addMetric()
 }
 
 void
+LTMTool::moveMetricUp()
+{
+    QList<QTableWidgetItem*> items = customTable->selectedItems();
+    if (items.count() < 1) return;
+
+    int index = customTable->row(items.first());
+
+    if (index > 0) {
+        settings->metrics.swap(index, index-1);
+         // refresh
+        refreshCustomTable(index-1);
+        curvesChanged();
+    }
+}
+
+void
+LTMTool::moveMetricDown()
+{
+    QList<QTableWidgetItem*> items = customTable->selectedItems();
+    if (items.count() < 1) return;
+
+    int index = customTable->row(items.first());
+
+    if (index+1 <  settings->metrics.size()) {
+        settings->metrics.swap(index, index+1);
+         // refresh
+        refreshCustomTable(index+1);
+        curvesChanged();
+    }
+}
+
+
+
+void
 LTMTool::applySettings()
 {
     foreach (MetricDetail metricDetail, settings->metrics) {
@@ -1376,33 +1423,8 @@ LTMTool::addCurrent()
     context->athlete->presets.append(*settings);
 
     // tree will now be refreshed
-    editing = false;
     context->notifyPresetsChanged();
 }
-
-void
-LTMTool::getMetricsTranslationMap (QMap<QString, QString> &nMap, QMap<QString, QString> &uMap, bool useMetricUnits) {
-
-    // build up translation maps
-    const RideMetricFactory &factory = RideMetricFactory::instance();
-    for (int i=0; i<factory.metricCount(); i++) {
-        const RideMetric *add = factory.rideMetric(factory.metricName(i));
-        QTextEdit processHTMLname(add->name());
-        // use the .symbol() as key - since only CHART.XML is mapped
-        nMap.insert(add->symbol(), processHTMLname.toPlainText());
-        uMap.insert(add->symbol(), add->units(useMetricUnits));
-
-    }
-    // add mapping for PM metrics (name and unit)
-    QList<MetricDetail> pmMetrics = LTMTool::providePMmetrics();
-    for (int i=0; i<pmMetrics.count(); i++)
-    {
-        nMap.insert(pmMetrics[i].symbol, pmMetrics[i].uname);
-        uMap.insert(pmMetrics[i].symbol, pmMetrics[i].uunits);
-    }
-
-}
-
 
 // set the estimateSelection based upon what is available
 void 
@@ -1419,6 +1441,7 @@ EditMetricDetailDialog::modelChanged()
     qobject_cast<QStandardItemModel *>(estimateSelect->model())->item(3)->setEnabled(models[currentIndex]->hasPMax());
     qobject_cast<QStandardItemModel *>(estimateSelect->model())->item(4)->setEnabled(true);
     qobject_cast<QStandardItemModel *>(estimateSelect->model())->item(5)->setEnabled(true);
+    qobject_cast<QStandardItemModel *>(estimateSelect->model())->item(6)->setEnabled(true);
 
     // switch to other estimate if wanted estimate is not selected
     if (ce < 0 || !qobject_cast<QStandardItemModel *>(estimateSelect->model())->item(ce)->isEnabled())
@@ -1463,6 +1486,7 @@ EditMetricDetailDialog::estimateName()
             }
             break;
         case 5 : name = tr("Endurance Index"); break;
+        case 6 : name = tr("Vo2Max Estimate"); break;
     }
 
     // now the model
@@ -1479,12 +1503,16 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
 {
     setWindowTitle(tr("Curve Settings"));
 
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends_Curves_Settings));
+
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     // choose the type
     chooseMetric = new QRadioButton(tr("Metric"), this);
     chooseBest = new QRadioButton(tr("Best"), this);
     chooseEstimate = new QRadioButton(tr("Estimate"), this);
+    chooseStress = new QRadioButton(tr("Stress"), this);
 
     // put them into a button group because we
     // also have radio buttons for watts per kilo / absolute
@@ -1492,11 +1520,13 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     group->addButton(chooseMetric);
     group->addButton(chooseBest);
     group->addButton(chooseEstimate);
+    group->addButton(chooseStress);
 
     // uncheck them all
     chooseMetric->setChecked(false);
     chooseBest->setChecked(false);
     chooseEstimate->setChecked(false);
+    chooseStress->setChecked(false);
 
     // which one ?
     switch (metricDetail->type) {
@@ -1509,6 +1539,9 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     case 6:
         chooseEstimate->setChecked(true);
         break;
+    case 7:
+        chooseStress->setChecked(true);
+        break;
     }
 
     QVBoxLayout *radioButtons = new QVBoxLayout;
@@ -1516,6 +1549,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     radioButtons->addWidget(chooseMetric);
     radioButtons->addWidget(chooseBest);
     radioButtons->addWidget(chooseEstimate);
+    radioButtons->addWidget(chooseStress);
     radioButtons->addStretch();
 
     // bests selection
@@ -1581,6 +1615,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     models << new CP3Model(context);
     models << new MultiModel(context);
     models << new ExtendedModel(context);
+    models << new WSModel(context);
     foreach(PDModel *model, models) {
         modelSelect->addItem(model->name(), model->code());
     }
@@ -1591,6 +1626,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     estimateSelect->addItem("p-Max");
     estimateSelect->addItem("Best Power");
     estimateSelect->addItem("Endurance Index");
+    estimateSelect->addItem("Vo2Max Estimate");
 
     int n=0;
     modelSelect->setCurrentIndex(0); // default to 2parm model
@@ -1640,8 +1676,33 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     estimateLayout->addLayout(estwpk);
     estimateLayout->addStretch();
 
+    // stress selection
+    stressTypeSelect = new QComboBox(this);
+    stressTypeSelect->addItem(tr("Short Term Stress (STS/ATL)"), STRESS_STS);
+    stressTypeSelect->addItem(tr("Long Term Stress  (LTS/CTL)"), STRESS_LTS);
+    stressTypeSelect->addItem(tr("Stress Balance    (SB/TSB)"),  STRESS_SB);
+    stressTypeSelect->addItem(tr("Stress Ramp Rate  (RR)"),      STRESS_RR);
+    stressTypeSelect->setCurrentIndex(metricDetail->stressType);
+
+    stressWidget = new QWidget(this);
+    stressWidget->setContentsMargins(0,0,0,0);
+    QHBoxLayout *stressLayout = new QHBoxLayout(stressWidget);
+    stressLayout->setContentsMargins(0,0,0,0);
+    stressLayout->setSpacing(5);
+    stressLayout->addWidget(new QLabel(tr("Stress Type"), this));
+    stressLayout->addWidget(stressTypeSelect);
+
+    metricWidget = new QWidget(this);
+    metricWidget->setContentsMargins(0,0,0,0);
+    QVBoxLayout *metricLayout = new QVBoxLayout(metricWidget);
+
     // metric selection tree
     metricTree = new QTreeWidget;
+    metricLayout->addWidget(metricTree);
+
+    // and add the stress selector to this widget
+    // too as we reuse it for stress selection
+    metricLayout->addWidget(stressWidget);
 
 #ifdef Q_OS_MAC
     metricTree->setAttribute(Qt::WA_MacShowFocusRect, 0);
@@ -1674,7 +1735,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     // metric and bests, but will add formula and
     // measure at some point
     typeStack = new QStackedWidget(this);
-    typeStack->addWidget(metricTree);
+    typeStack->addWidget(metricWidget);
     typeStack->addWidget(bestWidget);
     typeStack->addWidget(estimateWidget);
     typeStack->setCurrentIndex(chooseMetric->isChecked() ? 0 : (chooseBest->isChecked() ? 1 : 2));
@@ -1767,6 +1828,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     trendType->addItem(tr("No trend Line"));
     trendType->addItem(tr("Linear Trend"));
     trendType->addItem(tr("Quadratic Trend"));
+    trendType->addItem(tr("Moving Average"));
     trendType->setCurrentIndex(metricDetail->trendtype);
 
     // add to grid
@@ -1815,7 +1877,8 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     buttonLayout->addWidget(applyButton);
     mainLayout->addLayout(buttonLayout);
 
-    // clean up the estimate widgets
+    // clean up the widgets
+    typeChanged();
     modelChanged();
 
     // connect up slots
@@ -1826,6 +1889,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     connect(chooseMetric, SIGNAL(toggled(bool)), this, SLOT(typeChanged()));
     connect(chooseBest, SIGNAL(toggled(bool)), this, SLOT(typeChanged()));
     connect(chooseEstimate, SIGNAL(toggled(bool)), this, SLOT(typeChanged()));
+    connect(chooseStress, SIGNAL(toggled(bool)), this, SLOT(typeChanged()));
     connect(modelSelect, SIGNAL(currentIndexChanged(int)), this, SLOT(modelChanged()));
     connect(estimateSelect, SIGNAL(currentIndexChanged(int)), this, SLOT(estimateChanged()));
     connect(estimateDuration, SIGNAL(valueChanged(double)), this, SLOT(estimateName()));
@@ -1833,7 +1897,9 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
 
     // when stuff changes rebuild name
     connect(chooseBest, SIGNAL(toggled(bool)), this, SLOT(bestName()));
+    connect(chooseStress, SIGNAL(toggled(bool)), this, SLOT(stressName()));
     connect(chooseEstimate, SIGNAL(toggled(bool)), this, SLOT(estimateName()));
+    connect(stressTypeSelect, SIGNAL(currentIndexChanged(int)), this, SLOT(stressName()));
     connect(chooseMetric, SIGNAL(toggled(bool)), this, SLOT(metricSelected()));
     connect(duration, SIGNAL(valueChanged(double)), this, SLOT(bestName()));
     connect(durationUnits, SIGNAL(currentIndexChanged(int)), this, SLOT(bestName()));
@@ -1855,25 +1921,60 @@ EditMetricDetailDialog::typeChanged()
     // switch stack and hide other
     if (chooseMetric->isChecked()) {
         bestWidget->hide();
-        metricTree->show();
+        metricWidget->show();
         estimateWidget->hide();
+        stressWidget->hide();
         typeStack->setCurrentIndex(0);
     }
 
     if (chooseBest->isChecked()) {
         bestWidget->show();
-        metricTree->hide();
+        metricWidget->hide();
         estimateWidget->hide();
+        stressWidget->hide();
         typeStack->setCurrentIndex(1);
     }
 
     if (chooseEstimate->isChecked()) {
         bestWidget->hide();
-        metricTree->hide();
+        metricWidget->hide();
         estimateWidget->show();
+        stressWidget->hide();
         typeStack->setCurrentIndex(2);
     }
+
+    if (chooseStress->isChecked()) {
+        bestWidget->hide();
+        metricWidget->show();
+        estimateWidget->hide();
+        stressWidget->show();
+        typeStack->setCurrentIndex(0);
+    }
     adjustSize();
+}
+
+void
+EditMetricDetailDialog::stressName()
+{
+    // used when adding the generated curve to the curves
+    // map in LTMPlot, we need to be able to differentiate
+    // between adding the metric to a chart and adding
+    // a stress series to a chart
+
+    // only for bests!
+    if (chooseStress->isChecked() == false) return;
+
+    // re-use bestSymbol
+    metricDetail->bestSymbol = metricDetail->symbol;
+
+    // append type
+    switch(stressTypeSelect->currentIndex()) {
+    case 0: metricDetail->bestSymbol += "_lts"; break;
+    case 1: metricDetail->bestSymbol += "_sts"; break;
+    case 2: metricDetail->bestSymbol += "_sb"; break;
+    case 3: metricDetail->bestSymbol += "_rr"; break;
+    }
+
 }
 
 void
@@ -1902,7 +2003,7 @@ void
 EditMetricDetailDialog::metricSelected()
 {
     // only in metric mode
-    if (!chooseMetric->isChecked()) return;
+    if (!chooseMetric->isChecked() && !chooseStress->isChecked()) return;
 
     // user selected a different metric
     // so update accordingly
@@ -1975,6 +2076,9 @@ EditMetricDetailDialog::metricSelected()
     }
 
     (*metricDetail) = ltmTool->metrics[index]; // overwrite!
+
+    // make the stress name
+    if (chooseStress->isChecked()) stressName();
 }
 
 // uh. i hate enums when you need to modify from ints
@@ -1997,6 +2101,7 @@ EditMetricDetailDialog::applyClicked()
 
     if (chooseBest->isChecked()) metricDetail->type = 5; // is a best
     else if (chooseEstimate->isChecked()) metricDetail->type = 6; // estimate
+    else if (chooseStress->isChecked()) metricDetail->type = 7; // stress
 
     metricDetail->estimateDuration = estimateDuration->value();
     switch (estimateDurationUnits->currentIndex()) {
@@ -2031,6 +2136,7 @@ EditMetricDetailDialog::applyClicked()
     metricDetail->uunits = userUnits->text();
     metricDetail->stack = stack->isChecked();
     metricDetail->trendtype = trendType->currentIndex();
+    metricDetail->stressType = stressTypeSelect->currentIndex();
     accept();
 }
 
@@ -2114,204 +2220,4 @@ LTMTool::setFilter(QStringList files)
         filenames = files;
 
         emit filterChanged();
-}
-
-
-// metricDetails gives access to the metric details catalog by symbol
-MetricDetail*
-LTMTool::metricDetails(QString symbol)
-{
-    for(int i = 0; i < metrics.count(); i++)
-        if (metrics[i].symbol == symbol)
-            return &metrics[i];
-    return NULL;
-}
-
-void
-LTMTool::translateMetrics(Context *context, LTMSettings *settings) // settings override local scope (static function)!!
-{
-    static QMap<QString, QString> unitsMap;
-    // LTMTool instance is created to have access to metrics catalog
-    LTMTool* ltmTool = new LTMTool(context, settings);
-    if (unitsMap.isEmpty()) {
-        foreach(MetricDetail metric, ltmTool->metrics) {
-            if (metric.units != "")  // translate units
-	            unitsMap.insert(metric.units, metric.uunits);
-            if (metric.uunits != "") // keep already translated the same
-	            unitsMap.insert(metric.uunits, metric.uunits);
-        }
-    }
-    for (int j=0; j < settings->metrics.count(); j++) {
-        if (settings->metrics[j].uname == settings->metrics[j].name) {
-            MetricDetail* mdp = ltmTool->metricDetails(settings->metrics[j].symbol);
-            if (mdp != NULL) {
-                // Replace with default translated name
-                settings->metrics[j].name = mdp->name;
-                settings->metrics[j].uname = mdp->uname;
-                // replace with translated units, if available
-                if (settings->metrics[j].uunits != "")
-                    settings->metrics[j].uunits = unitsMap.value(settings->metrics[j].uunits,
-                                                                 mdp->uunits);
-            }
-        }
-    }
-    delete ltmTool;
-}
-
-void
-LTMTool::editingStarted()
-{
-    editing = true; // also set from renameClicked
-}
-
-void
-LTMTool::editingFinished()
-{
-    if (!editing) return;
-
-    // take the edited versions of the name first
-    for(int i=0; i<charts->invisibleRootItem()->childCount(); i++)
-        (context->athlete->presets)[i].name = charts->invisibleRootItem()->child(i)->text(0);
-
-    // let everyone know once we're done
-    editing = false;
-    context->notifyPresetsChanged();
-}
-
-void
-LTMTool::importClicked()
-{
-    QFileDialog existing(this);
-    existing.setFileMode(QFileDialog::ExistingFile);
-    existing.setNameFilter(tr("Chart File (*.xml)"));
-    if (existing.exec()){
-        // we will only get one (ExistingFile not ExistingFiles)
-        QStringList filenames = existing.selectedFiles();
-
-        if (QFileInfo(filenames[0]).exists()) {
-
-            QList<LTMSettings> imported;
-            QFile chartsFile(filenames[0]);
-
-            // setup XML processor
-            QXmlInputSource source( &chartsFile );
-            QXmlSimpleReader xmlReader;
-            LTMChartParser handler;
-            xmlReader.setContentHandler(&handler);
-            xmlReader.setErrorHandler(&handler);
-
-            // parse and get return values
-            xmlReader.parse(source);
-            imported = handler.getSettings();
-
-            // now append to the QList and QTreeWidget
-            context->athlete->presets += imported;
-
-            // notify we changed and tree updates
-            editing = false;
-            context->notifyPresetsChanged();
-
-        } else {
-            // oops non existent - does this ever happen?
-            QMessageBox::warning( 0, tr("Entry Error"), QString(tr("Selected file (%1) does not exist")).arg(filenames[0]));
-        }
-    }
-}
-
-void
-LTMTool::exportClicked()
-{
-    QFileDialog newone(this);
-    newone.setFileMode(QFileDialog::AnyFile);
-    newone.setNameFilter(tr("Chart File (*.xml)"));
-    if (newone.exec()){
-        // we will only get one (ExistingFile not ExistingFiles)
-        QStringList filenames = newone.selectedFiles();
-
-        // if exists confirm overwrite
-        if (QFileInfo(filenames[0]).exists()) {
-            QMessageBox msgBox;
-            msgBox.setText(QString(tr("The selected file (%1) exists.")).arg(filenames[0]));
-            msgBox.setInformativeText(tr("Do you want to overwrite it?"));
-            msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
-            msgBox.setDefaultButton(QMessageBox::Cancel);
-            msgBox.setIcon(QMessageBox::Warning);
-            if (msgBox.exec() != QMessageBox::Ok)
-                return;
-        }
-        LTMChartParser::serialize(filenames[0], context->athlete->presets);
-    }
-}
-
-void
-LTMTool::upClicked()
-{
-    if (charts->currentItem()) {
-        int index = charts->invisibleRootItem()->indexOfChild(charts->currentItem());
-        if (index == 0) return; // its at the top already
-
-        // movin on up!
-        LTMSettings save = (context->athlete->presets)[index];
-        context->athlete->presets.removeAt(index);
-        context->athlete->presets.insert(index-1, save);
-
-        // notify we changed
-        editing = false;
-        context->notifyPresetsChanged();
-
-        // reselect
-        charts->setCurrentItem(charts->invisibleRootItem()->child(index-1));
-    }
-}
-
-void
-LTMTool::downClicked()
-{
-    if (charts->currentItem()) {
-        int index = charts->invisibleRootItem()->indexOfChild(charts->currentItem());
-        if (index == (charts->invisibleRootItem()->childCount()-1)) return; // its at the bottom already
-
-        // movin on up!
-        LTMSettings save = (context->athlete->presets)[index];
-        context->athlete->presets.removeAt(index);
-        context->athlete->presets.insert(index+1, save);
-
-        // notify we changed
-        editing = false;
-        context->notifyPresetsChanged();
-
-        // reselect
-        charts->setCurrentItem(charts->invisibleRootItem()->child(index+1));
-    }
-}
-
-void
-LTMTool::renameClicked()
-{
-    // which one is selected?
-    if (charts->currentItem()) {
-        editing = true;
-        charts->editItem(charts->currentItem(), 0);
-    }
-}
-
-void
-LTMTool::deleteClicked()
-{
-    // must have at least 1 child
-    if (charts->invisibleRootItem()->childCount() == 1) {
-        QMessageBox::warning(0, tr("Error"), tr("You must have at least one chart"));
-        return;
-
-    } else if (charts->currentItem()) {
-
-        int index = charts->invisibleRootItem()->indexOfChild(charts->currentItem());
-
-        // zap!
-        context->athlete->presets.removeAt(index);
-
-        // notify we changed
-        editing = false;
-        context->notifyPresetsChanged();
-    }
 }

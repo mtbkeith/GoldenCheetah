@@ -24,7 +24,9 @@
 #define MILES_PER_KM 0.62137119f
 #define FEET_PER_METER 3.2808399f
 #define CM_PER_INCH 2.54f
+#define INCH_PER_MM 0.039370f
 #define METERS_PER_FOOT 0.3047999f
+#define METERS_PER_YARD 0.9144
 #define LB_PER_KG 2.20462262f
 #define KG_PER_LB 0.45359237f
 #define FEET_LB_PER_NM 0.73756214837f
@@ -33,8 +35,8 @@
 #define GPS_COORD_TO_STRING 8
 
 #include <QString>
-extern QString kphToPace(double kph, bool metric);
-extern QString mphToPace(double mph, bool metric);
+extern QString kphToPace(double kph, bool metric, bool isSwim=false);
+extern QString mphToPace(double mph, bool metric, bool isSwim=false);
 
 #endif // _GC_Units_h
 

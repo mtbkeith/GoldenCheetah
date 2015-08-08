@@ -20,7 +20,7 @@
 #include "DownloadRideDialog.h"
 #include "PowerTapUtil.h"
 #include "Device.h"
-#include <math.h>
+#include <cmath>
 #include <errno.h>
 //#include <termios.h>
 
@@ -40,12 +40,12 @@
 #define ERASE_RIDE_DETAIL  0x2024
 
 static bool jouleRegistered =
-    Devices::addType("Joule 1.0 or GPS", DevicesPtr(new JouleDevices()) );
+    Devices::addType("Joule 1.0, GPS or GPS+", DevicesPtr(new JouleDevices()) );
 
 QString
 JouleDevices::downloadInstructions() const
 {
-    return (tr("Make sure the Joule (1.0 or GPS) unit is turned ON"));
+    return (tr("Make sure the Joule (1.0, GPS or GPS+) unit is turned ON"));
 }
 
 DevicePtr
@@ -115,7 +115,7 @@ JouleDevice::download( const QDir &tmpdir,
                          QList<DeviceDownloadFile> &files,
                          QString &err)
 {
-    if (JOULE_DEBUG) printf("download Joule 1.0 or GPS");
+    if (JOULE_DEBUG) printf("download Joule 1.0, GPS or GPS+");
 
     if (!dev->open(err)) {
         err = tr("ERROR: open failed: ") + err;
@@ -134,15 +134,19 @@ JouleDevice::download( const QDir &tmpdir,
         return false;
     }
 
-    bool isJouleGPS = getJouleGPS(versionResponse);
-    emit updateStatus(QString(tr("Joule %1 identified")).arg(isJouleGPS?"GPS":"1.0"));
+    bool isJouleGPS = getJouleType(versionResponse) == JOULE_GPS;
+    bool isJouleGPSPLUS = getJouleType(versionResponse) == JOULE_GPS_PLUS;
+
+    emit updateStatus(QString(tr("Joule %1 identified")).arg(isJouleGPS?"GPS":(isJouleGPSPLUS?"GPS+":"1.0")));
+
+    bool isJouleGPS_GPSPLUS = isJouleGPS || isJouleGPSPLUS;
 
     QList<DeviceStoredRideItem> trainings;
-    if (!getDownloadableRides(trainings, isJouleGPS, err))
+    if (!getDownloadableRides(trainings, isJouleGPS_GPSPLUS, err))
         return false;
 
     for (int i=0; i<trainings.count(); i++) {
-        emit updateProgress(QString(tr("Read ride detail for ride %1/%2")).arg(i+1).arg(trainings.count()));
+        emit updateProgress(QString(tr("Read detail for activity %1/%2")).arg(i+1).arg(trainings.count()));
         JoulePacket request(READ_RIDE_DETAIL);
         int id1 = (trainings.at(i).id>255?trainings.at(i).id-255:trainings.at(i).id);
         int id2 = (trainings.at(i).id>255?trainings.at(i).id%255:0);
@@ -190,12 +194,12 @@ JouleDevice::download( const QDir &tmpdir,
 
                 // timestamp from the first training
                 struct tm start;
-                start.tm_sec = (isJouleGPS ? bcd2Int(response.payload.at(4))   : qByteArray2Int(response.payload.mid(4,1))   );
-                start.tm_min = (isJouleGPS ? bcd2Int(response.payload.at(5))   : qByteArray2Int(response.payload.mid(5,1))   );
-                start.tm_hour = (isJouleGPS ? bcd2Int(response.payload.at(6))   : qByteArray2Int(response.payload.mid(6,1))   );
-                start.tm_mday = (isJouleGPS ? bcd2Int(response.payload.at(7))   : qByteArray2Int(response.payload.mid(7,1))   );
-                start.tm_mon = (isJouleGPS ? bcd2Int(response.payload.at(8))-1  : qByteArray2Int(response.payload.mid(8,1))-1 );
-                start.tm_year = (isJouleGPS ? bcd2Int(response.payload.at(9))+100  : qByteArray2Int(response.payload.mid(9,1))+100 );
+                start.tm_sec = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(4))   : qByteArray2Int(response.payload.mid(4,1))   );
+                start.tm_min = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(5))   : qByteArray2Int(response.payload.mid(5,1))   );
+                start.tm_hour = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(6))   : qByteArray2Int(response.payload.mid(6,1))   );
+                start.tm_mday = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(7))   : qByteArray2Int(response.payload.mid(7,1))   );
+                start.tm_mon = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(8))-1  : qByteArray2Int(response.payload.mid(8,1))-1 );
+                start.tm_year = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(9))+100  : qByteArray2Int(response.payload.mid(9,1))+100 );
                 start.tm_isdst = -1;
 
                 DeviceDownloadFile file;
@@ -349,10 +353,10 @@ JouleDevice::getUnitFreeSpace(QString &memory, QString &err)
 }
 
 bool
-JouleDevice::getDownloadableRides(QList<DeviceStoredRideItem> &rides, bool isJouleGPS, QString &err)
+JouleDevice::getDownloadableRides(QList<DeviceStoredRideItem> &rides, bool isJouleGPS_GPSPLUS, QString &err)
 {
-    emit updateStatus(tr("Read ride summary..."));
-    if (JOULE_DEBUG) printf("Read ride summary\n");
+    emit updateStatus(tr("Read summary..."));
+    if (JOULE_DEBUG) printf("Read summary\n");
 
     JoulePacket request(READ_RIDE_SUMMARY);
 
@@ -360,22 +364,22 @@ JouleDevice::getDownloadableRides(QList<DeviceStoredRideItem> &rides, bool isJou
 
     JoulePacket response = JoulePacket(READ_RIDE_SUMMARY);
     if (response.read(dev, err)) {
-        int length = (isJouleGPS?20:16);
+        int length = (isJouleGPS_GPSPLUS?20:16);
         int count = response.payload.length()/length;
 
         for (int i=0; i<count; i++) {
             int j = i*length;
-            int sec   = (isJouleGPS ? bcd2Int(response.payload.at(j))   : qByteArray2Int(response.payload.mid(j,1))   );
-            int min   = (isJouleGPS ? bcd2Int(response.payload.at(j+1)) : qByteArray2Int(response.payload.mid(j+1,1)) );
-            int hour  = (isJouleGPS ? bcd2Int(response.payload.at(j+2)) : qByteArray2Int(response.payload.mid(j+2,1)) );
-            int day   = (isJouleGPS ? bcd2Int(response.payload.at(j+3)) : qByteArray2Int(response.payload.mid(j+3,1)) );
-            int month = (isJouleGPS ? bcd2Int(response.payload.at(j+4)) : qByteArray2Int(response.payload.mid(j+4,1)) );
-            int year  = (isJouleGPS ? bcd2Int(response.payload.at(j+5)) : qByteArray2Int(response.payload.mid(j+5,1)) );
+            int sec   = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(j))   : qByteArray2Int(response.payload.mid(j,1))   );
+            int min   = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(j+1)) : qByteArray2Int(response.payload.mid(j+1,1)) );
+            int hour  = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(j+2)) : qByteArray2Int(response.payload.mid(j+2,1)) );
+            int day   = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(j+3)) : qByteArray2Int(response.payload.mid(j+3,1)) );
+            int month = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(j+4)) : qByteArray2Int(response.payload.mid(j+4,1)) );
+            int year  = (isJouleGPS_GPSPLUS ? bcd2Int(response.payload.at(j+5)) : qByteArray2Int(response.payload.mid(j+5,1)) );
 
             QDateTime date = QDateTime(QDate(year+2000,month-1,day), QTime(hour,min,sec));
 
             int total = qByteArray2Int(response.payload.mid(j+length-2,2));
-            qDebug() << date << total;
+
             if (total > 0) {
                 DeviceStoredRideItem ride;
                 ride.id = i;
@@ -383,7 +387,7 @@ JouleDevice::getDownloadableRides(QList<DeviceStoredRideItem> &rides, bool isJou
                 rides.append(ride);
             }
         }
-        emit updateStatus(QString(tr("%1 detailed rides")).arg(rides.count()));
+        emit updateStatus(QString(tr("%1 detailed activities")).arg(rides.count()));
         return true;
     }
     return false;
@@ -402,14 +406,14 @@ JouleDevice::cleanup( QString &err ) {
 
     JoulePacket versionResponse;
     getUnitVersion(versionResponse, err);
-    bool isJouleGPS = getJouleGPS(versionResponse);
+    bool isJouleGPS = getJouleType(versionResponse) == JOULE_GPS || getJouleType(versionResponse) == JOULE_GPS_PLUS;
 
     QList<DeviceStoredRideItem> trainings;
     if (!getDownloadableRides(trainings, isJouleGPS, err))
         return false;
 
     for (int i=0; i<trainings.count(); i++) {
-        emit updateStatus(QString(tr("Delete ride detail for ride %1/%2")).arg(i+1).arg(trainings.count()));
+        emit updateStatus(QString(tr("Delete detail for activity %1/%2")).arg(i+1).arg(trainings.count()));
         JoulePacket request(ERASE_RIDE_DETAIL);
         int id1 = (trainings.at(i).id>255?trainings.at(i).id-255:trainings.at(i).id);
         int id2 = (trainings.at(i).id>255?trainings.at(i).id%255:0);
@@ -430,14 +434,17 @@ JouleDevice::cleanup( QString &err ) {
     return true;
 }
 
-bool
-JouleDevice::getJouleGPS(JoulePacket &versionResponse) {
+JouleDevice::JouleType
+JouleDevice::getJouleType(JoulePacket &versionResponse) {
     int major_version = qByteArray2Int(versionResponse.payload.left(1));
 
-    bool isJouleGPS = true;
     if (major_version == 18)
-        isJouleGPS = false;
-    return isJouleGPS;
+        return JOULE_1_0;
+    else if (major_version == 19)
+        return JOULE_GPS;
+    else if (major_version == 22)
+        return JOULE_GPS_PLUS;
+    return JOULE_UNKNOWN;
 }
 
 

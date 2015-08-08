@@ -37,11 +37,11 @@ public:
 public slots:
 
     void intervalSelected();
-    void intervalHover(RideFileInterval);
+    void intervalHover(IntervalItem*);
 
 protected:
-    void calcInterval(IntervalItem* interval, QString& html);
-    void calcInterval(RideFileInterval interval, QString& html);
+    QString summary(QList<IntervalItem*>, QString&);
+    QString summary(IntervalItem *);
 
     Context *context;
 };

@@ -26,11 +26,10 @@
 #include "Units.h"
 #include "VeloHeroUploader.h"
 #include "TrainingstagebuchUploader.h"
+#include "HelpWhatsThis.h"
 
 // access to metrics
-#include "MetricAggregator.h"
 #include "RideMetric.h"
-#include "DBAccess.h"
 #include "TcxRideFile.h"
 
 #include <zlib.h>
@@ -88,7 +87,9 @@ static QByteArray zCompress(const QByteArray &source)
 ShareDialog::ShareDialog(Context *context, RideItem *item) :
     context(context)
 {
-    setWindowTitle(tr("Share your ride"));
+    setWindowTitle(tr("Share your activity"));
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Activity_Share));
 
     // make the dialog a resonable size
     setMinimumWidth(550);
@@ -104,7 +105,6 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
 
     QString err;
 
-#ifdef GC_HAVE_LIBOAUTH
     stravaUploader = new StravaUploader(context, ride, this);
     stravaChk = new QCheckBox(tr("Strava"));
     if( ! stravaUploader->canUpload( err ) ){
@@ -113,7 +113,6 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
         stravaChk->setChecked( true );
     }
     vbox1->addWidget(stravaChk,0,col++);
-#endif
 
     rideWithGpsUploader = new RideWithGpsUploader(context, ride, this);
     rideWithGPSChk = new QCheckBox(tr("Ride With GPS"));
@@ -124,7 +123,6 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
     }
     vbox1->addWidget(rideWithGPSChk,0,col++);
 
-#ifdef GC_HAVE_LIBOAUTH
     cyclingAnalyticsUploader = new CyclingAnalyticsUploader(context, ride, this);
     cyclingAnalyticsChk = new QCheckBox(tr("Cycling Analytics"));
     if( ! cyclingAnalyticsUploader->canUpload( err ) ){
@@ -133,7 +131,6 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
         cyclingAnalyticsChk->setChecked( true );
     }
     vbox1->addWidget(cyclingAnalyticsChk,0,col++);
-#endif
 
     selfLoopsUploader = new SelfLoopsUploader(context, ride, this);
     selfLoopsChk = new QCheckBox(tr("Selfloops"));
@@ -177,7 +174,7 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
     groupBox1->setLayout(vbox1);
     mainLayout->addWidget(groupBox1);
 
-    QGroupBox *groupBox2 = new QGroupBox(tr("Choose a name for your ride: "));
+    QGroupBox *groupBox2 = new QGroupBox(tr("Choose a name for your activity: "));
 
     titleEdit = new QLineEdit();
 
@@ -255,7 +252,7 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
 
     QHBoxLayout *buttonLayout = new QHBoxLayout;
 
-    uploadButton = new QPushButton(tr("&Upload Ride"), this);
+    uploadButton = new QPushButton(tr("&Upload Activity"), this);
     buttonLayout->addWidget(uploadButton);
     closeButton = new QPushButton(tr("&Close"), this);
     buttonLayout->addStretch();
@@ -276,9 +273,7 @@ ShareDialog::upload()
 
     if ( !rideWithGPSChk->isChecked() && !selfLoopsChk->isChecked()
         && !veloHeroChk->isChecked() && !trainingstagebuchChk->isChecked()
-#ifdef GC_HAVE_LIBOAUTH
         && !stravaChk->isChecked() && !cyclingAnalyticsChk->isChecked()
-#endif
         //&& !garminChk->isChecked()
         ) {
         QMessageBox aMsgBox;
@@ -294,19 +289,15 @@ ShareDialog::upload()
     progressLabel->setText("");
     errorLabel->setText("");
 
-#ifdef GC_HAVE_LIBOAUTH
     if (stravaChk->isChecked()) {
         shareSiteCount ++;
     }
-#endif
     if (rideWithGPSChk->isChecked()) {
         shareSiteCount ++;
     }
-#ifdef GC_HAVE_LIBOAUTH
     if (cyclingAnalyticsChk->isChecked()) {
         shareSiteCount ++;
     }
-#endif
     if (selfLoopsChk->isChecked()) {
         shareSiteCount ++;
     }
@@ -320,19 +311,15 @@ ShareDialog::upload()
     //    shareSiteCount ++;
     //}
 
-#ifdef GC_HAVE_LIBOAUTH
     if (stravaChk->isEnabled() && stravaChk->isChecked()) {
         doUploader( stravaUploader );
     }
-#endif
     if (rideWithGPSChk->isEnabled() && rideWithGPSChk->isChecked()) {
         doUploader( rideWithGpsUploader );
     }
-#ifdef GC_HAVE_LIBOAUTH
     if (cyclingAnalyticsChk->isEnabled() && cyclingAnalyticsChk->isChecked()) {
         doUploader( cyclingAnalyticsUploader );
     }
-#endif
     if (selfLoopsChk->isEnabled() && selfLoopsChk->isChecked()) {
         doUploader( selfLoopsUploader );
     }
@@ -375,7 +362,7 @@ ShareDialog::doUploader( ShareDialogUploader *uploader )
 
         QVBoxLayout *layoutLabel = new QVBoxLayout();
         QLabel *label = new QLabel();
-        label->setText(tr("This Ride is marked as already on %1. Are you sure you want to upload it?")
+        label->setText(tr("This activity is marked as already on %1. Are you sure you want to upload it?")
             .arg(uploader->name()) );
         layoutLabel->addWidget(label);
 
@@ -400,7 +387,6 @@ ShareDialog::doUploader( ShareDialogUploader *uploader )
     uploader->upload();
 }
 
-#ifdef GC_HAVE_LIBOAUTH
 StravaUploader::StravaUploader(Context *context, RideItem *ride, ShareDialog *parent) :
     ShareDialogUploader( tr("Strava"), context, ride, parent)
 {
@@ -456,7 +442,7 @@ StravaUploader::upload()
 void
 StravaUploader::requestUploadStrava()
 {
-    parent->progressLabel->setText(tr("Upload ride to Strava..."));
+    parent->progressLabel->setText(tr("Upload activity to Strava..."));
     parent->progressBar->setValue(parent->progressBar->value()+10/parent->shareSiteCount);
 
     int year = ride->fileName.left(4).toInt();
@@ -531,7 +517,7 @@ StravaUploader::requestUploadStrava()
     networkManager->post(request, multiPart);
 
     parent->progressBar->setValue(parent->progressBar->value()+30/parent->shareSiteCount);
-    parent->progressLabel->setText(tr("Upload ride... Sending to Strava"));
+    parent->progressLabel->setText(tr("Upload... Sending to Strava"));
 
     eventLoop->exec();
 }
@@ -599,7 +585,7 @@ void
 StravaUploader::requestVerifyUpload()
 {
     parent->progressBar->setValue(0);
-    parent->progressLabel->setText(tr("Ride processing..."));
+    parent->progressLabel->setText(tr("Processing..."));
 
     // reconnect for verify
     networkManager->disconnect();
@@ -659,7 +645,6 @@ StravaUploader::requestVerifyUploadFinished(QNetworkReply *reply)
         uploadSuccessful = true;
     }
 }
-#endif // GC_HAVE_LIBOAUTH for strava
 
 RideWithGpsUploader::RideWithGpsUploader(Context *context, RideItem *ride, ShareDialog *parent) :
     ShareDialogUploader( tr("Ride With GPS"), context, ride, parent)
@@ -702,7 +687,7 @@ RideWithGpsUploader::upload()
 void
 RideWithGpsUploader::requestUploadRideWithGPS()
 {
-    parent->progressLabel->setText(tr("Upload ride..."));
+    parent->progressLabel->setText(tr("Upload..."));
     parent->progressBar->setValue(parent->progressBar->value()+10/parent->shareSiteCount);
 
     QEventLoop eventLoop;
@@ -790,7 +775,7 @@ RideWithGpsUploader::requestUploadRideWithGPS()
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
     parent->progressBar->setValue(parent->progressBar->value()+30/parent->shareSiteCount);
-    parent->progressLabel->setText(tr("Upload ride... Sending to RideWithGPS"));
+    parent->progressLabel->setText(tr("Upload... Sending to RideWithGPS"));
 
     networkMgr.post( request, out.toLatin1());
     eventLoop.exec();
@@ -844,8 +829,6 @@ RideWithGpsUploader::requestUploadRideWithGPSFinished(QNetworkReply *reply)
     }
 }
 
-#ifdef GC_HAVE_LIBOAUTH
-
 CyclingAnalyticsUploader::CyclingAnalyticsUploader(Context *context, RideItem *ride, ShareDialog *parent) :
     ShareDialogUploader(tr("CyclingAnalytics"), context, ride, parent)
 {
@@ -896,7 +879,7 @@ CyclingAnalyticsUploader::upload()
 void
 CyclingAnalyticsUploader::requestUploadCyclingAnalytics()
 {
-    parent->progressLabel->setText(tr("Upload ride to CyclingAnalytics..."));
+    parent->progressLabel->setText(tr("Upload to CyclingAnalytics..."));
     parent->progressBar->setValue(parent->progressBar->value()+10/parent->shareSiteCount);
 
     QEventLoop eventLoop;
@@ -944,7 +927,7 @@ CyclingAnalyticsUploader::requestUploadCyclingAnalytics()
     networkMgr.post(request, multiPart);
 
     parent->progressBar->setValue(parent->progressBar->value()+30/parent->shareSiteCount);
-    parent->progressLabel->setText(tr("Upload ride... Sending to CyclingAnalytics"));
+    parent->progressLabel->setText(tr("Upload... Sending to CyclingAnalytics"));
 
     eventLoop.exec();
 }
@@ -994,7 +977,6 @@ CyclingAnalyticsUploader::requestUploadCyclingAnalyticsFinished(QNetworkReply *r
         uploadSuccessful = true;
     }
 }
-#endif // GC_HAVE_LIBOAUTH for cyclingAnalytics
 
 SelfLoopsUploader::SelfLoopsUploader(Context *context, RideItem *ride, ShareDialog *parent) :
     ShareDialogUploader(tr("SelfLoops"),context, ride, parent)
@@ -1050,7 +1032,7 @@ SelfLoopsUploader::upload()
 void
 SelfLoopsUploader::requestUploadSelfLoops()
 {
-    parent->progressLabel->setText(tr("Upload ride to Selfloops..."));
+    parent->progressLabel->setText(tr("Upload to Selfloops..."));
     parent->progressBar->setValue(parent->progressBar->value()+10/parent->shareSiteCount);
 
     QEventLoop eventLoop;
@@ -1096,7 +1078,7 @@ SelfLoopsUploader::requestUploadSelfLoops()
     networkMgr.post(request, multiPart);
 
     parent->progressBar->setValue(parent->progressBar->value()+30/parent->shareSiteCount);
-    parent->progressLabel->setText(tr("Upload ride... Sending to Selfloops"));
+    parent->progressLabel->setText(tr("Upload... Sending to Selfloops"));
 
     eventLoop.exec();
 }
@@ -1330,7 +1312,7 @@ GarminUploader::requestUploadGarmin()
 {
     qDebug() << "requestUploadGarmin()";
 
-    parent->progressLabel->setText(tr("Upload ride to Garmin Connect..."));
+    parent->progressLabel->setText(tr("Upload to Garmin Connect..."));
     parent->progressBar->setValue(parent->progressBar->value()+10/parent->shareSiteCount);
 
     QEventLoop eventLoop;
@@ -1373,7 +1355,7 @@ GarminUploader::requestUploadGarmin()
     networkMgr.post(request, multiPart);
 
     parent->progressBar->setValue(parent->progressBar->value()+30/parent->shareSiteCount);
-    parent->progressLabel->setText(tr("Upload ride... Sending to Garmin Connect"));
+    parent->progressLabel->setText(tr("Upload... Sending to Garmin Connect"));
 
     eventLoop.exec();
 }

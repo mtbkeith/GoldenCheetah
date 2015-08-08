@@ -19,6 +19,7 @@
 #include "SeasonParser.h"
 #include <QDate>
 #include <QDebug>
+#include <QMessageBox>
 
 static inline QString unquote(QString quoted)
 {
@@ -64,6 +65,14 @@ bool SeasonParser::endElement( const QString&, const QString&, const QString &qN
                 seasons[seasons.size()-1].setEnd(season.getStart());
         }
         if (season.getStart().isValid() && season.getEnd().isValid()) {
+
+            // just check the dates are the right way around
+            if (season.start > season.end) {
+                QDate temp = season.start;
+                season.start = season.end;
+                season.end = temp;
+            }
+
             seasons.append(season);
         }
     }
@@ -133,7 +142,14 @@ SeasonParser::serialize(QString filename, QList<Season>Seasons)
 {
     // open file - truncate contents
     QFile file(filename);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly)) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(QObject::tr("Problem Saving Seasons"));
+        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        msgBox.exec();
+        return false;
+    };
     file.resize(0);
     QTextStream out(&file);
     out.setCodec("UTF-8");

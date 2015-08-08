@@ -17,18 +17,23 @@
  */
 
 #include "ComparePane.h"
+#include "Season.h"
 #include "Settings.h"
+#include "Colors.h"
+#include "RideCache.h"
+#include "RideItem.h"
+#include "IntervalItem.h"
 #include "RideFile.h"
 #include "RideFileCache.h"
 #include "RideMetric.h"
-#include "SummaryMetrics.h"
-#include "MetricAggregator.h"
 #include "ColorButton.h"
 #include "TimeUtils.h"
 #include "Units.h"
 #include "Zones.h"
 
 #include <QCheckBox>
+#include <QFormLayout>
+#include <QTextEdit>
 
 //
 // A selection of distinct colours, user can adjust also
@@ -52,6 +57,11 @@ static bool initStandardColors()
     return true;
 }
 static bool init = initStandardColors();
+
+QColor standardColor(int num)
+{
+   return standardColors.at(num % standardColors.count());
+}
 
 // we need to fix the sort order!
 class CTableWidgetItem : public QTableWidgetItem
@@ -159,14 +169,14 @@ ComparePane::ComparePane(Context *context, QWidget *parent, CompareMode mode) : 
     table->setFrameStyle(QFrame::NoFrame);
     scrollArea->setWidget(table);
 
-    configChanged(); // set up ready to go...
+    configChanged(CONFIG_APPEARANCE | CONFIG_METRICS); // set up ready to go...
 
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     connect(table->horizontalHeader(), SIGNAL(sectionClicked(int)), this, SLOT(itemsWereSorted()));
 }
 
 void
-ComparePane::configChanged()
+ComparePane::configChanged(qint32)
 {
     // via standard style sheet
     table->setStyleSheet(GCColor::stylesheet());
@@ -243,17 +253,11 @@ ComparePane::refreshTable()
         foreach(CompareInterval x, context->compareIntervals) {
 
             // compute the metrics for this ride
-            SummaryMetrics metrics;
+            RideItem metrics;
             QHash<QString, RideMetricPtr> computed = RideMetric::computeMetrics(context, x.data,
                                                      context->athlete->zones(), context->athlete->hrZones(), worklist);
 
-            for(int i = 0; i < worklist.count(); i++) {
-                if (worklist[i] != "") {
-                    RideMetricPtr m = computed.value(worklist[i]);
-                    if (m) metrics.setForSymbol(worklist[i], m->value(true));
-                    else metrics.setForSymbol(worklist[i], 0.00);
-                }
-            }
+            metrics.setFrom(computed);
 
             // First few cols always the same
             // check - color - athlete - date - time
@@ -454,8 +458,7 @@ ComparePane::refreshTable()
             // metrics
             for(int i = 0; i < worklist.count(); i++) {
 
-                QString value = SummaryMetrics::getAggregated(x.sourceContext, worklist[i], 
-                                                              x.metrics, QStringList(), false, context->athlete->useMetricUnits);
+                QString value = x.sourceContext->athlete->rideCache->getAggregate(worklist[i], x.specification, context->athlete->useMetricUnits);
 
                 // add to the table
                 t = new CTableWidgetItem;
@@ -640,6 +643,9 @@ ComparePane::dragLeaveEvent(QDragLeaveEvent *)
     // we might consider hiding on this?
 }
 
+// sort intervals most recent first
+static bool dateRecentFirst(const IntervalItem *a, const IntervalItem *b) { return a->rideItem_->dateTime > b->rideItem_->dateTime; }
+
 void
 ComparePane::dropEvent(QDropEvent *event)
 {
@@ -689,7 +695,8 @@ ComparePane::dropEvent(QDropEvent *event)
             stream >> add.name;                     // UPDATE COMPARE INTERVAL
 
             stream >> ridep;
-            RideFile *ride = (RideFile*)ridep;
+            RideItem *rideItem = (RideItem*)ridep;
+            RideFile *ride = rideItem->ride();
 
             // index into ridefile
             stream >> start;
@@ -697,8 +704,9 @@ ComparePane::dropEvent(QDropEvent *event)
             stream >> startKM;
             stream >> stopKM;
             stream >> seq;
+            stream >> add.route;
 
-            // construct a ridefile for the interval
+            // just construct a ridefile for the interval
 
             // RideFile *data;
             add.data = new RideFile(ride);
@@ -723,7 +731,10 @@ ComparePane::dropEvent(QDropEvent *event)
 
                     add.data->appendPoint(p->secs - offset, p->cad, p->hr, p->km - offsetKM, p->kph, p->nm,
                                           p->watts, p->alt, p->lon, p->lat, p->headwind,
-                                          p->slope, p->temp, p->lrbalance, p->lte, p->rte, p->lps, p->rps, p->smo2, p->thb, p->rvert, p->rcad, p->rcontact, 0);
+                                          p->slope, p->temp,
+                                          p->lrbalance, p->lte, p->rte, p->lps, p->rps,
+                                          p->lpco, p->rpco, p->lppb, p->rppb, p->lppe, p->rppe, p->lpppb, p->rpppb, p->lpppe, p->rpppe,
+                                          p->smo2, p->thb, p->rvert, p->rcad, p->rcontact, p->tcore, 0);
 
                     // get derived data calculated
                     RideFilePoint *l = add.data->dataPoints().last();
@@ -743,6 +754,134 @@ ComparePane::dropEvent(QDropEvent *event)
             if (!add.data->dataPoints().empty()) newOnes << add;
 
         }
+
+        // if we have nothing being compared yet and are only dropping one and it's a route
+        // then offer to find all times you traveled along the same route
+        if (context->compareIntervals.count() == 0 && newOnes.count() == 1 && newOnes[0].route != QUuid()) {
+
+            // how many across seasons? (there will always be the standard seasons)
+            // these are passed to the dialog to setup the combobox
+            QVector<int> seasonCount(newOnes[0].sourceContext->athlete->seasons->seasons.count());
+            QList<IntervalItem*> matches;
+
+            // loop through rides finding intervals on this route
+            foreach(RideItem *ride, newOnes[0].sourceContext->athlete->rideCache->rides()) {
+                // find the interval?
+                foreach(IntervalItem *interval, ride->intervals(RideFileInterval::ROUTE)) {
+                    if (interval->route == newOnes[0].route) {
+
+                        // add to the main list
+                        matches << interval;
+
+                        // add to the counts - first is always used as default
+                        for(int i=0; i<newOnes[0].sourceContext->athlete->seasons->seasons.count(); i++) {
+                            Season current = newOnes[0].sourceContext->athlete->seasons->seasons[i];
+                            if (interval->rideItem()->dateTime.date() >= current.start &&
+                                interval->rideItem()->dateTime.date() <= current.end) {
+                                seasonCount[i]++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // if we have some lets ask user if they want to
+            // add matches for this route, or just this one
+            if (matches.count() > 1 ) {
+
+                // sort matches so most recent first
+                qSort(matches.begin(), matches.end(), dateRecentFirst);
+
+                // ok, lets crank up a dialog to ask
+                // one only, or the season to use
+                // the default should be the first one
+                int select=0;
+
+                // pass by reference
+                RouteDropDialog dialog(this, newOnes[0].sourceContext, newOnes[0].name, seasonCount, select);
+
+                // did they say yes ?
+                if (dialog.exec()) {
+
+                    // augment the one we have with all other intervals
+                    // but make sure it does not include ours
+                    // all other options mean do nothing so we drop
+                    // through to the same code as before
+                    Season want = newOnes[0].sourceContext->athlete->seasons->seasons[select];
+                    foreach(IntervalItem *matched, matches) {
+
+                        // don't add the dropped one twice!
+                        if (matched->rideItem()->dateTime == newOnes[0].data->startTime()) continue;
+
+                        // add each one
+                        if (matched->rideItem()->dateTime.date() >= want.start &&
+                            matched->rideItem()->dateTime.date() <= want.end) {
+
+                            // create a new interval for this one
+                            CompareInterval add;
+                            add.checked = seasonCount[select] <= 10; // check if not that many, don't if loads
+                            add.context = context;                  // UPDATE COMPARE INTERVAL
+                            add.sourceContext = newOnes[0].sourceContext;      // UPDATE COMPARE INTERVAL
+
+                            RideItem *rideItem = matched->rideItem();
+                            RideFile *ride = rideItem->ride();
+
+                            add.name = QString("%1/%2 %3").arg(matched->rideItem()->dateTime.date().day())
+                                                          .arg(matched->rideItem()->dateTime.date().month())
+                                                          .arg(matched->name);
+                            add.route = matched->route;
+
+                            // just construct a ridefile for the interval
+                            add.data = new RideFile(ride);
+                            add.data->context = context;
+
+                            // manage offsets
+                            bool first = true;
+                            double offset = 0.0f, offsetKM = 0.0f;
+
+                            foreach(RideFilePoint *p, ride->dataPoints()) {
+
+                                if (p->secs > matched->stop) break;
+
+                                if (p->secs >= matched->start) {
+
+                                    // intervals always start from zero when comparing
+                                    if (first) {
+                                        first = false;
+                                        offset = p->secs;
+                                        offsetKM = p->km;
+                                    }
+
+                                    add.data->appendPoint(p->secs - offset, p->cad, p->hr, p->km - offsetKM, p->kph, p->nm,
+                                                        p->watts, p->alt, p->lon, p->lat, p->headwind,
+                                                        p->slope, p->temp,
+                                                        p->lrbalance, p->lte, p->rte, p->lps, p->rps,
+                                                        p->lpco, p->rpco, p->lppb, p->rppb, 
+                                                        p->lppe, p->rppe, p->lpppb, p->rpppb, p->lpppe, p->rpppe,
+                                                        p->smo2, p->thb, p->rvert, p->rcad, p->rcontact, p->tcore, 0);
+
+                                    // get derived data calculated
+                                    RideFilePoint *l = add.data->dataPoints().last();
+                                    l->np = p->np;
+                                    l->xp = p->xp;
+                                    l->apower = p->apower;
+                                }
+                            }
+                            add.data->recalculateDerivedSeries();
+
+                            // just use standard colors and cycle round
+                            // we will of course repeat, but the user can
+                            // just edit them using the button
+                            add.color = standardColors.at((newOnes.count()) % standardColors.count());
+
+                            // now add but only if not empty
+                            if (!add.data->dataPoints().empty()) newOnes << add;
+                        }
+                    }
+                }  
+            }
+        }
+
         // how many we get ?
         if (newOnes.count()) {
 
@@ -776,11 +915,8 @@ ComparePane::dropEvent(QDropEvent *event)
             stream >> add.end;
             stream >> add.days;
 
-            // get summary metrics for the season
-            // FROM THE SOURCE CONTEXT
-            // WE DON'T FETCH BESTS -- THEY NEED TO BE DONE AS NEEDED
-            add.metrics = sourceContext->athlete->metricDB->getAllMetricsFor(QDateTime(add.start, QTime()),QDateTime(add.end, QTime()));
-            add.measures = sourceContext->athlete->metricDB->getAllMeasuresFor(QDateTime(add.start, QTime()),QDateTime(add.end, QTime()));
+            // for now the specification is just a date range
+            add.specification.setDateRange(DateRange(add.start,add.end));
 
             // just use standard colors and cycle round
             // we will of course repeat, but the user can
@@ -804,4 +940,73 @@ ComparePane::dropEvent(QDropEvent *event)
         }
 
     }
+}
+
+/*----------------------------------------------------------------------
+ * Route Drag and Drop Dialog
+ *--------------------------------------------------------------------*/
+RouteDropDialog::RouteDropDialog(QWidget *parent, Context *context, QString segmentName, QVector<int> &seasonCount, int &selected) :
+    QDialog(parent, Qt::Dialog), context(context), seasonCount(seasonCount), selected(selected)
+{
+    setWindowTitle(QString(tr("\"%1\"")).arg(segmentName));
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setSpacing(5);
+
+    // Grid
+    QLabel *season = new QLabel("Season");
+    seasonSelector = new QComboBox(this);
+    QHBoxLayout *seasonLayout = new QHBoxLayout;
+    seasonLayout->addWidget(season);
+    seasonLayout->addWidget(seasonSelector);
+    seasonLayout->addStretch();
+    mainLayout->addLayout(seasonLayout);
+
+    // add seasons to the selector
+    for(int i=0; i<seasonCount.count(); i++) {
+        if (seasonCount[i] > 1) {
+            seasonSelector->addItem(QString("%1 (%2)").arg(context->athlete->seasons->seasons[i].name)
+                                                      .arg(seasonCount[i]), i);
+        }
+    }
+    seasonSelector->setCurrentIndex(0);
+    selected = seasonSelector->itemData(0).toInt(); // the one to go with.
+
+    // Buttons
+    QHBoxLayout *buttonLayout = new QHBoxLayout;
+    all = new QPushButton(tr("&All Selected"), this);
+    buttonLayout->addStretch();
+    one = new QPushButton(tr("Just this &One"), this);
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(all);
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(one);
+    buttonLayout->addStretch();
+    mainLayout->addLayout(buttonLayout);
+
+    // we want Just this one to be the default button
+    one->setAutoDefault(true);
+    one->setDefault(true);
+
+    // connect up slots
+    connect(all, SIGNAL(clicked()), this, SLOT(allClicked()));
+    connect(one, SIGNAL(clicked()), this, SLOT(oneClicked()));
+    connect(seasonSelector, SIGNAL(currentIndexChanged(int)), this, SLOT(seasonChanged(int)));
+}
+
+void
+RouteDropDialog::allClicked()
+{
+    accept(); // lets do it, add lots
+}
+void
+RouteDropDialog::oneClicked()
+{
+    reject(); // don't add loads, just this one
+}
+
+void
+RouteDropDialog::seasonChanged(int index)
+{
+    if (index <0) return;
+    else selected = seasonSelector->itemData(index).toInt();
 }

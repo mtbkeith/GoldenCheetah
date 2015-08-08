@@ -34,6 +34,7 @@
 #include "Athlete.h"
 
 #include "Colors.h"
+#include "RideCache.h"
 #include "RideItem.h"
 #include "IntervalItem.h"
 #include "RideFile.h"
@@ -43,6 +44,7 @@
 #include "LibraryParser.h"
 #include "TrainDB.h"
 #include "GcUpgrade.h"
+#include "HelpWhatsThis.h"
 
 // DIALOGS / DOWNLOADS / UPLOADS
 #include "AboutDialog.h"
@@ -57,10 +59,11 @@
 #include "MergeActivityWizard.h"
 #include "GenerateHeatMapDialog.h"
 #include "BatchExportDialog.h"
+#ifdef GC_HAVE_KQOAUTH
 #include "TwitterDialog.h"
+#endif
 #include "ShareDialog.h"
 #include "WithingsDownload.h"
-#include "ZeoDownload.h"
 #include "WorkoutWizard.h"
 #include "ErgDBDownloadDialog.h"
 #include "AddDeviceWizard.h"
@@ -88,11 +91,11 @@
 #endif
 
 // SEARCH / FILTER
-#ifdef GC_HAVE_LUCENE
-#include "Lucene.h"
 #include "NamedSearch.h"
 #include "SearchFilterBox.h"
-#endif
+
+// LTM CHART DRAG/DROP PARSE
+#include "LTMChartParser.h"
 
 #ifdef GC_HAVE_WFAPI
 #include "WFApi.h"
@@ -116,7 +119,6 @@ MainWindow::MainWindow(const QDir &home)
 
     // bootstrap
     Context *context = new Context(this);
-    GCColor *GCColorSet = new GCColor(context); // get/keep colorset, before athlete...
     context->athlete = new Athlete(context, home);
 
     setWindowIcon(QIcon(":images/gc.png"));
@@ -128,7 +130,6 @@ MainWindow::MainWindow(const QDir &home)
     WFApi *w = WFApi::getInstance(); // ensure created on main thread
     w->apiVersion();//shutup compiler
     #endif
-    GCColorSet->colorSet(); // shut up the compiler
     Library::initialise(context->athlete->home->root());
     QNetworkProxyQuery npq(QUrl("http://www.google.com"));
     QList<QNetworkProxy> listOfProxies = QNetworkProxyFactory::systemProxyForQuery(npq);
@@ -195,6 +196,17 @@ MainWindow::MainWindow(const QDir &home)
     connect(scopebar, SIGNAL(selectTrain()), this, SLOT(selectTrain()));
     connect(scopebar, SIGNAL(selectInterval()), this, SLOT(selectInterval()));
 
+    /*----------------------------------------------------------------------
+     * What's this Context Help
+     *--------------------------------------------------------------------*/
+
+    // Help for the whole window
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::Default));
+    // add Help Button
+    QAction *myHelper = QWhatsThis::createAction (this);
+    this->addAction(myHelper);
+
 #if 0
     // Add chart is on the scope bar
     chartMenu = new QMenu(this);
@@ -251,13 +263,18 @@ MainWindow::MainWindow(const QDir &home)
     QPixmap *importImg = new QPixmap(":images/mac/download.png");
     import->setImage(importImg);
     import->setToolTip("Download");
+    HelpWhatsThis *helpImport = new HelpWhatsThis(import);
+    import->setWhatsThis(helpImport->getWhatsThisText(HelpWhatsThis::ToolBar_Download));
     lb->addWidget(import);
     lb->addWidget(new Spacer(this));
+
     compose = new QtMacButton(this, QtMacButton::TexturedRounded);
     QPixmap *composeImg = new QPixmap(":images/mac/compose.png");
     compose->setImage(composeImg);
     compose->setToolTip("Create");
     lb->addWidget(compose);
+    HelpWhatsThis *helpCompose = new HelpWhatsThis(compose);
+    compose->setWhatsThis(helpCompose->getWhatsThisText(HelpWhatsThis::ToolBar_Manual));
 
     // connect to actions
     connect(import, SIGNAL(clicked(bool)), this, SLOT(downloadRide()));
@@ -275,10 +292,12 @@ MainWindow::MainWindow(const QDir &home)
     sidebar = new QtMacButton(this, QtMacButton::TexturedRounded);
     QPixmap *sidebarImg = new QPixmap(":images/mac/sidebar.png");
     sidebar->setImage(sidebarImg);
-    sidebar->setMinimumSize(25, 25);
-    sidebar->setMaximumSize(25, 25);
+    sidebar->setMinimumSize(24, 24);
+    sidebar->setMaximumSize(24, 24);
     sidebar->setToolTip("Sidebar");
     sidebar->setSelected(true); // assume always start up with sidebar selected
+    HelpWhatsThis *helpSideBar = new HelpWhatsThis(sidebar);
+    sidebar->setWhatsThis(helpSideBar->getWhatsThisText(HelpWhatsThis::ToolBar_ToggleSidebar));
 
     lowbar = new QtMacButton(this, QtMacButton::TexturedRounded);
     QPixmap *lowbarImg = new QPixmap(":images/mac/lowbar.png");
@@ -287,6 +306,8 @@ MainWindow::MainWindow(const QDir &home)
     lowbar->setMaximumSize(25, 25);
     lowbar->setToolTip("Compare");
     lowbar->setSelected(false); // assume always start up with lowbar deselected
+    HelpWhatsThis *helpLowBar = new HelpWhatsThis(lowbar);
+    lowbar->setWhatsThis(helpLowBar->getWhatsThisText(HelpWhatsThis::ToolBar_ToggleComparePane));
 
     actbuttons = new QtMacSegmentedButton(3, acts);
     actbuttons->setWidth(115);
@@ -329,7 +350,6 @@ MainWindow::MainWindow(const QDir &home)
     head->addWidget(new Spacer(this));
     head->addWidget(viewsel);
 
-#ifdef GC_HAVE_LUCENE
     searchBox = new SearchFilterBox(this,context,false);
 #if QT_VERSION > 0x50000
     QStyle *toolStyle = QStyleFactory::create("fusion");
@@ -341,7 +361,6 @@ MainWindow::MainWindow(const QDir &home)
     head->addWidget(searchBox);
     connect(searchBox, SIGNAL(searchResults(QStringList)), this, SLOT(setFilter(QStringList)));
     connect(searchBox, SIGNAL(searchClear()), this, SLOT(clearFilter()));
-#endif
 
 #endif
 
@@ -378,38 +397,46 @@ MainWindow::MainWindow(const QDir &home)
     import = new QPushButton(this);
     import->setIcon(importIcon);
     import->setIconSize(isize);
-    import->setFixedHeight(25);
+    import->setFixedHeight(24);
     import->setStyle(toolStyle);
     import->setToolTip(tr("Download from Device"));
     import->setPalette(metal);
+    HelpWhatsThis *helpImport = new HelpWhatsThis(import);
+    import->setWhatsThis(helpImport->getWhatsThisText(HelpWhatsThis::ToolBar_Download));
     connect(import, SIGNAL(clicked(bool)), this, SLOT(downloadRide()));
 
     compose = new QPushButton(this);
     compose->setIcon(composeIcon);
     compose->setIconSize(isize);
-    compose->setFixedHeight(25);
+    compose->setFixedHeight(24);
     compose->setStyle(toolStyle);
-    compose->setToolTip(tr("Create Manual Ride"));
+    compose->setToolTip(tr("Create Manual Activity"));
     compose->setPalette(metal);
     connect(compose, SIGNAL(clicked(bool)), this, SLOT(manualRide()));
+    HelpWhatsThis *helpCompose = new HelpWhatsThis(compose);
+    compose->setWhatsThis(helpCompose->getWhatsThisText(HelpWhatsThis::ToolBar_Manual));
 
     lowbar = new QPushButton(this);
     lowbar->setIcon(lowbarIcon);
     lowbar->setIconSize(isize);
-    lowbar->setFixedHeight(25);
+    lowbar->setFixedHeight(24);
     lowbar->setStyle(toolStyle);
     lowbar->setToolTip(tr("Toggle Compare Pane"));
     lowbar->setPalette(metal);
     connect(lowbar, SIGNAL(clicked(bool)), this, SLOT(toggleLowbar()));
+    HelpWhatsThis *helpLowBar = new HelpWhatsThis(lowbar);
+    lowbar->setWhatsThis(helpLowBar->getWhatsThisText(HelpWhatsThis::ToolBar_ToggleComparePane));
 
     sidebar = new QPushButton(this);
     sidebar->setIcon(sidebarIcon);
     sidebar->setIconSize(isize);
-    sidebar->setFixedHeight(25);
+    sidebar->setFixedHeight(24);
     sidebar->setStyle(toolStyle);
     sidebar->setToolTip(tr("Toggle Sidebar"));
     sidebar->setPalette(metal);
     connect(sidebar, SIGNAL(clicked(bool)), this, SLOT(toggleSidebar()));
+    HelpWhatsThis *helpSideBar = new HelpWhatsThis(sidebar);
+    sidebar->setWhatsThis(helpSideBar->getWhatsThisText(HelpWhatsThis::ToolBar_ToggleSidebar));
 
     actbuttons = new QtSegmentControl(this);
     actbuttons->setStyle(toolStyle);
@@ -419,10 +446,10 @@ MainWindow::MainWindow(const QDir &home)
     actbuttons->setSegmentIcon(1, splitIcon);
     actbuttons->setSegmentIcon(2, deleteIcon);
     actbuttons->setSelectionBehavior(QtSegmentControl::SelectNone); //wince. spelling. ugh
-    actbuttons->setFixedHeight(25);
+    actbuttons->setFixedHeight(24);
     actbuttons->setSegmentToolTip(0, tr("Find Intervals..."));
-    actbuttons->setSegmentToolTip(1, tr("Split Ride..."));
-    actbuttons->setSegmentToolTip(2, tr("Delete Ride"));
+    actbuttons->setSegmentToolTip(1, tr("Split Activity..."));
+    actbuttons->setSegmentToolTip(2, tr("Delete Activity"));
     actbuttons->setPalette(metal);
     connect(actbuttons, SIGNAL(segmentSelected(int)), this, SLOT(actionClicked(int)));
 
@@ -435,7 +462,7 @@ MainWindow::MainWindow(const QDir &home)
     styleSelector->setSegmentToolTip(0, tr("Tabbed View"));
     styleSelector->setSegmentToolTip(1, tr("Tiled View"));
     styleSelector->setSelectionBehavior(QtSegmentControl::SelectOne); //wince. spelling. ugh
-    styleSelector->setFixedHeight(25);
+    styleSelector->setFixedHeight(24);
     styleSelector->setPalette(metal);
     connect(styleSelector, SIGNAL(segmentSelected(int)), this, SLOT(setStyleFromSegment(int))); //avoid toggle infinitely
 
@@ -451,7 +478,6 @@ MainWindow::MainWindow(const QDir &home)
     head->addWidget(lowbar);
     head->addWidget(styleSelector);
 
-#ifdef GC_HAVE_LUCENE
     // add a search box on far right, but with a little space too
     searchBox = new SearchFilterBox(this,context,false);
     searchBox->setStyle(toolStyle);
@@ -459,7 +485,9 @@ MainWindow::MainWindow(const QDir &home)
     head->addWidget(searchBox);
     connect(searchBox, SIGNAL(searchResults(QStringList)), this, SLOT(setFilter(QStringList)));
     connect(searchBox, SIGNAL(searchClear()), this, SLOT(clearFilter()));
-#endif
+    HelpWhatsThis *helpSearchBox = new HelpWhatsThis(searchBox);
+    searchBox->setWhatsThis(helpSearchBox->getWhatsThisText(HelpWhatsThis::SearchFilterBox));
+
     Spacer *spacer = new Spacer(this);
     spacer->setFixedWidth(5);
     head->addWidget(spacer);
@@ -548,11 +576,14 @@ MainWindow::MainWindow(const QDir &home)
     fileMenu->addAction(tr("&Close Tab"), this, SLOT(closeTab()));
     fileMenu->addAction(tr("&Quit All Windows"), this, SLOT(closeAll()), tr("Ctrl+Q"));
 
+    HelpWhatsThis *fileMenuHelp = new HelpWhatsThis(fileMenu);
+    fileMenu->setWhatsThis(fileMenuHelp->getWhatsThisText(HelpWhatsThis::MenuBar_Athlete));
+
     // ACTIVITY MENU
     QMenu *rideMenu = menuBar()->addMenu(tr("A&ctivity"));
     rideMenu->addAction(tr("&Download from device..."), this, SLOT(downloadRide()), tr("Ctrl+D"));
     rideMenu->addAction(tr("&Import from file..."), this, SLOT (importFile()), tr ("Ctrl+I"));
-    rideMenu->addAction(tr("&Manual ride entry..."), this, SLOT(manualRide()), tr("Ctrl+M"));
+    rideMenu->addAction(tr("&Manual entry..."), this, SLOT(manualRide()), tr("Ctrl+M"));
     rideMenu->addSeparator ();
     shareAction = new QAction(tr("Share Online..."), this);
     shareAction->setShortcut(tr("Ctrl+U"));
@@ -563,21 +594,24 @@ MainWindow::MainWindow(const QDir &home)
 #ifdef GC_HAVE_SOAP
     rideMenu->addSeparator ();
     rideMenu->addAction(tr("&Upload to TrainingPeaks"), this, SLOT(uploadTP()), tr("Ctrl+T"));
-    rideMenu->addAction(tr("Synchronise TrainingPeaks..."), this, SLOT(downloadTP()), tr(""));
+    rideMenu->addAction(tr("Synchronise TrainingPeaks..."), this, SLOT(downloadTP()), tr("Ctrl+L"));
 #endif
 
-#ifdef GC_HAVE_LIBOAUTH
-    tweetAction = new QAction(tr("Tweet Ride"), this);
+#ifdef GC_HAVE_KQOAUTH
+    tweetAction = new QAction(tr("Tweet activity"), this);
     connect(tweetAction, SIGNAL(triggered(bool)), this, SLOT(tweetRide()));
     rideMenu->addAction(tweetAction);
 #endif
 
     rideMenu->addSeparator ();
-    rideMenu->addAction(tr("&Save ride"), this, SLOT(saveRide()), tr("Ctrl+S"));
-    rideMenu->addAction(tr("D&elete ride..."), this, SLOT(deleteRide()));
-    rideMenu->addAction(tr("Split &ride..."), this, SLOT(splitRide()));
-    rideMenu->addAction(tr("Combine rides..."), this, SLOT(mergeRide()));
+    rideMenu->addAction(tr("&Save activity"), this, SLOT(saveRide()), tr("Ctrl+S"));
+    rideMenu->addAction(tr("D&elete activity..."), this, SLOT(deleteRide()));
+    rideMenu->addAction(tr("Split &activity..."), this, SLOT(splitRide()));
+    rideMenu->addAction(tr("Combine activities..."), this, SLOT(mergeRide()));
     rideMenu->addSeparator ();
+
+    HelpWhatsThis *helpRideMenu = new HelpWhatsThis(rideMenu);
+    rideMenu->setWhatsThis(helpRideMenu->getWhatsThisText(HelpWhatsThis::MenuBar_Activity));
 
     // TOOLS MENU
     QMenu *optionsMenu = menuBar()->addMenu(tr("&Tools"));
@@ -588,8 +622,6 @@ MainWindow::MainWindow(const QDir &home)
     optionsMenu->addSeparator();
     optionsMenu->addAction(tr("Get &Withings Data..."), this,
                         SLOT (downloadMeasures()));
-    optionsMenu->addAction(tr("Get &Zeo Data..."), this,
-                        SLOT (downloadMeasuresFromZeo()));
     optionsMenu->addSeparator();
     optionsMenu->addAction(tr("Create a new workout..."), this, SLOT(showWorkoutWizard()));
     optionsMenu->addAction(tr("Download workouts from ErgDB..."), this, SLOT(downloadErgDB()));
@@ -598,7 +630,7 @@ MainWindow::MainWindow(const QDir &home)
 
 #ifdef GC_HAVE_ICAL
     optionsMenu->addSeparator();
-    optionsMenu->addAction(tr("Upload Ride to Calendar"), this, SLOT(uploadCalendar()), tr (""));
+    optionsMenu->addAction(tr("Upload Activity to Calendar"), this, SLOT(uploadCalendar()), tr (""));
     //optionsMenu->addAction(tr("Import Calendar..."), this, SLOT(importCalendar()), tr ("")); // planned for v3.1
     //optionsMenu->addAction(tr("Export Calendar..."), this, SLOT(exportCalendar()), tr ("")); // planned for v3.1
     optionsMenu->addAction(tr("Refresh Calendar"), this, SLOT(refreshCalendar()), tr (""));
@@ -607,6 +639,10 @@ MainWindow::MainWindow(const QDir &home)
     optionsMenu->addAction(tr("Export Metrics as CSV..."), this, SLOT(exportMetrics()), tr(""));
     optionsMenu->addSeparator();
     optionsMenu->addAction(tr("Find intervals..."), this, SLOT(addIntervals()), tr (""));
+
+    HelpWhatsThis *optionsMenuHelp = new HelpWhatsThis(optionsMenu);
+    optionsMenu->setWhatsThis(optionsMenuHelp->getWhatsThisText(HelpWhatsThis::MenuBar_Tools));
+
 
     QMenu *editMenu = menuBar()->addMenu(tr("&Edit"));
     // Add all the data processors to the tools menu
@@ -630,10 +666,15 @@ MainWindow::MainWindow(const QDir &home)
         }
     }
 
+    HelpWhatsThis *editMenuHelp = new HelpWhatsThis(editMenu);
+    editMenu->setWhatsThis(editMenuHelp->getWhatsThisText(HelpWhatsThis::MenuBar_Edit));
+
     // VIEW MENU
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
 #ifndef Q_OS_MAC
     viewMenu->addAction(tr("Toggle Full Screen"), this, SLOT(toggleFullScreen()), QKeySequence("F11"));
+#else
+    viewMenu->addAction(tr("Toggle Full Screen"), this, SLOT(toggleFullScreen()));
 #endif
     showhideSidebar = viewMenu->addAction(tr("Show Left Sidebar"), this, SLOT(showSidebar(bool)));
     showhideSidebar->setCheckable(true);
@@ -652,9 +693,8 @@ MainWindow::MainWindow(const QDir &home)
 
     //connect(showhideSidebar, SIGNAL(triggered(bool)), this, SLOT(showSidebar(bool)));
     viewMenu->addSeparator();
-    viewMenu->addAction(tr("Rides"), this, SLOT(selectAnalysis()));
+    viewMenu->addAction(tr("Activities"), this, SLOT(selectAnalysis()));
     viewMenu->addAction(tr("Trends"), this, SLOT(selectHome()));
-    viewMenu->addAction(tr("Intervals"), this, SLOT(selectInterval()));
     viewMenu->addAction(tr("Train"), this, SLOT(selectTrain()));
 #ifdef GC_HAVE_ICAL
     viewMenu->addAction(tr("Diary"), this, SLOT(selectDiary()));
@@ -670,13 +710,21 @@ MainWindow::MainWindow(const QDir &home)
     connect(subChartMenu, SIGNAL(aboutToShow()), this, SLOT(setSubChartMenu()));
     connect(subChartMenu, SIGNAL(triggered(QAction*)), this, SLOT(addChart(QAction*)));
 
+    HelpWhatsThis *viewMenuHelp = new HelpWhatsThis(viewMenu);
+    viewMenu->setWhatsThis(viewMenuHelp->getWhatsThisText(HelpWhatsThis::MenuBar_View));
+
     // HELP MENU
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
+    helpMenu->addAction(tr("&Help Overview"), this, SLOT(helpWindow()));
+    helpMenu->addSeparator();
     helpMenu->addAction(tr("&User Guide"), this, SLOT(helpView()));
     helpMenu->addAction(tr("&Log a bug or feature request"), this, SLOT(logBug()));
     helpMenu->addAction(tr("&Discussion and Support Forum"), this, SLOT(support()));
     helpMenu->addSeparator();
     helpMenu->addAction(tr("&About GoldenCheetah"), this, SLOT(aboutDialog()));
+
+    HelpWhatsThis *helpMenuHelp = new HelpWhatsThis(helpMenu);
+    helpMenu->setWhatsThis(helpMenuHelp->getWhatsThisText(HelpWhatsThis::MenuBar_Help));
 
     /*----------------------------------------------------------------------
      * Lets go, choose latest ride and get GUI up and running
@@ -697,11 +745,12 @@ MainWindow::MainWindow(const QDir &home)
     installEventFilter(this);
 
     // catch config changes
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
-    configChanged();
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
+    configChanged(CONFIG_APPEARANCE);
 
     init = true;
 }
+
 
 /*----------------------------------------------------------------------
  * GUI
@@ -867,14 +916,21 @@ MainWindow::toggleStyle()
     setToolButtons();
 }
 
-#ifndef Q_OS_MAC
 void
 MainWindow::toggleFullScreen()
 {
+#ifdef Q_OS_MAC
+    QRect screenSize = desktop->availableGeometry();
+    if (screenSize.width() > frameGeometry().width() ||
+        screenSize.height() > frameGeometry().height()) 
+        showFullScreen();
+    else
+        showNormal();
+#else
     if (fullScreen) fullScreen->toggle();
     else qDebug()<<"no fullscreen support compiled in.";
-}
 #endif
+}
 
 bool
 MainWindow::eventFilter(QObject *o, QEvent *e)
@@ -888,8 +944,19 @@ MainWindow::eventFilter(QObject *o, QEvent *e)
 void
 MainWindow::resizeEvent(QResizeEvent*)
 {
-#ifdef Q_OS_MAC
+// on a mac we hide/show the toolbar on fullscreen mode
+// when using QT5 since it has problems rendering
+#if (defined Q_OS_MAC) && (QT_VERSION >= 0x50201)
     if (head) {
+        QRect screenSize = desktop->availableGeometry();
+        if ((screenSize.width() > frameGeometry().width() || screenSize.height() > frameGeometry().height()) && // not fullscreen
+           (!head->isVisible() && showhideToolbar->isChecked())) // not visible and we want it
+            head->show();
+        else if ((screenSize.width() == frameGeometry().width() || screenSize.height() == frameGeometry().height()) && // fullscreen
+           (head->isVisible())) // and it is visible
+            head->hide();
+
+        // painting 
         head->updateGeometry();
         repaint();
     }
@@ -1033,6 +1100,15 @@ void MainWindow::manualProcess(QString name)
     }
 }
 
+
+void
+MainWindow::helpWindow()
+{
+    HelpWindow* help = new HelpWindow(currentTab->context);
+    help->show();
+}
+
+
 void
 MainWindow::logBug()
 {
@@ -1042,8 +1118,9 @@ MainWindow::logBug()
 void
 MainWindow::helpView()
 {
-    QDesktopServices::openUrl(QUrl("http://www.goldencheetah.org/wiki.html"));
+    QDesktopServices::openUrl(QUrl("https://github.com/GoldenCheetah/GoldenCheetah/wiki"));
 }
+
 
 void
 MainWindow::support()
@@ -1160,15 +1237,65 @@ MainWindow::dropEvent(QDropEvent *event)
     QList<QUrl> urls = event->mimeData()->urls();
     if (urls.isEmpty()) return;
 
-    if (currentTab->currentView() != 3) { // we're not on train view
-        // We have something to process then
-        RideImportWizard *dialog = new RideImportWizard (&urls, currentTab->context);
-        dialog->process(); // do it!
-    } else {
-        QStringList filenames;
-        for (int i=0; i<urls.count(); i++)
-            filenames.append(QFileInfo(urls.value(i).toLocalFile()).absoluteFilePath());
-        Library::importFiles(currentTab->context, filenames);
+    // is this a chart file ?
+    QStringList filenames;
+    QList<LTMSettings> imported;
+    for(int i=0; i<urls.count(); i++) {
+
+        QString filename = QFileInfo(urls.value(i).toLocalFile()).absoluteFilePath();
+
+        if (filename.endsWith(".xml", Qt::CaseInsensitive)) {
+
+            QFile chartsFile(filename);
+
+            // setup XML processor
+            QXmlInputSource source( &chartsFile );
+            QXmlSimpleReader xmlReader;
+            LTMChartParser handler;
+            xmlReader.setContentHandler(&handler);
+            xmlReader.setErrorHandler(&handler);
+
+            // parse and get return values
+            xmlReader.parse(source);
+            imported += handler.getSettings();
+
+        } else {
+            filenames.append(filename);
+        }
+    }
+
+    // import any we may have extracted
+    if (imported.count()) {
+
+        // now append to the QList and QTreeWidget
+        currentTab->context->athlete->presets += imported;
+
+        // notify we changed and tree updates
+        currentTab->context->notifyPresetsChanged();
+
+        // tell the user
+        QMessageBox::information(this, tr("Chart Import"), QString(tr("Imported %1 charts")).arg(imported.count()));
+
+        // switch to trend view if we aren't on it
+        selectHome();
+
+        // now select what was added
+        currentTab->context->notifyPresetSelected(currentTab->context->athlete->presets.count()-1);
+    }
+
+
+    // if there is anything left, process based upon view...
+    if (filenames.count()) {
+
+        if (currentTab->currentView() != 3) { // we're not on train view
+
+            // We have something to process then
+            RideImportWizard *dialog = new RideImportWizard (filenames, currentTab->context);
+            dialog->process(); // do it!
+
+        } else {
+            Library::importFiles(currentTab->context, filenames);
+        }
     }
     return;
 }
@@ -1209,7 +1336,7 @@ void
 MainWindow::exportRide()
 {
     if (currentTab->context->ride == NULL) {
-        QMessageBox::critical(this, tr("Select Ride"), tr("No ride selected!"));
+        QMessageBox::critical(this, tr("Select Activity"), tr("No activity selected!"));
         return;
     }
 
@@ -1220,7 +1347,7 @@ MainWindow::exportRide()
         allFormats << QString("%1 (*.%2)").arg(rff.description(suffix)).arg(suffix);
 
     QString suffix; // what was selected?
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Ride"), QDir::homePath(), allFormats.join(";;"), &suffix);
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Activity"), QDir::homePath(), allFormats.join(";;"), &suffix);
 
     if (fileName.length() == 0) return;
 
@@ -1235,7 +1362,7 @@ MainWindow::exportRide()
 
     if (result == false) {
         QMessageBox oops(QMessageBox::Critical, tr("Export Failed"),
-                         tr("Failed to export ride, please check permissions"));
+                         tr("Failed to export activity, please check permissions"));
         oops.exec();
     }
 }
@@ -1269,29 +1396,40 @@ MainWindow::importFile()
 void
 MainWindow::saveRide()
 {
-    // only save if neccessary
-    if (currentTab->context->ride->isDirty()) currentTab->context->notifyMetadataFlush();
-    else return;
-
-    if (currentTab->context->ride)
-        saveRideSingleDialog(currentTab->context, currentTab->context->ride); // will signal save to everyone
-    else {
-        QMessageBox oops(QMessageBox::Critical, tr("No Ride To Save"),
-                         tr("There is no currently selected ride to save."));
+    // no ride
+    if (currentTab->context->ride == NULL) {
+        QMessageBox oops(QMessageBox::Critical, tr("No Activity To Save"),
+                         tr("There is no currently selected activity to save."));
         oops.exec();
         return;
+    }
+
+    // flush in-flight changes
+    currentTab->context->notifyMetadataFlush();
+    currentTab->context->ride->notifyRideMetadataChanged();
+
+    // nothing to do if not dirty
+    if (currentTab->context->ride->isDirty() == false) return;
+
+    // save
+    if (currentTab->context->ride) {
+        saveRideSingleDialog(currentTab->context, currentTab->context->ride); // will signal save to everyone
     }
 }
 
 void
 MainWindow::revertRide()
 {
-    currentTab->context->ride->freeMemory();
+    currentTab->context->ride->close();
     currentTab->context->ride->ride(); // force re-load
 
     // in case reverted ride has different starttime
-    currentTab->context->ride->setStartTime(currentTab->context->ride->ride()->startTime()); // Note: this will also signal rideSelected()
+    currentTab->context->ride->setStartTime(currentTab->context->ride->ride()->startTime()); 
     currentTab->context->ride->ride()->emitReverted();
+
+    // and notify everyone we changed which also has the side
+    // effect of updating the cached values too
+    currentTab->context->notifyRideSelected(currentTab->context->ride);
 }
 
 void
@@ -1300,9 +1438,9 @@ MainWindow::splitRide()
     if (currentTab->context->ride && currentTab->context->ride->ride() && currentTab->context->ride->ride()->dataPoints().count()) (new SplitActivityWizard(currentTab->context))->exec();
     else {
         if (!currentTab->context->ride || !currentTab->context->ride->ride())
-            QMessageBox::critical(this, tr("Split Ride"), tr("No ride selected"));
+            QMessageBox::critical(this, tr("Split Activity"), tr("No activity selected"));
         else
-            QMessageBox::critical(this, tr("Split Ride"), tr("Current ride contains no data to split"));
+            QMessageBox::critical(this, tr("Split Activity"), tr("Current activity contains no data to split"));
     }
 }
 
@@ -1312,9 +1450,9 @@ MainWindow::mergeRide()
     if (currentTab->context->ride && currentTab->context->ride->ride() && currentTab->context->ride->ride()->dataPoints().count()) (new MergeActivityWizard(currentTab->context))->exec();
     else {
         if (!currentTab->context->ride || !currentTab->context->ride->ride())
-            QMessageBox::critical(this, tr("Split Ride"), tr("No ride selected"));
+            QMessageBox::critical(this, tr("Split Activity"), tr("No activity selected"));
         else
-            QMessageBox::critical(this, tr("Split Ride"), tr("Current ride contains no data to merge"));
+            QMessageBox::critical(this, tr("Split Activity"), tr("Current activity contains no data to merge"));
     }
 }
 
@@ -1324,13 +1462,13 @@ MainWindow::deleteRide()
     RideItem *_item = currentTab->context->ride;
 
     if (_item==NULL) { 
-        QMessageBox::critical(this, tr("Delete Ride"), tr("No ride selected!"));
+        QMessageBox::critical(this, tr("Delete Activity"), tr("No activity selected!"));
         return;
     }
 
     RideItem *item = static_cast<RideItem*>(_item);
     QMessageBox msgBox;
-    msgBox.setText(tr("Are you sure you want to delete the ride:"));
+    msgBox.setText(tr("Are you sure you want to delete the activity:"));
     msgBox.setInformativeText(item->fileName);
     QPushButton *deleteButton = msgBox.addButton(tr("Delete"),QMessageBox::YesRole);
     msgBox.setStandardButtons(QMessageBox::Cancel);
@@ -1485,10 +1623,8 @@ MainWindow::removeTab(Tab *tab)
 
     if (tabList.count() == 2) showTabbar(false); // don't need it for one!
 
-#ifdef GC_HAVE_LUCENE
     // save the named searches
     tab->context->athlete->namedSearches->write();
-#endif
 
     // clear the clipboard if neccessary
     QApplication::clipboard()->setText("");
@@ -1620,12 +1756,12 @@ MainWindow::saveGCState(Context *context)
     context->showSidebar = showhideSidebar->isChecked();
     //context->showTabbar = showhideTabbar->isChecked();
     context->showLowbar = showhideLowbar->isChecked();
-#ifndef Q_OS_MAC // not on a Mac
+#if (!defined Q_OS_MAC) || (QT_VERSION >= 0x50201) // not on a Mac
     context->showToolbar = showhideToolbar->isChecked();
+#else
+    context->showToolbar = true;
 #endif
-#ifdef GC_HAVE_LUCENE
     context->searchText = searchBox->text();
-#endif
     context->viewIndex = scopebar->selected();
     context->style = styleAction->isChecked();
     context->viewIndex = scopebar->selected();
@@ -1636,18 +1772,14 @@ MainWindow::restoreGCState(Context *context)
 {
     // restore window state from the supplied context
     showSidebar(context->showSidebar);
-#ifndef Q_OS_MAC // not on a Mac
     showToolbar(context->showToolbar);
-#endif
     //showTabbar(context->showTabbar);
     showLowbar(context->showLowbar);
     scopebar->setSelected(context->viewIndex);
     scopebar->setContext(context);
     scopebar->setHighlighted(); // to reflect context
-#ifdef GC_HAVE_LUCENE
     searchBox->setContext(context);
     searchBox->setText(context->searchText);
-#endif
 }
 
 void
@@ -1689,16 +1821,25 @@ MainWindow::switchTab(int index)
 void
 MainWindow::exportMetrics()
 {
-    QString fileName = QFileDialog::getSaveFileName( this, tr("Export Metrics"), QDir::homePath(), tr("Comma Separated Variables (*.csv)"));
-    if (fileName.length() == 0)
+    // if the refresh process is running, try again when its completed
+    if (currentTab->context->athlete->rideCache->isRunning()) {
+        QMessageBox::warning(this, tr("Refresh in Progress"), 
+        "A metric refresh is currently running, please try again once that has completed.");
         return;
-    currentTab->context->athlete->metricDB->writeAsCSV(fileName);
+    }
+
+    // all good lets choose a file
+    QString fileName = QFileDialog::getSaveFileName( this, tr("Export Metrics"), QDir::homePath(), tr("Comma Separated Variables (*.csv)"));
+    if (fileName.length() == 0) return;
+
+    // export
+    currentTab->context->athlete->rideCache->writeAsCSV(fileName);
 }
 
 /*----------------------------------------------------------------------
  * Twitter
  *--------------------------------------------------------------------*/
-#ifdef GC_HAVE_LIBOAUTH
+#ifdef GC_HAVE_KQOAUTH
 void
 MainWindow::tweetRide()
 {
@@ -1821,7 +1962,7 @@ MainWindow::downloadTP()
  *--------------------------------------------------------------------*/
 
 void
-MainWindow::configChanged()
+MainWindow::configChanged(qint32)
 {
 
 // Windows
@@ -1878,13 +2019,6 @@ MainWindow::configChanged()
 
 }
 
-void
-Context::notifyConfigChanged()
-{
-    // .. then tell everyone else
-    configChanged();
-}
-
 /*----------------------------------------------------------------------
  * Measures
  *--------------------------------------------------------------------*/
@@ -1893,12 +2027,6 @@ void
 MainWindow::downloadMeasures()
 {
     currentTab->context->athlete->withingsDownload->download();
-}
-
-void
-MainWindow::downloadMeasuresFromZeo()
-{
-    currentTab->context->athlete->zeoDownload->download();
 }
 
 void

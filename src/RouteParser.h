@@ -44,8 +44,10 @@ protected:
     RouteSegment route;
     QList<RouteSegment> routes;
     RoutePoint point;
-    RouteRide ride;
     int loadcount;
+
+    double minLon, maxLon;
+    double minLat, maxLat;
 
 };
 

@@ -25,9 +25,7 @@
 #include "MainWindow.h" // for isfiltered and filters
 #include "Season.h"
 #include "RideFile.h"
-#ifdef GC_HAVE_LUCENE
 #include "SearchFilterBox.h"
-#endif
 
 #include <QtGui>
 #include <QFormLayout>
@@ -38,6 +36,7 @@ class CPPlot;
 class QwtPlotCurve;
 class Context;
 class RideItem;
+class IntervalItem;
 class QwtPlotPicker;
 class MUPlot;
 
@@ -48,9 +47,7 @@ class CriticalPowerWindow : public GcChartWindow
 
     // properties can be saved/restored/set by the layout manager
 
-#ifdef GC_HAVE_LUCENE
     Q_PROPERTY(QString filter READ filter WRITE setFilter USER true)
-#endif
     Q_PROPERTY(int mode READ mode WRITE setMode USER true)
     Q_PROPERTY(bool showBest READ showBest WRITE setShowBest USER true)
     Q_PROPERTY(bool showPercent READ showPercent WRITE setShowPercent USER true)
@@ -69,7 +66,6 @@ class CriticalPowerWindow : public GcChartWindow
     Q_PROPERTY(int sani2 READ sanI2 WRITE setSanI2 USER true)
     Q_PROPERTY(int laei1 READ laeI1 WRITE setLaeI1 USER true)
     Q_PROPERTY(int laei2 READ laeI2 WRITE setLaeI2 USER true)
-    Q_PROPERTY(int laei2 READ laeI2 WRITE setLaeI2 USER true)
 
     Q_PROPERTY(QDate fromDate READ fromDate WRITE setFromDate USER true)
     Q_PROPERTY(QDate toDate READ toDate WRITE setToDate USER true)
@@ -78,6 +74,7 @@ class CriticalPowerWindow : public GcChartWindow
     Q_PROPERTY(int lastNX READ lastNX WRITE setLastNX USER true)
     Q_PROPERTY(int prevN READ prevN WRITE setPrevN USER true)
     Q_PROPERTY(int shading READ shading WRITE setShading USER true)
+    Q_PROPERTY(bool showEffort READ showEffort WRITE setShowEffort USER true)
     Q_PROPERTY(bool showHeat READ showHeat WRITE setShowHeat USER true)
     Q_PROPERTY(bool showHeatByDate READ showHeatByDate WRITE setShowHeatByDate USER true)
     Q_PROPERTY(int shadeIntervals READ shadeIntervals WRITE setShadeIntervals USER true)
@@ -108,12 +105,10 @@ class CriticalPowerWindow : public GcChartWindow
         int variant() const;
         void setVariant(int x);
 
-#ifdef GC_HAVE_LUCENE
         // filter
         bool isFiltered() const { return (searchBox->isFiltered() || context->ishomefiltered || context->isfiltered); }
         QString filter() const { return searchBox->filter(); }
         void setFilter(QString x) { searchBox->setFilter(x); }
-#endif
 
         int ridePlotMode() const { return ridePlotStyleCombo->currentIndex(); }
         void setRidePlotMode(int x) { ridePlotStyleCombo->setCurrentIndex(x); }
@@ -189,6 +184,9 @@ class CriticalPowerWindow : public GcChartWindow
         int shadeIntervals() { return shadeIntervalsCheck->isChecked(); }
         void setShadeIntervals(int x) { return shadeIntervalsCheck->setChecked(x); }
 
+        bool showEffort() { return showEffortCheck->isChecked(); }
+        void setShowEffort(bool x) { return showEffortCheck->setChecked(x); }
+
         bool showHeat() { return showHeatCheck->isChecked(); }
         void setShowHeat(bool x) { return showHeatCheck->setChecked(x); }
 
@@ -208,12 +206,13 @@ class CriticalPowerWindow : public GcChartWindow
         void forceReplot();
         void newRideAdded(RideItem*);
         void rideSelected();
-        void configChanged();
+        void configChanged(qint32);
         void intervalSelected();
         void intervalsChanged();
-        void intervalHover(RideFileInterval);
+        void intervalHover(IntervalItem*);
         void seasonSelected(int season);
         void shadingSelected(int shading);
+        void showEffortChanged(int check);
         void showHeatChanged(int check);
         void showHeatByDateChanged(int check);
         void showPercentChanged(int check);
@@ -230,7 +229,7 @@ class CriticalPowerWindow : public GcChartWindow
         void useStandardRange();
         void useThruToday();
 
-        void refreshRideSaved();
+        void refreshRideSaved(RideItem*);
         void modelParametersChanged(); // we changed the intervals
         void modelChanged(); // we changed the model type 
 
@@ -238,6 +237,10 @@ class CriticalPowerWindow : public GcChartWindow
         void rPercentChanged(int check);
         void rHeatChanged(int check);
         void rDeltaChanged();
+
+        // edit CP value used for veloclinic plot
+        void setSliderFromEdit();
+        void setEditFromSlider();
 
         // menu option
         void exportData();
@@ -272,6 +275,7 @@ class CriticalPowerWindow : public GcChartWindow
         QComboBox *ridePlotStyleCombo;
         QCheckBox *shadeCheck;
         QCheckBox *shadeIntervalsCheck;
+        QCheckBox *showEffortCheck;
         QCheckBox *showHeatCheck;
         QCheckBox *showHeatByDateCheck;
         QCheckBox *showPercentCheck;
@@ -280,6 +284,11 @@ class CriticalPowerWindow : public GcChartWindow
         QCheckBox *rPercent, *rHeat, *rDelta, *rDeltaPercent;
         QwtPlotPicker *picker;
         QwtPlotGrid *grid;
+
+        // veloclinic controls
+        QSlider *CPSlider;
+        QLineEdit *CPEdit;
+        QLabel *CPLabel;
 
         // model helper widget
         QWidget *helper;
@@ -295,9 +304,7 @@ class CriticalPowerWindow : public GcChartWindow
         QList<Season> seasonsList;
         RideItem *currentRide;
         QList<CriticalSeriesType> seriesList;
-#ifdef GC_HAVE_LUCENE
         SearchFilterBox *searchBox;
-#endif
         QList<QwtPlotCurve*> intervalCurves;
 
         QLabel *intervalLabel, *secondsLabel;

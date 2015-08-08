@@ -25,7 +25,7 @@
 
 #include "GpxParser.h"
 #include "TimeUtils.h"
-#include <math.h>
+#include <cmath>
 
 // use stc strtod to bypass Qt toDouble() issues
 #include <stdlib.h>
@@ -123,7 +123,7 @@ bool
     {
         alt = buffer.toDouble();  // metric
     }
-    else if (qName == "gpxtpx:hr")
+    else if (qName == "gpxtpx:hr" || qName == "heartrate")
     {
         hr = buffer.toInt();
     }
@@ -135,7 +135,7 @@ bool
     {
         temp = buffer.toDouble();
     }
-    else if ((qName == "gpxdata:cadence") || (qName == "gpxtpx:cad"))
+    else if ((qName == "gpxdata:cadence") || (qName == "gpxtpx:cad") || qName == "cadence")
     {
         cad = buffer.toDouble();
     }
@@ -199,7 +199,8 @@ bool
 	if(rideFile->dataPoints().empty()) {
 	    // first point
             rideFile->appendPoint(secs, cad, hr, distance, speed, 0, watts, alt, lon, lat, 0, 0.0, temp, 0.0, 
-                                  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0);
+                                  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0);
 	}
 	else {
 	    // assumption that the change in ride is linear...  :)
@@ -219,7 +220,8 @@ bool
 
                 // no smart recording, or delta exceeds HW treshold, or no time elements; just insert the data
                 rideFile->appendPoint(secs, cad, hr, distance, speed, 0,watts, alt, lon, lat, 0, 0.0, temp, 0.0, 
-                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0);
+                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0);
 
 	    } else {
 
@@ -247,8 +249,12 @@ bool
                 temp,
                 0,
                 0.0, 0.0, 0.0, 0.0, // pedal torque/smoothness
+                0.0, 0.0, // pedal platform offset
+                0.0, 0.0, 0.0, 0.0, //pedal power phase
+                0.0, 0.0, 0.0, 0.0, //pedal peak power phase
                 0.0, 0.0, // SmO2 / tHb
                 0.0, 0.0, 0.0, // running dynamics
+                0.0, //tcore
 			    0);
 		}
 		prevPoint = rideFile->dataPoints().back();

@@ -24,7 +24,7 @@
 
 // use stc strtod to bypass Qt toDouble() issues
 #include <stdlib.h>
-#include <math.h>
+#include <cmath>
 
 FitlogParser::FitlogParser (RideFile* rideFile, QList<RideFile*> *rides)
    : rideFile(rideFile), rides(rides)
@@ -62,7 +62,7 @@ FitlogParser::startElement( const QString&, const QString&,
         lap++;
         double start = start_time.secsTo(convertToLocalTime(qAttributes.value("StartTime")));
         double stop = start + qAttributes.value("DurationSeconds").toDouble();
-        rideFile->addInterval(start, stop, QString("%1").arg(lap));
+        rideFile->addInterval(RideFileInterval::DEVICE, start, stop, QString("%1").arg(lap));
 
     } else if (qName == "Track") {
 
@@ -100,8 +100,13 @@ FitlogParser::startElement( const QString&, const QString&,
         // now add
         rideFile->appendPoint(point.secs,point.cad,point.hr,point.km,point.kph,point.nm,
                               point.watts,point.alt,point.lon,point.lat, point.headwind,
-                              0.0, RideFile::NoTemp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+                              0.0, RideFile::NoTemp, 0.0, 0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0,
                               0.0, 0.0, 0.0,// running dynamics
+                              0.0, //tcore
                               point.interval);
     }
     return true;

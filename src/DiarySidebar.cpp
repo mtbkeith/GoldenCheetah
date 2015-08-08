@@ -17,13 +17,21 @@
  */
 
 #include "DiarySidebar.h"
-#include "Athlete.h"
+
 #include "Context.h"
+#include "Athlete.h"
+#include "RideCache.h"
+#include "RideCacheModel.h"
+#include "TimeUtils.h"
+#include "Specification.h"
+#include "RideItem.h"
+
 #include "GcWindowLayout.h"
 #include "Settings.h"
+#include "HelpWhatsThis.h"
+
 #include <QWebSettings>
 #include <QWebFrame>
-#include "TimeUtils.h"
 
 //********************************************************************************
 // CALENDAR SIDEBAR (DiarySidebar)
@@ -58,6 +66,9 @@ DiarySidebar::DiarySidebar(Context *context) : context(context)
     layout->setContentsMargins(0,0,0,0);
     calendarItem->addWidget(calWidget);
 
+    HelpWhatsThis *helpCalendarItem = new HelpWhatsThis(calendarItem);
+    calendarItem->setWhatsThis(helpCalendarItem->getWhatsThisText(HelpWhatsThis::SideBarDiaryView_Calendar));
+
     // summary widget
     summaryWidget = new QWidget(this);
     summaryWidget->setContentsMargins(0,0,0,0);
@@ -67,6 +78,9 @@ DiarySidebar::DiarySidebar(Context *context) : context(context)
     slayout->setSpacing(0);
     slayout->setContentsMargins(0,0,0,0);
     summaryItem->addWidget(summaryWidget);
+
+    HelpWhatsThis *helpSummaryItem = new HelpWhatsThis(summaryItem);
+    summaryItem->setWhatsThis(helpSummaryItem->getWhatsThisText(HelpWhatsThis::SideBarDiaryView_Summary));
 
     splitter->addWidget(calendarItem);
     splitter->addWidget(summaryItem);
@@ -108,14 +122,16 @@ DiarySidebar::DiarySidebar(Context *context) : context(context)
     // refresh on these events...
     connect(context, SIGNAL(rideAdded(RideItem*)), this, SLOT(refresh()));
     connect(context, SIGNAL(rideDeleted(RideItem*)), this, SLOT(refresh()));
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(refreshUpdate(QDate)), this, SLOT(refresh()));
+    connect(context, SIGNAL(refreshEnd()), this, SLOT(refresh()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 
     // set up for current selections
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 }
 
 void
-DiarySidebar::configChanged()
+DiarySidebar::configChanged(qint32)
 {
     // GCColor stylesheet is too generic, we ONLY want to style the container
     // and NOT its children. This is why stylesheets on widgets is a stoopid idea
@@ -313,8 +329,8 @@ DiarySidebar::setSummary()
         from = newFrom;
         to = newTo;
 
-        // lets get the metrics
-        QList<SummaryMetrics>results = context->athlete->metricDB->getAllMetricsFor(QDateTime(from,QTime(0,0,0)), QDateTime(to, QTime(24,59,59)));
+        Specification spec;
+        spec.setDateRange(DateRange(from, to));
 
         // foreach of the metrics get an aggregated value
         // header of summary
@@ -367,7 +383,7 @@ DiarySidebar::setSummary()
                 const RideMetric *metric = RideMetricFactory::instance().rideMetric(metricname);
 
                 QStringList empty; // usually for filters, but we don't do that
-                QString value = SummaryMetrics::getAggregated(context, metricname, results, empty, false, useMetricUnits);
+                QString value = context->athlete->rideCache->getAggregate(metricname, spec, useMetricUnits);
 
 
                 // Maximum Max and Average Average looks nasty, remove from name for display
@@ -421,7 +437,7 @@ DiarySidebar::setSummary()
 //********************************************************************************
 GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context), master(master)
 {
-    setContentsMargins(0,0,0,0);
+    setContentsMargins(1,1,1,1);
     setAutoFillBackground(true);
     setObjectName("miniCalendar");
 
@@ -435,7 +451,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     // get the model
     fieldDefinitions = context->athlete->rideMetadata()->getFields();
     calendarModel = new GcCalendarModel(this, &fieldDefinitions, context);
-    calendarModel->setSourceModel(context->athlete->sqlModel);
+    calendarModel->setSourceModel(context->athlete->rideCache->model());
 
     QHBoxLayout *line = new QHBoxLayout;
     line->setSpacing(0);
@@ -491,7 +507,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
 #else
     font.setPointSize(9);
 #endif
-    GcLabel *day = new GcLabel("Mon", this);
+    GcLabel *day = new GcLabel(tr("Mon"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -500,7 +516,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     dayNames[0] = day;
 
     // Tue
-    day = new GcLabel("Tue", this);
+    day = new GcLabel(tr("Tue"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -509,7 +525,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     dayNames[1] = day;
 
     // Wed
-    day = new GcLabel("Wed", this);
+    day = new GcLabel(tr("Wed"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -518,7 +534,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     dayNames[2] = day;
 
     // Thu
-    day = new GcLabel("Thu", this);
+    day = new GcLabel(tr("Thu"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -527,7 +543,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     dayNames[3] = day;
 
     // Fri
-    day = new GcLabel("Fri", this);
+    day = new GcLabel(tr("Fri"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -536,7 +552,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     dayNames[4] = day;
 
     // Sat
-    day = new GcLabel("Sat", this);
+    day = new GcLabel(tr("Sat"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -545,7 +561,7 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     dayNames[5] = day;
 
     // Sun
-    day = new GcLabel("Sun", this);
+    day = new GcLabel(tr("Sun"), this);
     day->setFont(font);
     day->setAutoFillBackground(false);
     day->setFont(font);
@@ -589,12 +605,12 @@ GcMiniCalendar::GcMiniCalendar(Context *context, bool master) : context(context)
     connect(signalMapper, SIGNAL(mapped(int)), this, SLOT(dayClicked(int)));
 
     // set up for current selections - and watch for future changes
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
-    configChanged();
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
+    configChanged(CONFIG_APPEARANCE);
 }
 
 void
-GcMiniCalendar::configChanged()
+GcMiniCalendar::configChanged(qint32)
 {
     QColor bgColor = GColor(CPLOTBACKGROUND);
     QColor fgColor = GCColor::invertColor(bgColor);
@@ -638,7 +654,13 @@ GcMiniCalendar::event(QEvent *e)
         QPainter painter(this);
         QRect all(0,0,width(),height());
         //painter.fillRect(all, QColor("#B3B4BA"));
-        painter.fillRect(all, QColor(Qt::white));
+        painter.fillRect(all, GColor(CPLOTBACKGROUND));
+
+        if (_ride) {
+            QDate when = _ride->dateTime.date();
+            if (when >= QDate(year,month,01) && when < QDate(year,month,01).addMonths(1))
+            painter.fillRect(all, GColor(CPLOTMARKER));
+        }
     }
 
     int n=0;
@@ -685,7 +707,7 @@ GcMiniCalendar::dayClicked(int i)
 void
 GcMiniCalendar::previous()
 {
-    QList<QDateTime> allDates = context->athlete->metricDB->db()->getAllDates();
+    QList<QDateTime> allDates = context->athlete->rideCache->getAllDates();
     qSort(allDates);
 
     // begin of month
@@ -719,7 +741,7 @@ GcMiniCalendar::previous()
 void
 GcMiniCalendar::next()
 {
-    QList<QDateTime> allDates = context->athlete->metricDB->db()->getAllDates();
+    QList<QDateTime> allDates = context->athlete->rideCache->getAllDates();
     qSort(allDates);
 
     // end of month
@@ -869,7 +891,7 @@ GcMultiCalendar::GcMultiCalendar(Context *context) : QScrollArea(context->mainWi
 
     GcMiniCalendar *mini = new GcMiniCalendar(context, true);
     calendars.append(mini);
-    mini->setDate(QDate::currentDate().month(), QDate::currentDate().year()); // default to this month
+    mini->setDate(1, 2000); // default to 01/2000 - which then moves to month of latest Ride
     layout->addWidget(mini);
 
     // only 1 months are visible right now
@@ -877,13 +899,13 @@ GcMultiCalendar::GcMultiCalendar(Context *context) : QScrollArea(context->mainWi
 
     connect(mini, SIGNAL(dateChanged(int,int)), this, SLOT(dateChanged(int,int)));
     connect (context, SIGNAL(filterChanged()), this, SLOT(filterChanged()));
-    connect (context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect (context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 }
 
 void
-GcMultiCalendar::configChanged()
+GcMultiCalendar::configChanged(qint32)
 {
     QColor bgColor = GColor(CPLOTBACKGROUND);
     QColor fgColor = GCColor::invertColor(bgColor);

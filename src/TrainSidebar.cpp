@@ -57,7 +57,7 @@
 #include <QStyleFactory>
 #endif
 
-#include <math.h> // isnan and isinf
+#include <cmath> // isnan and isinf
 #include "TrainDB.h"
 #include "Library.h"
 
@@ -355,7 +355,7 @@ intensity->hide(); //XXX!!! temporary
                             this, SLOT(mediaTreeWidgetSelectionChanged()));
     connect(context, SIGNAL(selectMedia(QString)), this, SLOT(selectVideo(QString)));
 #endif
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     connect(context, SIGNAL(selectWorkout(QString)), this, SLOT(selectWorkout(QString)));
     connect(trainDB, SIGNAL(dataChanged()), this, SLOT(refresh()));
 
@@ -393,12 +393,13 @@ intensity->hide(); //XXX!!! temporary
     load_msecs = total_msecs = lap_msecs = 0;
     displayWorkoutDistance = displayDistance = displayPower = displayHeartRate =
     displaySpeed = displayCadence = slope = load = 0;
+    displayLRBalance = displayLTE = displayRTE = displayLPS = displayRPS = 0;
 
     connect(gui_timer, SIGNAL(timeout()), this, SLOT(guiUpdate()));
     connect(disk_timer, SIGNAL(timeout()), this, SLOT(diskUpdate()));
     connect(load_timer, SIGNAL(timeout()), this, SLOT(loadUpdate()));
 
-    configChanged(); // will reset the workout tree
+    configChanged(CONFIG_APPEARANCE | CONFIG_DEVICES | CONFIG_ZONES); // will reset the workout tree
     setLabels();
 
 #ifndef Q_OS_MAC
@@ -501,7 +502,7 @@ TrainSidebar::mediaPopup()
 }
 
 void
-TrainSidebar::configChanged()
+TrainSidebar::configChanged(qint32)
 {
     setProperty("color", GColor(CTRAINPLOTBACKGROUND));
 #if !defined GC_VIDEO_NONE
@@ -1055,6 +1056,11 @@ void TrainSidebar::updateData(RealtimeData &rtData)
     displayHeartRate = rtData.getHr();
     displaySpeed = rtData.getSpeed();
     load = rtData.getLoad();
+    displayLRBalance = rtData.getLRBalance();
+    displayLTE = rtData.getLTE();
+    displayRTE = rtData.getRTE();
+    displayLPS = rtData.getLPS();
+    displayRPS = rtData.getRPS();
     // Gradient not supported
     return;
 }
@@ -1112,8 +1118,8 @@ void TrainSidebar::guiUpdate()           // refreshes the telemetry
 					// to within defined limits					
 				}
 
-                if (Devices[dev].type == DEV_ANTLOCAL) {
-                    rtData.setHb(local.getSmO2(), local.gettHb()); //only moxy data from ant devices right now
+                if (Devices[dev].type == DEV_ANTLOCAL || Devices[dev].type == DEV_NULL) {
+                    rtData.setHb(local.getSmO2(), local.gettHb()); //only moxy data from ant and robot devices right now
                 }
 				
                 // what are we getting from this one?
@@ -1126,6 +1132,11 @@ void TrainSidebar::guiUpdate()           // refreshes the telemetry
                 if (dev == wattsTelemetry) {
                     rtData.setWatts(local.getWatts());
                     rtData.setAltWatts(local.getAltWatts());
+                    rtData.setLRBalance(local.getLRBalance());
+                    rtData.setLTE(local.getLTE());
+                    rtData.setRTE(local.getRTE());
+                    rtData.setLPS(local.getLPS());
+                    rtData.setRPS(local.getRPS());
                 }
             }
 
@@ -1159,6 +1170,11 @@ void TrainSidebar::guiUpdate()           // refreshes the telemetry
             displaySpeed = rtData.getSpeed();
             load = rtData.getLoad();
             slope = rtData.getSlope();
+            displayLRBalance = rtData.getLRBalance();
+            displayLTE = rtData.getLTE();
+            displayRTE = rtData.getRTE();
+            displayLPS = rtData.getLPS();
+            displayRPS = rtData.getRPS();
 
             // virtual speed
             double crr = 0.004f; // typical for asphalt surfaces
@@ -1186,7 +1202,7 @@ void TrainSidebar::guiUpdate()           // refreshes the telemetry
                 (3.*pow(2,0.3333333333333333)*ad*cdA));
 
             // just in case...
-            if (isnan(vs) || isinf(vs)) vs = 0.00f;
+            if (std::isnan(vs) || std::isinf(vs)) vs = 0.00f;
             rtData.setVirtualSpeed(vs);
 
             // W'bal on the fly
@@ -1286,11 +1302,11 @@ void TrainSidebar::diskUpdate()
                         << "," // slope
                         << "," // temp
                         << "," << (displayLap + displayWorkoutLap)
-                        << "," // lrbalance
-                        << "," // lte
-                        << "," // rte
-                        << "," // lps
-                        << "," // rps
+                        << "," << displayLRBalance
+                        << "," << displayLTE
+                        << "," << displayRTE
+                        << "," << displayLPS
+                        << "," << displayRPS
                         << "," // smo2
                         << "," // thb
                         << "," // o2hb
@@ -1750,7 +1766,7 @@ TrainSidebar::deleteDevice()
     all.writeConfig(list);
 
     // tell everyone
-    context->notifyConfigChanged();
+    context->notifyConfigChanged(CONFIG_DEVICES);
 }
 
 // we have been told to select this video (usually because

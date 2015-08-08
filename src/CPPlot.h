@@ -68,12 +68,15 @@ class CPPlot : public QwtPlot
         void setShowPercent(bool x);
         void setShowBest(bool x);
         void setShowHeat(bool x);
+        void setShowEffort(bool x);
         void setShowHeatByDate(bool x);
         void setShowDelta(bool delta, bool percent);
         void setShadeMode(int x);
         void setShadeIntervals(int x);
+        void setVeloCP(int x) { veloCP = x; }
         void setDateCP(int x) { dateCP = x; }
         void setDateCV(double x) { dateCV = x; }
+        void setSport(bool run, bool swim) { isRun = run; isSwim = swim; }
         void setSeries(CriticalPowerWindow::CriticalSeriesType);
         void setPlotType(int index);
         void setModel(int sanI1, int sanI2, int anI1, int anI2, 
@@ -84,6 +87,7 @@ class CPPlot : public QwtPlot
         QVector<QDate> getBestDates();
         const QwtPlotCurve *getThisCurve() const { return rideCurve; }
         const QwtPlotCurve *getModelCurve() const { return modelCurve; }
+        const QwtPlotCurve *getEffortCurve() const { return effortCurve; }
 
         // when rides saved/deleted/added CPWindow
         // needs to know what range we have plotted
@@ -97,7 +101,7 @@ class CPPlot : public QwtPlot
     public slots:
 
         // colors/appearance changed
-        void configChanged();
+        void configChanged(qint32);
 
         // the picker hovered over a point on the curve
         void pointHover(QwtPlotCurve *curve, int index);
@@ -105,6 +109,10 @@ class CPPlot : public QwtPlot
         // filter being applied
         void clearFilter();
         void setFilter(QStringList);
+
+        // during a refresh we get a chance to replot
+        void refreshUpdate(QDate);
+        void refreshEnd();
 
     private:
 
@@ -116,7 +124,8 @@ class CPPlot : public QwtPlot
 
         // plotters
         void plotRide(RideItem *);
-        void plotBests();
+        void plotBests(RideItem *);
+        void plotEfforts();
         void plotModel();
         void plotModel(QVector<double> vector, QColor plotColor, PDModel *baseline); // for compare date range models
         void plotCentile(RideItem *);
@@ -136,9 +145,12 @@ class CPPlot : public QwtPlot
 
         // Data and State
         Context *context;
-        RideFileCache *rideCache, *bestsCache;
+        RideFileCache *bestsCache;
+        int veloCP;
         int dateCP;
         double dateCV;
+        bool isRun, isSwim;
+        QTime lastupdate;
 
         // settings
         RideFile::SeriesType rideSeries;
@@ -151,6 +163,7 @@ class CPPlot : public QwtPlot
         bool showBest;
         bool showPercent;
         bool showHeat;
+        bool showEffort;
         bool showHeatByDate;
         bool showDelta; // only in compare mode
         bool showDeltaPercent; // only in compare mode
@@ -162,9 +175,14 @@ class CPPlot : public QwtPlot
         QList<QwtPlotCurve*> centileCurves;
         QList<QwtPlotCurve*> intervalCurves;
 
+        QList<QwtPlotCurve*> modelCurves;
+        QList<QwtPlotIntervalCurve*> modelIntCurves;
+        QList<CpPlotCurve*> modelCPCurves;
+
         QwtPlotCurve *rideCurve;
         QwtPlotCurve *modelCurve;
 
+        QwtPlotCurve *effortCurve;
         QwtPlotCurve *heatCurve;
         CpPlotCurve *heatAgeCurve;
 

@@ -36,7 +36,16 @@ SlfParser::startElement( const QString&, const QString&,
     (void)qName;
     (void)qAttributes;
 
-    if (qName == "Log")
+    if (qName == "Activity")
+    {
+        secs = 0.0;
+        distance = 0.0;
+        lap = 0;
+    } else if (qName == "Computer")
+    {
+        rideFile->setDeviceType(qAttributes.value("unit"));
+    }
+    else if (qName == "Log")
     {
         secs = 0.0;
         distance = 0.0;
@@ -68,10 +77,17 @@ SlfParser::startElement( const QString&, const QString&,
 bool
 SlfParser::endElement( const QString&, const QString&, const QString& qName)
 {
-    if (qName == "StartDatum")
+    if (qName == "startDate")
+    {
+        // Fri May 1 13:55:10 GMT+0200 2015
+        QLocale local(QLocale::English);
+        QString date = buffer.mid(0,buffer.indexOf("GMT")) + buffer.right(4);
+        rideFile->setStartTime(local.toDateTime(date, "ddd MMM d HH:mm:ss yyyy"));
+    }
+    else if (qName == "StartDatum")
     {
         start_time.setDate(QDate::fromString(buffer, "dd.MM.yy").addYears(100));
-	rideFile->setStartTime(start_time);
+        rideFile->setStartTime(start_time);
     }
     else if (qName == "StartZeit")
     {
@@ -149,7 +165,7 @@ SlfParser::endElement( const QString&, const QString&, const QString& qName)
                 distance *= KM_PER_MILE;
                 alt *= FEET_PER_METER;
             }
-            rideFile->appendPoint(secs, cadence, hr, distance, speed, torque, power, alt, lon, lat, headwind, 0.0, RideFile::NoTemp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, lap);
+            rideFile->appendPoint(secs, cadence, hr, distance, speed, torque, power, alt, lon, lat, headwind, 0.0, RideFile::NoTemp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, lap);
             secs += samplingRate;
         }
     }

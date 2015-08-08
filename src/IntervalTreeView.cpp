@@ -22,9 +22,11 @@
 #include "RideFile.h"
 #include "Context.h"
 #include "Settings.h"
+#include "Colors.h"
 #include <QStyle>
 #include <QStyleFactory>
 #include <QScrollBar>
+#include <QStyledItemDelegate>
 
 
 IntervalTreeView::IntervalTreeView(Context *context) : context(context)
@@ -43,29 +45,57 @@ IntervalTreeView::IntervalTreeView(Context *context) : context(context)
     setMouseTracking(true);
     invisibleRootItem()->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 
+    // we want the color rectangle
+    setItemDelegate(new IntervalColorDelegate(this));
+
     connect(this, SIGNAL(itemEntered(QTreeWidgetItem*,int)), this, SLOT(mouseHover(QTreeWidgetItem*,int)));
 }
 
 void
 IntervalTreeView::mouseHover(QTreeWidgetItem *item, int)
 {
-    int index = invisibleRootItem()->indexOfChild(item);
-    if (index >=0 && context->rideItem() && context->rideItem()->ride() &&
-        context->rideItem()->ride()->intervals().count() > index) {
+    QVariant v = item->data(0, Qt::UserRole);
+    IntervalItem *hover = static_cast<IntervalItem*>(v.value<void*>());
 
-        context->notifyIntervalHover(context->rideItem()->ride()->intervals()[index]);
-    }
+    // NULL is a tree, non-NULL is a node
+    if (hover) context->notifyIntervalHover(hover);
 }
 
 void
 IntervalTreeView::dropEvent(QDropEvent* event)
 {
-    IntervalItem* item1 = (IntervalItem *)itemAt(event->pos());
-    QTreeWidget::dropEvent(event);
-    IntervalItem* item2 = (IntervalItem *)itemAt(event->pos());
+    QTreeWidgetItem* target = (QTreeWidgetItem *)itemAt(event->pos());
+    QTreeWidgetItem* parent = target->parent();
 
-    if (item1==topLevelItem(0) || item1 != item2)
-        QTreeWidget::itemChanged(item2, 0);
+    QList<IntervalItem*> intervals =  context->rideItem()->intervals();
+    QList<IntervalItem*> userIntervals = context->rideItem()->intervals(RideFileInterval::USER);
+
+    int indexTo = intervals.indexOf(userIntervals.at(parent->indexOfChild(target)));
+    int offsetFrom = 0;
+    int offsetTo = 0;
+
+    bool change = false;
+    foreach (QTreeWidgetItem *p, selectedItems()) {
+        if (p->parent() == parent) {
+            int indexFrom = intervals.indexOf(userIntervals.at(parent->indexOfChild(p)));
+
+            context->rideItem()->moveInterval(indexFrom+offsetFrom,indexTo+offsetTo);
+            change = true;
+
+            if (indexFrom<indexTo)
+                offsetFrom--;
+            else
+                offsetTo++;
+        }
+    }
+
+    if (change) {
+        context->notifyIntervalsUpdate(context->rideItem());
+        context->rideItem()->setDirty(true);
+    }
+
+    // We don't need or want to finish the dropEvent
+    //QTreeWidget::dropEvent(event);
 }
 
 QStringList 
@@ -93,18 +123,60 @@ IntervalTreeView::mimeData (const QList<QTreeWidgetItem *> items) const
     foreach (QTreeWidgetItem *p, items) {
 
         // convert to one of ours
-        IntervalItem *i = static_cast<IntervalItem*>(p);
+        QVariant v = p->data(0, Qt::UserRole);
+        IntervalItem *interval = static_cast<IntervalItem*>(v.value<void*>());
+
+        // drag and drop tree !?
+        if (interval == NULL) return returning;
+
+        RideItem *ride = interval->rideItem();
 
         // serialize
-        stream << p->text(0); // name
-        stream << (quint64)(i->ride);
-        stream << (quint64)i->start << (quint64)i->stop; // start and stop in secs
-        stream << (quint64)i->startKM << (quint64)i->stopKM; // start and stop km
-        stream << (quint64)i->displaySequence;
+        stream << interval->name; // name
+        stream << (quint64)(ride);
+        stream << (quint64)interval->start << (quint64)interval->stop; // start and stop in secs
+        stream << (quint64)interval->startKM << (quint64)interval->stopKM; // start and stop km
+        stream << (quint64)interval->displaySequence;
+        stream << interval->route;
 
     }
 
     // and return as mime data
     returning->setData("application/x-gc-intervals", rawData);
     return returning;
+}
+
+void 
+IntervalColorDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const 
+{
+    QStyledItemDelegate::paint(painter, option, index);
+
+    painter->save();
+
+    // Only do this on items !
+    if(index.isValid() && index.parent().isValid()) {
+
+        // extract the state of item
+        bool hover = option.state & QStyle::State_MouseOver;
+        bool selected = option.state & QStyle::State_Selected;
+        bool focus = option.state & QStyle::State_HasFocus;
+
+        QTreeWidgetItem *item = tree->itemFromIndexPublic(index);
+        QVariant v =  item->data(0, Qt::UserRole+1);
+        QColor color = v.value<QColor>();
+
+        // indicate color of interval in charts
+        if (!selected && !hover) {
+
+            // 7 pix wide mark on rhs
+            QRect high(option.rect.x()+option.rect.width() - 7, 
+                       option.rect.y(), 7, tree->rowHeightPublic(index));
+
+            // use the interval colour
+            painter->fillRect(high, color);
+
+        }
+    }
+    painter->restore();
 }

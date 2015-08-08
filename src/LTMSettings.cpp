@@ -129,28 +129,38 @@ LTMSettings::readChartXML(QDir home, bool useMetricUnits, QList<LTMSettings> &ch
 
     // translate only once and only if the built-in version is imported
     if (builtIn) {
-        // create translation maps (for names and units)
-        QMap<QString, QString> nMap;  // names
-        QMap<QString, QString> uMap;  // unit of measurement
-        LTMTool::getMetricsTranslationMap(nMap, uMap, useMetricUnits);
 
-        // now run over all chart metrics and map - name and unit
+        // now run over all charts to replace name and unit
         for (int i=0; i<charts.count(); i++) {
-            for (int j=0; j<charts[i].metrics.count(); j++){
-                // no map and substitute
-                QString n  = nMap.value(charts[i].metrics[j].symbol, charts[i].metrics[j].uname);
-                QString u  = uMap.value(charts[i].metrics[j].symbol, charts[i].metrics[j].uunits);
-                // set name, unit only if there was text before
-                if (charts[i].metrics[j].name != "") charts[i].metrics[j].name = n;
-                charts[i].metrics[j].uname = n;
-                if (charts[i].metrics[j].units != "") charts[i].metrics[j].units = u;
-                charts[i].metrics[j].units = charts[i].metrics[j].uunits = u;
-            }
+            charts[i].translateMetrics(useMetricUnits);
         }
     }
 }
 
-
+void
+LTMSettings::translateMetrics(bool useMetricUnits)
+{
+    const RideMetricFactory &factory = RideMetricFactory::instance();
+    // run over all chart metrics and replace name and unit
+    for (int j=0; j<metrics.count(); j++){
+        // get access to the metric using the .symbol() as key,
+        // since only CHART.XML and home-layout.xml are mapped
+        const RideMetric *m = factory.rideMetric(metrics[j].symbol);
+        if (m) {
+            // set name, units only if there was a description before
+            QTextEdit processHTMLname(m->name());
+            // uname is replaced only if it matches english name
+            if (metrics[j].uname == m->internalName())
+                metrics[j].uname = processHTMLname.toPlainText();
+            metrics[j].name = processHTMLname.toPlainText();
+            // uunits is replaced only if it matches unit,
+            // ir units are not saved it don't translate uunits
+            if (metrics[j].uunits == metrics[j].units)
+                metrics[j].uunits = m->units(useMetricUnits);
+            metrics[j].units = m->units(useMetricUnits);
+        }
+    }
+}
 
 /*----------------------------------------------------------------------
  * Marshall/Unmarshall to DataStream to store as a QVariant
@@ -171,7 +181,7 @@ QDataStream &operator<<(QDataStream &out, const LTMSettings &settings)
     out<<settings.field1;
     out<<settings.field2;
     out<<int(-1);
-    out<<int(11); // version 10
+    out<<int(LTM_VERSION_NUMBER); // defined in LTMSettings.h
     out<<settings.metrics.count();
     foreach(MetricDetail metric, settings.metrics) {
         bool discard = false;
@@ -211,6 +221,8 @@ QDataStream &operator<<(QDataStream &out, const LTMSettings &settings)
         out<<metric.estimateDuration;
         out<<metric.estimateDuration_units;
         out<<metric.wpk;
+        out<<metric.stressType;
+        out<<metric.units;
     }
     out<<settings.showData;
     out<<settings.stack;
@@ -245,6 +257,8 @@ QDataStream &operator>>(QDataStream &in, LTMSettings &settings)
         in>>version;
         in>>counter;
     }
+
+if (version <= LTM_VERSION_NUMBER) { // only if we know how to read !
 while(counter-- && !in.atEnd()) {
         bool discard;
         MetricDetail m;
@@ -318,9 +332,31 @@ while(counter-- && !in.atEnd()) {
         if (version >= 11) {
             in >> m.wpk;
         }
-        // get a metric pointer (if it exists)
-        m.metric = factory.rideMetric(m.symbol);
-        settings.metrics.append(m);
+        if (version >= 12) {
+            in >> m.stressType;
+        }
+        if (version >= 13) {
+            in >> m.units;
+        }
+
+
+        bool keep=true;
+        // check for deprecated things and set keep=false if
+        // we don't support this any more !
+        if (m.type == METRIC_MEASURE) keep = false;
+
+        // some sanity checking after strange corruption in 3.2
+        if (m.type < 0) keep = false;
+        if (m.type == METRIC_DB && m.symbol == "") keep = false;
+        if (m.type == METRIC_DB && factory.rideMetric(m.symbol)==NULL) keep = false;
+        if (m.topN > 100) m.topN = 0;
+        if (m.lowestN > 100) m.lowestN = 0;
+
+        if (keep) {
+            // get a metric pointer (if it exists)
+            m.metric = factory.rideMetric(m.symbol);
+            settings.metrics.append(m);
+        }
     }
     if (version >= 4) in >> settings.showData;
     if (version >= 6) {
@@ -328,6 +364,7 @@ while(counter-- && !in.atEnd()) {
     }
     if (version >= 7) {
         in >>settings.stackWidth;
+    }
     }
 
     return in;

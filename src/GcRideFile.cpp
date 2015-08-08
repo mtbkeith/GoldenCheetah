@@ -121,7 +121,7 @@ GcFileReader::openRideFile(QFile &file, QStringList &errors, QList<RideFile*>*) 
             add.stop = stop;
             add.start = interval.attribute("start").toDouble();
             add.name = interval.attribute("name");
-            rideFile->addInterval(add.start, add.stop, add.name);
+            rideFile->addInterval(RideFileInterval::DEVICE, add.start, add.stop, add.name);
         }
     }
     std::sort(intervalStops.begin(), intervalStops.end()); // just in case
@@ -147,7 +147,7 @@ GcFileReader::openRideFile(QFile &file, QStringList &errors, QList<RideFile*>*) 
         lat = sample.attribute("lat", "0.0").toDouble();
         while ((interval < intervalStops.size()) && (secs >= intervalStops[interval]))
             ++interval;
-        rideFile->appendPoint(secs, cad, hr, km, kph, nm, watts, alt, lon, lat, headwind, 0.0, RideFile::NoTemp, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
+        rideFile->appendPoint(secs, cad, hr, km, kph, nm, watts, alt, lon, lat, headwind, 0.0, RideFile::NoTemp, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
         if (!recIntSet) {
             rideFile->setRecIntSecs(sample.attribute("len").toDouble());
             recIntSet = true;
@@ -237,12 +237,12 @@ GcFileReader::writeRideFile(Context *,const RideFile *ride, QFile &file) const
     if (!ride->intervals().empty()) {
         QDomElement intervals = doc.createElement("intervals");
         root.appendChild(intervals);
-        foreach (RideFileInterval i, ride->intervals()) {
+        foreach (RideFileInterval *i, ride->intervals()) {
             QDomElement interval = doc.createElement("interval");
             intervals.appendChild(interval);
-            interval.setAttribute("name", i.name);
-            interval.setAttribute("start", QString("%1").arg(i.start));
-            interval.setAttribute("stop", QString("%1").arg(i.stop));
+            interval.setAttribute("name", i->name);
+            interval.setAttribute("start", QString("%1").arg(i->start));
+            interval.setAttribute("stop", QString("%1").arg(i->stop));
         }
     }
 

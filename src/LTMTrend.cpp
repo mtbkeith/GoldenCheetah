@@ -16,7 +16,7 @@
  * Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#include <math.h>
+#include <cmath>
 #include <float.h>
 #include "LTMTrend.h"
 
@@ -46,6 +46,18 @@ LTMTrend::LTMTrend(double *xdata, double *ydata, int count) :
         b = ( double(points) * sumXY - sumY * sumX) /
             ( double(points) * sumXsquared - sumX * sumX);
         a = (sumY - b * sumX) / double(points);
+        //UNUSED double r = ( double(points) * sumXY - sumY * sumX) /
+            sqrt(( double(points) * sumXsquared - sumX * sumX) * ( double(points) * sumYsquared - sumY * sumY));
+
+        //UNUSED double sx = b * ( sumXY - sumX * sumY / double(points) );
+        //UNUSED double sy2 = sumYsquared - sumY * sumY / double(points);
+        //UNUSED double sy = sy2 - sx;
+
+        //UNUSED double coefD = sx / sy2;
+        //UNUSED double coefC = sqrt(coefD);
+        //UNUSED double stdError = sqrt(sy / double(points - 2));
+
+        //qDebug() << coefD << coefC << stdError << r;
     }
 }
 

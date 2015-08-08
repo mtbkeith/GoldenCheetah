@@ -23,15 +23,35 @@
 #include "TimeUtils.h"
 
 OAuthDialog::OAuthDialog(Context *context, OAuthSite site) :
-    context(context), site(site), requestToken(false), requestAuth(false)
+    context(context), site(site)
 {
+
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(tr("OAuth"));
+
+    // check if SSL is available - if not - message and end
+    if (!QSslSocket::supportsSsl()) {
+        QString text = QString(tr("SSL Security Libraries required for 'Authorise' are missing in this installation."));
+        QMessageBox sslMissing(QMessageBox::Critical, tr("Authorization Error"), text);
+        sslMissing.exec();
+        noSSLlib = true;
+        return;
+    }
+
+    // SSL is available - so authorisation can take place
+    noSSLlib = false;
 
     layout = new QVBoxLayout();
     layout->setSpacing(0);
     layout->setContentsMargins(2,0,2,2);
     setLayout(layout);
+
+    view = new QWebView();
+    view->setContentsMargins(0,0,0,0);
+    view->page()->view()->setContentsMargins(0,0,0,0);
+    view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    view->setAcceptDrops(false);
+    layout->addWidget(view);
 
     QString urlstr = "";
     if (site == STRAVA) {
@@ -44,52 +64,37 @@ OAuthDialog::OAuthDialog(Context *context, OAuthSite site) :
 
     } else if (site == TWITTER) {
 
-#ifdef GC_HAVE_LIBOAUTH
+#ifdef GC_HAVE_KQOAUTH
+        oauthRequest = new KQOAuthRequest;
+        oauthManager = new KQOAuthManager(this);
 
-        int rc;
-        char **rv = NULL;
-        QString token;
-        QString url = QString();
-        t_key = NULL;
-        t_secret = NULL;
-        const char *request_token_uri = "https://api.twitter.com/oauth/request_token";
-        char *req_url = NULL;
-        char *postarg = NULL;
-        char *reply   = NULL;
+        connect(oauthManager, SIGNAL(temporaryTokenReceived(QString,QString)),
+                this, SLOT(onTemporaryTokenReceived(QString, QString)));
 
-        // get the url
-        req_url = oauth_sign_url2(request_token_uri, NULL, OA_HMAC, NULL, GC_TWITTER_CONSUMER_KEY, GC_TWITTER_CONSUMER_SECRET, NULL, NULL);
-        if (req_url != NULL) {
+        connect(oauthManager, SIGNAL(authorizationReceived(QString,QString)),
+                this, SLOT( onAuthorizationReceived(QString, QString)));
+
+        connect(oauthManager, SIGNAL(accessTokenReceived(QString,QString)),
+                this, SLOT(onAccessTokenReceived(QString,QString)));
+
+        connect(oauthManager, SIGNAL(requestReady(QByteArray)),
+                this, SLOT(onRequestReady(QByteArray)));
+
+        connect(oauthManager, SIGNAL(authorizationPageRequested(QUrl)),
+                this, SLOT(onAuthorizationPageRequested(QUrl)));
 
 
-            // post it
-            reply = oauth_http_get(req_url,postarg);
-            if (reply != NULL) {
+        oauthRequest->initRequest(KQOAuthRequest::TemporaryCredentials, QUrl("https://api.twitter.com/oauth/request_token"));
 
-                // will split reply into parameters using strdup
-                rc = oauth_split_url_parameters(reply, &rv);
+        oauthRequest->setConsumerKey(GC_TWITTER_CONSUMER_KEY);
+        oauthRequest->setConsumerSecretKey(GC_TWITTER_CONSUMER_SECRET);
 
-                if (rc >= 3) {
+        oauthManager->setHandleUserAuthorization(true);
+        oauthManager->setHandleAuthorizationPageOpening(false);
 
-                    // really ?
-                    qsort(rv, rc, sizeof(char *), oauth_cmpstringp);
+        oauthManager->executeRequest(oauthRequest);
 
-                    token = QString(rv[1]);
-                    t_key  =strdup(&(rv[1][12]));
-                    t_secret =strdup(&(rv[2][19]));
-                    urlstr = QString("https://api.twitter.com/oauth/authorize?");
-                    urlstr.append(token);
-
-                    // free memory using count rc
-                    for(int i=0; i<rc; i++) free(rv[i]);
-                }
-
-                //urlstr.append("&oauth_callback=http%3A%2F%2Fwww.goldencheetah.org%2F");
-                requestToken = true;
-            }
-        }
 #endif
-
     } else if (site == CYCLING_ANALYTICS) {
 
         urlstr = QString("https://www.cyclinganalytics.com/api/auth?");
@@ -98,139 +103,253 @@ OAuthDialog::OAuthDialog(Context *context, OAuthSite site) :
         urlstr.append("redirect_uri=http://www.goldencheetah.org/&");
         urlstr.append("response_type=code&");
         urlstr.append("approval_prompt=force");
+
+    } else if (site == GOOGLE_CALENDAR) {
+
+        // OAUTH 2.0 - Google flow for installed applications
+        urlstr = QString("https://accounts.google.com/o/oauth2/auth?");
+        urlstr.append("scope=https://www.googleapis.com/auth/calendar&");
+        urlstr.append("redirect_uri=urn:ietf:wg:oauth:2.0:oob&");
+        urlstr.append("response_type=code&");
+        urlstr.append("client_id=").append(GC_GOOGLE_CALENDAR_CLIENT_ID);
     }
 
+    // different process to get the token for STRAVA, CYCLINGANALYTICS vs. TWITTER
+    if (site == STRAVA || site == CYCLING_ANALYTICS || site == GOOGLE_CALENDAR ) {
 
-    url = QUrl(urlstr);
 
-    view = new QWebView();
-    view->setContentsMargins(0,0,0,0);
-    view->page()->view()->setContentsMargins(0,0,0,0);
-    view->setUrl(url);
-    view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    view->setAcceptDrops(false);
-    layout->addWidget(view);
+        url = QUrl(urlstr);
+        view->setUrl(url);
 
-    //
-    // connects
-    //
-    connect(view, SIGNAL(urlChanged(const QUrl&)), this, SLOT(urlChanged(const QUrl&)));
-    connect(view, SIGNAL(loadFinished(bool)), this, SLOT(loadFinished()));
+        // connects
+        connect(view, SIGNAL(urlChanged(const QUrl&)), this, SLOT(urlChanged(const QUrl&)));
+        connect(view, SIGNAL(loadFinished(bool)), this, SLOT(loadFinished(bool)));
+    }
+}
+
+#ifdef GC_HAVE_KQOAUTH
+// ****************** Twitter OAUTH ******************************************************
+
+void OAuthDialog::onTemporaryTokenReceived(QString, QString)
+{
+    QUrl userAuthURL("https://api.twitter.com/oauth/authorize");
+
+    if( oauthManager->lastError() == KQOAuthManager::NoError) {
+        oauthManager->getUserAuthorization(userAuthURL);
+    }
 
 }
+
+void OAuthDialog::onAuthorizationReceived(QString, QString) {
+    // qDebug() << "Authorization token received: " << token << verifier;
+
+    oauthManager->getUserAccessTokens(QUrl("https://api.twitter.com/oauth/access_token"));
+    if( oauthManager->lastError() != KQOAuthManager::NoError) {
+        QString error = QString(tr("Error fetching OAuth credentials - Endpoint: /oauth/access_token"));
+        QMessageBox oautherr(QMessageBox::Critical, tr("Authorization Error"), error);
+        oautherr.exec();
+        accept();
+    }
+}
+
+void OAuthDialog::onAccessTokenReceived(QString token, QString tokenSecret) {
+    // qDebug() << "Access token received: " << token << tokenSecret;
+
+    appsettings->setCValue(context->athlete->cyclist, GC_TWITTER_TOKEN, token);
+    appsettings->setCValue(context->athlete->cyclist, GC_TWITTER_SECRET,  tokenSecret);
+
+    QString info = QString(tr("Twitter authorization was successful."));
+    QMessageBox information(QMessageBox::Information, tr("Information"), info);
+    information.exec();
+    accept();
+}
+
+void OAuthDialog::onAuthorizedRequestDone() {
+    // request sent to Twitter - do nothing
+}
+
+void OAuthDialog::onRequestReady(QByteArray response) {
+    // qDebug() << "Response received: " << response;
+    QString r = response;
+    if (r.contains("\"errors\"", Qt::CaseInsensitive))
+    {
+        QMessageBox oautherr(QMessageBox::Critical, tr("Error in authorization"),
+             tr("There was an error during authorization. Please check the error description."));
+             oautherr.setDetailedText(r); // probably blank
+         oautherr.exec();
+    }
+}
+
+
+void OAuthDialog::onAuthorizationPageRequested(QUrl url) {
+    // open Authorization page in view
+    view->setUrl(url);
+
+}
+#endif
+
+// ****************** Strava / Cyclinganalytics / Google authorization ***************************************
 
 void
 OAuthDialog::urlChanged(const QUrl &url)
 {
-    if (url.toString().startsWith("http://www.goldencheetah.org/?state=&code=") ||
-        url.toString().startsWith("http://www.goldencheetah.org/?code=")) {
-        QString code = url.toString().right(url.toString().length()-url.toString().indexOf("code=")-5);
+    // STRAVA & CYCLINGANALYTICS work with Call-back URLs / change of URL indicates next step is required
 
-        QByteArray data;
+    if (site == STRAVA || site == CYCLING_ANALYTICS) {
+        if (url.toString().startsWith("http://www.goldencheetah.org/?state=&code=") ||
+                url.toString().startsWith("http://www.goldencheetah.org/?code=")) {
+            QString code = url.toString().right(url.toString().length()-url.toString().indexOf("code=")-5);
+
+            QByteArray data;
 #if QT_VERSION > 0x050000
-        QUrlQuery params;
+            QUrlQuery params;
 #else
-        QUrl params;
+            QUrl params;
 #endif
-        QString urlstr = "";
+            QString urlstr = "";
 
-        if (site == STRAVA) {
-            urlstr = QString("https://www.strava.com/oauth/token?");
-            params.addQueryItem("client_id", GC_STRAVA_CLIENT_ID);
+            // now get the final token to store
+            if (site == STRAVA) {
+                urlstr = QString("https://www.strava.com/oauth/token?");
+                params.addQueryItem("client_id", GC_STRAVA_CLIENT_ID);
 #ifdef GC_STRAVA_CLIENT_SECRET
-            params.addQueryItem("client_secret", GC_STRAVA_CLIENT_SECRET);
+                params.addQueryItem("client_secret", GC_STRAVA_CLIENT_SECRET);
 #endif
-            params.addQueryItem("redirect_uri", "http://www.goldencheetah.org/");
-        }
-        else if (site == TWITTER) {
+            }
 
-        }
-        else if (site == CYCLING_ANALYTICS) {
-            urlstr = QString("https://www.cyclinganalytics.com/api/token?");
-            params.addQueryItem("client_id", GC_CYCLINGANALYTICS_CLIENT_ID);
+            else if (site == CYCLING_ANALYTICS) {
+                urlstr = QString("https://www.cyclinganalytics.com/api/token?");
+                params.addQueryItem("client_id", GC_CYCLINGANALYTICS_CLIENT_ID);
 #ifdef GC_CYCLINGANALYTICS_CLIENT_SECRET
-            params.addQueryItem("client_secret", GC_CYCLINGANALYTICS_CLIENT_SECRET);
+                params.addQueryItem("client_secret", GC_CYCLINGANALYTICS_CLIENT_SECRET);
 #endif
-            params.addQueryItem("grant_type", "authorization_code");
-        }
-        params.addQueryItem("code", code);
+                params.addQueryItem("grant_type", "authorization_code");
+
+            }
+
+            params.addQueryItem("code", code);
 
 #if QT_VERSION > 0x050000
-        data.append(params.query(QUrl::FullyEncoded));
+            data.append(params.query(QUrl::FullyEncoded));
 #else
-        data=params.encodedQuery();
+            data=params.encodedQuery();
 #endif
 
-        QUrl url = QUrl(urlstr);
-        QNetworkRequest request = QNetworkRequest(url);
-        request.setHeader(QNetworkRequest::ContentTypeHeader,"application/x-www-form-urlencoded");
+            // trade-in the temporary access code retrieved by the Call-Back URL for the finale token
+            QUrl url = QUrl(urlstr);
+            QNetworkRequest request = QNetworkRequest(url);
+            request.setHeader(QNetworkRequest::ContentTypeHeader,"application/x-www-form-urlencoded");
 
-        requestToken = true;
-        view->load(request,QNetworkAccessManager::PostOperation,data);
+            // now get the final token
+            manager = new QNetworkAccessManager(this);
+            connect(manager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkRequestFinished(QNetworkReply*)));
+            manager->post(request, data);
+
+        }
     }
 }
 
 void
-OAuthDialog::loadFinished()
-{
-    if (requestToken) {
-        //qDebug()<< view->page()->mainFrame()->toHtml();
+OAuthDialog::loadFinished(bool ok) {
 
-        int at = view->page()->mainFrame()->toHtml().indexOf("\"access_token\":");
-        if (at==-1)
-            at = view->page()->mainFrame()->toHtml().indexOf("<code>");
-        if (at>-1) {
-            int i = -1;
-            int j = -1;
+    // GOOGLE OAUTH 2.0 sends the code as part of the title of the HTML page they re-direct too
+    if (site == GOOGLE_CALENDAR) {
+        if (ok && url.toString().startsWith("https://accounts.google.com/o/oauth2/auth")) {
 
-            if (site == TWITTER) {
-                i = at+5;
-                j = view->page()->mainFrame()->toHtml().indexOf("</code>", i+1);
-            }
-            else  {
-                i = view->page()->mainFrame()->toHtml().indexOf("\"", at+15);
-                j = view->page()->mainFrame()->toHtml().indexOf("\"", i+1);
-            }
-            if (i>-1 && j>-1) {
-                QString access_token = view->page()->mainFrame()->toHtml().mid(i+1,j-i-1);
-                //qDebug() << "access_token" << access_token;
-
-                if (site == STRAVA) {
-                    appsettings->setCValue(context->athlete->cyclist, GC_STRAVA_TOKEN, access_token);
-                }
-                else if (site == TWITTER) {
-#ifdef GC_HAVE_LIBOAUTH
-                    char *reply;
-                    char *req_url;
-                    char **rv = NULL;
-                    char *postarg = NULL;
-                    QString url = QString("https://api.twitter.com/oauth/access_token?a=b&oauth_verifier=");
-
-                    url.append(access_token);
-
-                    req_url = oauth_sign_url2(url.toLatin1(), NULL, OA_HMAC, NULL, GC_TWITTER_CONSUMER_KEY, GC_TWITTER_CONSUMER_SECRET, t_key, t_secret);
-                    reply = oauth_http_get(req_url,postarg);
-
-                    int rc = oauth_split_url_parameters(reply, &rv);
-
-                    if(rc ==4)
-                    {
-                        qsort(rv, rc, sizeof(char *), oauth_cmpstringp);
-
-                        const char *oauth_token = strdup(&(rv[0][12]));
-                        const char *oauth_secret = strdup(&(rv[1][19]));
-
-                        //Save Twitter oauth_token and oauth_secret;
-                        appsettings->setCValue(context->athlete->cyclist, GC_TWITTER_TOKEN, oauth_token);
-                        appsettings->setCValue(context->athlete->cyclist, GC_TWITTER_SECRET, oauth_secret);
-                    }
+            // retrieve the code from the HTML page title
+            QString title = view->title();
+            if (title.contains("code")) {
+                QString code = title.right(title.length()-title.indexOf("code=")-5);
+                QByteArray data;
+#if QT_VERSION > 0x050000
+                QUrlQuery params;
+#else
+                QUrl params;
 #endif
-                }
-                else if (site == CYCLING_ANALYTICS) {
-                    appsettings->setCValue(context->athlete->cyclist, GC_CYCLINGANALYTICS_TOKEN, access_token);
-                }
-                accept();
+                QString urlstr = "https://www.googleapis.com/oauth2/v3/token?";
+                params.addQueryItem("client_id", GC_GOOGLE_CALENDAR_CLIENT_ID);
+#ifdef GC_GOOGLE_CALENDAR_CLIENT_SECRET
+                params.addQueryItem("client_secret", GC_GOOGLE_CALENDAR_CLIENT_SECRET);
+#endif
+                params.addQueryItem("code", code);
+                params.addQueryItem("redirect_uri", "urn:ietf:wg:oauth:2.0:oob");
+                params.addQueryItem("grant_type", "authorization_code");
+
+#if QT_VERSION > 0x050000
+                data.append(params.query(QUrl::FullyEncoded));
+#else
+                data=params.encodedQuery();
+#endif
+
+                // trade-in the temporary access code retrieved by the Call-Back URL for the finale token
+                QUrl url = QUrl(urlstr);
+                QNetworkRequest request = QNetworkRequest(url);
+                request.setHeader(QNetworkRequest::ContentTypeHeader,"application/x-www-form-urlencoded");
+
+                // not get the final token
+                manager = new QNetworkAccessManager(this);
+                connect(manager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkRequestFinished(QNetworkReply*)));
+                manager->post(request, data);
+
             }
         }
     }
+}
+
+
+
+void OAuthDialog::networkRequestFinished(QNetworkReply *reply) {
+
+    if (reply->error() == QNetworkReply::NoError) {
+        QByteArray payload = reply->readAll(); // JSON
+        QByteArray token_type;
+        int token_length;
+        if (site == GOOGLE_CALENDAR) {
+            token_type = "\"refresh_token\":";
+            token_length = 16;
+        } else {  // all other sites have permanent access token
+            token_type = "\"access_token\":";
+            token_length = 15;
+        }
+
+        // get the token
+        int at = payload.indexOf(token_type);
+        if (at >=0 ) {
+            int from = at + token_length; // first char after ":"
+            int next = payload.indexOf("\"", from);
+            from = next + 1;
+            int to = payload.indexOf("\"", from);
+            QString access_token = payload.mid(from, to-from);
+            if (site == STRAVA) {
+                appsettings->setCValue(context->athlete->cyclist, GC_STRAVA_TOKEN, access_token);
+                QString info = QString(tr("Strava authorization was successful."));
+                QMessageBox information(QMessageBox::Information, tr("Information"), info);
+                information.exec();
+            } else if (site == CYCLING_ANALYTICS) {
+                appsettings->setCValue(context->athlete->cyclist, GC_CYCLINGANALYTICS_TOKEN, access_token);
+                QString info = QString(tr("Cycling Analytics authorization was successful."));
+                QMessageBox information(QMessageBox::Information, tr("Information"), info);
+                information.exec();
+            } else if (site == GOOGLE_CALENDAR) {
+                // remove the Google Page first
+                url = QUrl("http://www.goldencheetah.org");
+                view->setUrl(url);
+                appsettings->setCValue(context->athlete->cyclist, GC_GOOGLE_CALENDAR_REFRESH_TOKEN, access_token);
+                QString info = QString(tr("Google Calendar authorization was successful."));
+                QMessageBox information(QMessageBox::Information, tr("Information"), info);
+                information.exec();
+            }
+        }
+
+    } else { // something failed
+
+        QString error = QString(tr("Error retrieving authoriation credentials"));
+        QMessageBox oautherr(QMessageBox::Critical, tr("Authorization Error"), error);
+        oautherr.setDetailedText(error);
+        oautherr.exec();
+    }
+
+    // job done, dialog can be closed
+    accept();
+
 }

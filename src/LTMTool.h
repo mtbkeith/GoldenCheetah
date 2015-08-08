@@ -26,9 +26,7 @@
 #include "LTMSettings.h"
 #include "PDModel.h"
 
-#ifdef GC_HAVE_LUCENE
 #include "SearchFilterBox.h"
-#endif
 
 #include <QDir>
 #include <QFileDialog>
@@ -60,10 +58,10 @@ class LTMTool : public QWidget
     public:
 
         LTMTool(Context *context, LTMSettings *settings);
+        void hideBasic();
 
         QList<MetricDetail> metrics;
         MetricDetail* metricDetails(QString symbol);
-        static void translateMetrics(Context *context, LTMSettings *settings);
 
         // apply settings to the metric selector
         void applySettings();
@@ -75,9 +73,7 @@ class LTMTool : public QWidget
 
         LTMSettings *settings;
 
-#ifdef GC_HAVE_LUCENE
         SearchFilterBox *searchBox;
-#endif
 
         // basic tab: accessed by LTMWindow hence public
         QComboBox *groupBy;
@@ -96,7 +92,6 @@ class LTMTool : public QWidget
         DateSettingsEdit *dateSetting;
 
         static QList<MetricDetail> providePMmetrics();
-        static void getMetricsTranslationMap (QMap<QString, QString>& nMap, QMap<QString, QString>& uMap, bool useMetricUnits);
 
     signals:
 
@@ -111,6 +106,8 @@ class LTMTool : public QWidget
         void doubleClicked( int row, int column );
         void addMetric();
         void deleteMetric();
+        void moveMetricUp();
+        void moveMetricDown();
 
         void clearFilter();
         void setFilter(QStringList);
@@ -118,14 +115,6 @@ class LTMTool : public QWidget
         void presetsChanged();   // presets changed in the athlete class
         void usePresetChanged(); // we changed the checkbox
 
-        void exportClicked();
-        void importClicked();
-        void editingStarted();
-        void editingFinished();
-        void upClicked();
-        void downClicked();
-        void renameClicked();
-        void deleteClicked();
         void addCurrent();
 
     private:
@@ -142,17 +131,21 @@ class LTMTool : public QWidget
         QStringList filenames; // filters
 
         QTabWidget *tabs;
+        QWidget *basicsettings, *basic, *custom;
 
         // preset tab:
         QWidget *presetWidget;
         QLineEdit *chartName;
-        QPushButton *importButton, *exportButton;
-        QPushButton *upButton, *downButton, *renameButton, *deleteButton;
 
         // custom tab:
         QTableWidget *customTable;
         QPushButton *editCustomButton, *addCustomButton, *deleteCustomButton;
-        void refreshCustomTable(); // refreshes the table from LTMSettings
+#ifndef Q_OS_MAC
+        QToolButton *upCustomButton, *downCustomButton;
+#else
+        QPushButton *upCustomButton, *downCustomButton;
+#endif
+        void refreshCustomTable(int indexSelectedItem = -1); // refreshes the table from LTMSettings
 };
 
 class EditMetricDetailDialog : public QDialog
@@ -174,6 +167,7 @@ class EditMetricDetailDialog : public QDialog
 
         void typeChanged();
         void bestName();
+        void stressName();
         void estimateName();
 
         void modelChanged();
@@ -184,9 +178,9 @@ class EditMetricDetailDialog : public QDialog
         LTMTool *ltmTool;
         MetricDetail *metricDetail;
 
-        QRadioButton *chooseMetric, *chooseBest, *chooseEstimate;
+        QRadioButton *chooseMetric, *chooseBest, *chooseEstimate, *chooseStress;
         QButtonGroup *group;
-        QWidget *bestWidget, *estimateWidget;
+        QWidget *metricWidget, *bestWidget, *estimateWidget, *stressWidget;
         QStackedWidget *typeStack;
 
         // bests
@@ -206,6 +200,9 @@ class EditMetricDetailDialog : public QDialog
         QDoubleSpinBox *estimateDuration;
         QComboBox *estimateDurationUnits;
         QRadioButton *abs, *wpk;
+
+        // stress
+        QComboBox *stressTypeSelect; // STS, LTS, SB, RR et al
 
         QComboBox *curveStyle,
                   *curveSymbol;

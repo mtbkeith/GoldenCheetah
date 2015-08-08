@@ -18,7 +18,7 @@
 
 #include "SearchFilterBox.h"
 #include "Context.h"
-#include "Lucene.h"
+#include "FreeSearch.h"
 #include "DataFilter.h"
 #include "SearchBox.h"
 
@@ -34,18 +34,19 @@ SearchFilterBox::SearchFilterBox(QWidget *parent, Context *context, bool nochoos
     searchbox = new SearchBox(context, this, nochooser);
     contents->addWidget(searchbox);
 
-    lucene = new Lucene(this, context);
+    freeSearch = new FreeSearch(this, context);
     datafilter = new DataFilter(this,context);
 
     // text searching
-    connect(searchbox, SIGNAL(submitQuery(QString)), lucene, SLOT(search(QString)));
-    connect(lucene, SIGNAL(results(QStringList)), this, SIGNAL(searchResults(QStringList)));
+    connect(searchbox, SIGNAL(submitQuery(QString)), freeSearch, SLOT(search(QString)));
+    connect(freeSearch, SIGNAL(results(QStringList)), this, SIGNAL(searchResults(QStringList)));
     connect(searchbox, SIGNAL(clearQuery()), this, SIGNAL(searchClear()));
 
     // data filtering
     connect(searchbox, SIGNAL(submitFilter(QString)), datafilter, SLOT(parseFilter(QString)));
     connect(datafilter, SIGNAL(results(QStringList)), this, SIGNAL(searchResults(QStringList)));
     connect(searchbox, SIGNAL(clearFilter()), this, SIGNAL(searchClear()));
+    connect(searchbox, SIGNAL(clearFilter()), datafilter, SLOT(clearFilter()));
 
     // syntax check
     connect(datafilter, SIGNAL(parseGood()), searchbox, SLOT(setGood()));

@@ -27,6 +27,7 @@
 #include <QStyleFactory>
 
 class AllPlot;
+class AllPlotInterval;
 class AllPlotObject;
 class Context;
 class QwtPlotPanner;
@@ -59,6 +60,8 @@ class AllPlotWindow : public GcChartWindow
     Q_PROPERTY(int stackWidth READ _stackWidth WRITE setStackWidth USER true)
     Q_PROPERTY(int showGrid READ isShowGrid WRITE setShowGrid USER true)
     Q_PROPERTY(int showFull READ isShowFull WRITE setShowFull USER true)
+    Q_PROPERTY(int showInterval READ isShowInterval WRITE setShowInterval USER true)
+    Q_PROPERTY(int hovering READ isHovering WRITE setHovering USER true)
     Q_PROPERTY(int showHelp READ isShowHelp WRITE setShowHelp USER true)
     Q_PROPERTY(int showATISS READ isShowATISS WRITE setShowATISS USER true)
     Q_PROPERTY(int showANTISS READ isShowANTISS WRITE setShowANTISS USER true)
@@ -73,6 +76,7 @@ class AllPlotWindow : public GcChartWindow
     Q_PROPERTY(int showSlope READ isShowSlope WRITE setShowSlope USER true)
     Q_PROPERTY(int showAltSlope READ isShowAltSlope WRITE setShowAltSlope USER true)
     Q_PROPERTY(int showHr READ isShowHr WRITE setShowHr USER true)
+    Q_PROPERTY(int showTcore READ isShowTcore WRITE setShowTcore USER true)
     Q_PROPERTY(int showCadD READ isShowCadD WRITE setShowCadD USER true)
     Q_PROPERTY(int showTorqueD READ isShowTorqueD WRITE setShowTorqueD USER true)
     Q_PROPERTY(int showPowerD READ isShowPowerD WRITE setShowPowerD USER true)
@@ -81,6 +85,9 @@ class AllPlotWindow : public GcChartWindow
     Q_PROPERTY(int showBalance READ isShowBalance WRITE setShowBalance USER true)
     Q_PROPERTY(int showTE READ isShowTE WRITE setShowTE USER true)
     Q_PROPERTY(int showPS READ isShowPS WRITE setShowPS USER true)
+    Q_PROPERTY(int showPCO READ isShowPCO WRITE setShowPCO USER true)
+    Q_PROPERTY(int showDC READ isShowDC WRITE setShowDC USER true)
+    Q_PROPERTY(int showPPP READ isShowPPP WRITE setShowPPP USER true)
     Q_PROPERTY(int showTemp READ isShowTemp WRITE setShowTemp USER true)
     Q_PROPERTY(int showW READ isShowW WRITE setShowW USER true)
 
@@ -113,10 +120,12 @@ class AllPlotWindow : public GcChartWindow
 
         // get properties - the setters are below
         bool isStacked() const { return showStack->isChecked(); }
+        bool isHovering() const { return showHover->isChecked(); }
         bool isBySeries() const { return showBySeries->isChecked(); }
         int _stackWidth() const { return stackWidth; }
         int isShowGrid() const { return showGrid->checkState(); }
         int isShowFull() const { return showFull->checkState(); }
+        int isShowInterval() const { return showInterval->checkState(); }
         int isShowHelp() const { return showHelp->checkState(); }
         int isShowATISS() const { return showATISS->checkState(); }
         int isShowANTISS() const { return showANTISS->checkState(); }
@@ -132,12 +141,16 @@ class AllPlotWindow : public GcChartWindow
         int isShowCad() const { return showCad->checkState(); }
         int isShowTorque() const { return showTorque->checkState(); }
         int isShowHr() const { return showHr->checkState(); }
+        int isShowTcore() const { return showTcore->checkState(); }
         int isShowPowerD() const { return showPowerD->checkState(); }
         int isShowCadD() const { return showCadD->checkState(); }
         int isShowTorqueD() const { return showTorqueD->checkState(); }
         int isShowHrD() const { return showHrD->checkState(); }
         int isShowTE() const { return showTE->checkState(); }
         int isShowPS() const { return showPS->checkState(); }
+        int isShowPCO() const { return showPCO->checkState(); }
+        int isShowDC() const { return showDC->checkState(); }
+        int isShowPPP() const { return showPPP->checkState(); }
         int isShowBalance() const { return showBalance->checkState(); }
         int isShowTemp() const { return showTemp->checkState(); }
         int isShowW() const { return showW->checkState(); }
@@ -157,11 +170,12 @@ class AllPlotWindow : public GcChartWindow
 
         // trap GC signals
         void rideSelected();
+        void forceReplot();
         void rideDeleted(RideItem *ride);
         void intervalSelected();
         void zonesChanged();
         void intervalsChanged();
-        void configChanged();
+        void configChanged(qint32);
 
         // set properties
         void setSmoothingFromSlider();
@@ -170,6 +184,7 @@ class AllPlotWindow : public GcChartWindow
         void setrSmoothingFromLineEdit();
         void setStackWidth(int x);
         void setShowNP(int state);
+        void setHovering(int state);
         void setShowATISS(int state);
         void setShowANTISS(int state);
         void setShowXP(int state);
@@ -185,6 +200,7 @@ class AllPlotWindow : public GcChartWindow
         void setShowCad(int state);
         void setShowTorque(int state);
         void setShowHr(int state);
+        void setShowTcore(int state);
         void setShowPowerD(int state);
         void setShowCadD(int state);
         void setShowTorqueD(int state);
@@ -192,6 +208,9 @@ class AllPlotWindow : public GcChartWindow
         void setShowBalance(int state);
         void setShowPS(int state);
         void setShowTE(int state);
+        void setShowPCO(int state);
+        void setShowDC(int state);
+        void setShowPPP(int state);
         void setShowRV(int state);
         void setShowRCad(int state);
         void setShowRGCT(int state);
@@ -204,6 +223,7 @@ class AllPlotWindow : public GcChartWindow
         void setShowGrid(int state);
         void setPaintBrush(int state);
         void setShowFull(int state);
+        void setShowInterval(int state);
         void setShowHelp(int state);
         void setSmoothing(int value);
         void setByDistance(int value);
@@ -244,6 +264,7 @@ class AllPlotWindow : public GcChartWindow
         QVBoxLayout *allPlotLayout;
         AllPlot *allPlot;
         AllPlot *fullPlot;
+        AllPlotInterval *intervalPlot;
         QList <AllPlot *> allPlots;
         QList <AllPlot *> seriesPlots;
         QwtPlotPanner *allPanner;
@@ -278,9 +299,11 @@ class AllPlotWindow : public GcChartWindow
         // Common controls
         QGridLayout *controlsLayout;
         QCheckBox *showStack;
+        QCheckBox *showHover;
         QCheckBox *showBySeries;
         QCheckBox *showGrid;
         QCheckBox *showFull;
+        QCheckBox *showInterval;
         QCheckBox *showHelp;
         QCheckBox *paintBrush;
         QCheckBox *showAlt;
@@ -297,6 +320,7 @@ class AllPlotWindow : public GcChartWindow
         QCheckBox *showCad;
         QCheckBox *showTorque;
         QCheckBox *showHr;
+        QCheckBox *showTcore;
         QCheckBox *showPowerD;
         QCheckBox *showCadD;
         QCheckBox *showTorqueD;
@@ -306,6 +330,9 @@ class AllPlotWindow : public GcChartWindow
         QCheckBox *showBalance;
         QCheckBox *showTE;
         QCheckBox *showPS;
+        QCheckBox *showPCO;
+        QCheckBox *showDC;
+        QCheckBox *showPPP;
         QCheckBox *showW;
         QCheckBox *showRV;
         QCheckBox *showRGCT;
@@ -339,6 +366,7 @@ class AllPlotWindow : public GcChartWindow
         void redrawAllPlot();
         void redrawFullPlot();
         void redrawStackPlot();
+        void redrawIntervalPlot();
 
         void showInfo(QString);
         void resetStackedDatas();

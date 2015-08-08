@@ -24,6 +24,8 @@
 #include "Athlete.h"
 #include "Settings.h"
 #include "JsonRideFile.h"
+#include "HelpWhatsThis.h"
+#include "RideItem.h"
 #include <assert.h>
 #include <errno.h>
 #include <QtGui>
@@ -33,7 +35,10 @@ DownloadRideDialog::DownloadRideDialog(Context *context, bool embedded) :
     action(actionIdle), embedded(embedded)
 {
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle(tr("Download Ride Data"));
+    setWindowTitle(tr("Download Data"));
+
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Activity_Download));
 
     deviceCombo = new QComboBox(this);
     QList<QString> deviceTypes = Devices::typeNames();
@@ -59,7 +64,7 @@ DownloadRideDialog::DownloadRideDialog(Context *context, bool embedded) :
     progressLabel->setTextFormat(Qt::PlainText);
 
     downloadButton = new QPushButton(tr("&Download"), this);
-    eraseRideButton = new QPushButton(tr("&Erase Ride(s)"), this);
+    eraseRideButton = new QPushButton(tr("&Erase Data"), this);
     rescanButton = new QPushButton(tr("&Rescan"), this);
     cancelButton = new QPushButton(tr("&Cancel"), this);
     closeButton = new QPushButton(tr("&Close"), this);
@@ -296,10 +301,10 @@ DownloadRideDialog::downloadClicked()
     connect( device.data(), SIGNAL(updateProgress(QString)), this, SLOT(updateProgress(QString)));
 
     if (devtype->canPreview()) {
-        updateStatus(tr("Getting ride list ..."));
+        updateStatus(tr("Getting list ..."));
         if( ! device->preview( err ) ){
 
-            QMessageBox::information(this, tr("Get ride list failed"), err);
+            QMessageBox::information(this, tr("Get list failed"), err);
             updateAction( actionIdle );
 
             emit downloadEnds();
@@ -362,8 +367,8 @@ DownloadRideDialog::downloadClicked()
 
         if (QFile::exists(filepath)) {
             if (QMessageBox::warning( this,
-                    tr("Ride Already Downloaded"),
-                    tr("The ride starting at %1 appears to have already "
+                    tr("Activity Already Downloaded"),
+                    tr("The activity starting at %1 appears to have already "
                         "been downloaded.  Do you want to overwrite the "
                         "previous download?")
                         .arg(files.at(i).startTime.toString()),
@@ -419,6 +424,8 @@ DownloadRideDialog::downloadClicked()
         QStringList errors;
         QFile currentFile(filepath);
         QString targetFileName;
+        QString targetFileTmpActivitiesName;
+        QString targetFileActivitiesName;
         RideFile *ride = RideFileFactory::instance().openRideFile(context, currentFile, errors);
 
         // did it parse ok ?
@@ -434,14 +441,17 @@ DownloadRideDialog::downloadClicked()
             ride->setTag("Source Filename", filename);
             ride->setTag("Filename", targetFileName);
             JsonFileReader reader;
-            QFile target(context->athlete->home->activities().canonicalPath() + "/" + targetFileName);
+            // write to tempActivties first (until RideCache is updated without crash)
+            targetFileTmpActivitiesName = context->athlete->home->tmpActivities().canonicalPath() + "/" + targetFileName;
+            targetFileActivitiesName = context->athlete->home->activities().canonicalPath() + "/" + targetFileName;
             // no worry if file already exists - .JSON writer either creates the file or updates the file content
+            QFile target(targetFileTmpActivitiesName);
             reader.writeRideFile(context, ride, target);
 
         } else {
             QMessageBox::critical( this,
                   tr("Error"),
-                  tr("The ride %1 could not be converted to "
+                  tr("The activity %1 could not be converted to "
                       "GoldenCheetah .JSON file format.")
                         .arg(filename) );
                 updateStatus(tr(".JSON conversion error: file %1")
@@ -450,7 +460,18 @@ DownloadRideDialog::downloadClicked()
 
         }
 
-        context->athlete->addRide(targetFileName);
+        context->athlete->addRide(targetFileName, true, true);
+        // Ride Cache was updated without crash - so move the file from /tmpactivities to /activities
+        QFile targetFileActivities(targetFileActivitiesName);
+        // renaming does not overwrite - so remove any existing version (if exists) from /activities first
+        if (targetFileActivities.exists()) {
+            targetFileActivities.remove();
+        }
+        // now rename
+        QFile targetFileTmpActivities(targetFileTmpActivitiesName);
+        targetFileTmpActivities.rename(targetFileActivitiesName);
+        // and correct the path locally stored in Ride Item
+        context->ride->setFileName(context->athlete->home->activities().canonicalPath(), targetFileName);
     }
 
     if( ! failures )

@@ -20,6 +20,11 @@
 #include "MainWindow.h"
 #include "Context.h"
 #include "Athlete.h"
+#include "HelpWhatsThis.h"
+
+#include "Library.h"
+#include "LibraryParser.h"
+#include "TrainDB.h"
 
 #include "qwt_plot.h"
 #include "qwt_plot_curve.h"
@@ -177,9 +182,8 @@ void WorkoutMetricsSummary::updateMetrics(QStringList &order, QHash<QString,Ride
         QLabel *lcd = metricMap[name].second;
         if(name == "time_riding")
         {
-            QTime time;
-
-            time = time.addSecs(rmp->value(true));
+            QTime start (0,0,0);
+            QTime time = start.addSecs(rmp->value(true));
             QString s = time.toString("HH:mm:ss");
             //qDebug() << s << " " << time.second();
             lcd->setText(s);
@@ -232,10 +236,10 @@ void WorkoutTypePage::initializePage()
 
     if (hackContext->rideItem()) {
         QString s = hackContext->rideItem()->ride()->startTime().toLocalTime().toString();
-        QString importStr = "Import Selected Ride (" + s + ")";
+        QString importStr = tr("Import Selected Activity (") + s + ")";
         importRadioButton = new QRadioButton((importStr));
     } else {
-        importRadioButton = new QRadioButton("No ride selected");
+        importRadioButton = new QRadioButton(tr("No activity selected"));
     }
     QVBoxLayout *groupBoxLayout = new QVBoxLayout();
 
@@ -270,8 +274,8 @@ AbsWattagePage::AbsWattagePage(QWidget *parent) : WorkoutPage(parent) {}
 
 void AbsWattagePage::initializePage()
 {
-    setTitle("Workout Wizard");
-    setSubTitle("Absolute Wattage Workout Creator");
+    setTitle(tr("Workout Wizard"));
+    setSubTitle(tr("Absolute Wattage Workout Creator"));
     QHBoxLayout *layout = new QHBoxLayout();
     setLayout(layout);
     QStringList colms;
@@ -283,8 +287,8 @@ void AbsWattagePage::initializePage()
     metricsSummary = new WorkoutMetricsSummary();
     summaryLayout->addWidget(metricsSummary);
     plot = new WorkoutPlot();
-    plot->setYAxisTitle("Wattage");
-    plot->setXAxisTitle("Time (minutes)");
+    plot->setYAxisTitle(tr("Wattage"));
+    plot->setXAxisTitle(tr("Time (minutes)"));
     plot->setAxisScale(QwtPlot::yLeft,0,500,0);
     plot->setAxisScale(QwtPlot::xBottom,0,120,0);
     summaryLayout->addWidget(plot);
@@ -321,7 +325,8 @@ void AbsWattagePage::updateMetrics()
             RideFilePoint rfp;
             rfp.secs = curSecs++;
             rfp.watts = watts;
-            rfp.cad = 90;
+            rfp.cad = 90; // to be able to calculate the metrics - since time_riding depens on cad and kph
+            rfp.kph = 25; // to be able to calculate the metrics - since time_riding depens on cad and kph
             workout->appendPoint(rfp);
         }
 
@@ -355,8 +360,8 @@ void AbsWattagePage::SaveWorkout()
 {
     QString workoutDir = appsettings->value(this,GC_WORKOUTDIR).toString();
 
-    QString filename = QFileDialog::getSaveFileName(this,QString("Save Workout"),
-                                                    workoutDir,"Computrainer Format *.erg");
+    QString filename = QFileDialog::getSaveFileName(this,QString(tr("Save Workout")),
+                                                    workoutDir,tr("Computrainer Format *.erg"));
     if(!filename.endsWith(".erg"))
     {
         filename.append(".erg");
@@ -386,6 +391,12 @@ void AbsWattagePage::SaveWorkout()
         }
     }
     stream << "[END COURSE DATA]" << endl;
+    f.close();
+
+    // import them via the workoutimporter
+    QStringList files;
+    files << filename;
+    Library::importFiles(hackContext, files);
 }
 
 /// RelativeWattagePage
@@ -397,8 +408,8 @@ void RelWattagePage::initializePage()
     int zoneRange = hackContext->athlete->zones()->whichRange(QDate::currentDate());
     ftp = hackContext->athlete->zones()->getCP(zoneRange);
 
-    setTitle("Workout Wizard");
-    QString subTitle = "Relative Wattage Workout Wizard, current CP60 = " + QString::number(ftp);
+    setTitle(tr("Workout Wizard"));
+    QString subTitle = tr("Relative Wattage Workout Wizard, current CP60 = ") + QString::number(ftp);
     setSubTitle(subTitle);
 
     plot = new WorkoutPlot();
@@ -451,7 +462,8 @@ void RelWattagePage::updateMetrics()
             RideFilePoint rfp;
             rfp.secs = curSecs++;
             rfp.watts = percentFtp * ftp /100;
-            rfp.cad = 90;
+            rfp.cad = 90; // to be able to calculate the metrics - since time_riding depens on cad and kph
+            rfp.kph = 25; // to be able to calculate the metrics - since time_riding depens on cad and kph
             workout->appendPoint(rfp);
         }
         x.append(curSecs/60);
@@ -482,8 +494,8 @@ void RelWattagePage::SaveWorkout()
 {
     QString workoutDir = appsettings->value(this,GC_WORKOUTDIR).toString();
 
-    QString filename = QFileDialog::getSaveFileName(this,QString("Save Workout"),
-                                                    workoutDir,"Computrainer Format *.mrc");
+    QString filename = QFileDialog::getSaveFileName(this,QString(tr("Save Workout")),
+                                                    workoutDir,tr("Computrainer Format *.mrc"));
     if(!filename.endsWith(".mrc"))
     {
         filename.append(".mrc");
@@ -513,6 +525,12 @@ void RelWattagePage::SaveWorkout()
         }
     }
     stream << "[END COURSE DATA]" << endl;
+    f.close();
+
+    // import them via the workoutimporter
+    QStringList files;
+    files << filename;
+    Library::importFiles(hackContext, files);
 }
 
 /// GradientPage
@@ -523,15 +541,15 @@ void GradientPage::initializePage()
     int zoneRange = hackContext->athlete->zones()->whichRange(QDate::currentDate());
     ftp = hackContext->athlete->zones()->getCP(zoneRange);
     metricUnits = hackContext->athlete->useMetricUnits;
-    setTitle("Workout Wizard");
+    setTitle(tr("Workout Wizard"));
 
-    setSubTitle("Manually crate a workout based on gradient (slope) and distance, maxium grade is 5.");
+    setSubTitle(tr("Manually create a workout based on gradient (slope) and distance, maximum grade is 5."));
 
     QHBoxLayout *layout = new QHBoxLayout();
     setLayout(layout);
     QStringList colms;
 
-    colms.append(tr(metricUnits ? "KM" : "Miles"));
+    colms.append(metricUnits ? tr("KM") : tr("Miles"));
     colms.append(tr("Grade"));
     we = new WorkoutEditorGradient(colms);
     layout->addWidget(we);
@@ -567,9 +585,9 @@ void GradientPage::updateMetrics()
         totalDistance += distance;
     }
     QMap<QString,QString> metricSummaryMap;
-    QString s = (metricUnits ? "KM" : "Miles");
+    QString s = (metricUnits ? tr("KM") : tr("Miles"));
     metricSummaryMap[s] = QString::number(totalDistance);
-    s = (metricUnits ? "Meters Gained" : "Feet Gained");
+    s = (metricUnits ? tr("Meters Gained") : tr("Feet Gained"));
     metricSummaryMap[s] = QString::number(gain);
     metricsSummary->updateMetrics(metricSummaryMap);
 }
@@ -578,8 +596,8 @@ void GradientPage::SaveWorkout()
 {
     QString workoutDir = appsettings->value(this,GC_WORKOUTDIR).toString();
 
-    QString filename = QFileDialog::getSaveFileName(this,QString("Save Workout"),
-                                                    workoutDir,"Computrainer Format *.crs");
+    QString filename = QFileDialog::getSaveFileName(this,QString(tr("Save Workout")),
+                                                    workoutDir,tr("Computrainer Format *.crs"));
     if(!filename.endsWith(".crs"))
     {
         filename.append(".crs");
@@ -601,6 +619,12 @@ void GradientPage::SaveWorkout()
         stream << currentX << " " << p.second << " 0" << endl;
     }
     stream << "[END COURSE DATA]" << endl;
+    f.close();
+
+    // import them via the workoutimporter
+    QStringList files;
+    files << filename;
+    Library::importFiles(hackContext, files);
 }
 
 
@@ -610,17 +634,17 @@ ImportPage::ImportPage(QWidget *parent) : WorkoutPage(parent) {}
 void ImportPage::initializePage()
 {
 
-        setTitle("Workout Wizard");
-        setSubTitle("Import current ride as a Gradient Ride (slope based)");
+        setTitle(tr("Workout Wizard"));
+        setSubTitle(tr("Import current activity as a Gradient ride (slope based)"));
         setFinalPage(true);
         QVBoxLayout *layout = new QVBoxLayout();
         plot = new WorkoutPlot();
         metricUnits = hackContext->athlete->useMetricUnits;
-        QString s = (metricUnits ? "KM" : "Miles");
-        QString distance = QString("Distance (") + s + QString(")");
+        QString s = (metricUnits ? tr("KM") : tr("Miles"));
+        QString distance = QString(tr("Distance (")) + s + QString(")");
         plot->setXAxisTitle(distance);
-        s = (metricUnits ? "Meters" : "Feet");
-        QString elevation = QString("elevation (") + s + QString(")");
+        s = (metricUnits ? tr("Meters") : tr("Feet"));
+        QString elevation = QString(tr("elevation (")) + s + QString(")");
         plot->setYAxisTitle(elevation);
         RideItem *rideItem = hackContext->rideItem();
 
@@ -634,8 +658,8 @@ void ImportPage::initializePage()
         layout->addWidget(plot,1);
 
         QGroupBox *spinGroupBox = new QGroupBox();
-        spinGroupBox->setTitle(tr("Ride Smoothing Parameters"));
-        QLabel *gradeLabel = new QLabel("Maximum Grade");
+        spinGroupBox->setTitle(tr("Smoothing Parameters"));
+        QLabel *gradeLabel = new QLabel(tr("Maximum Grade"));
         gradeBox = new QSpinBox();
         gradeBox->setValue(5);
         gradeBox->setMaximum(8);
@@ -643,13 +667,13 @@ void ImportPage::initializePage()
         gradeBox->setToolTip(tr("Maximum supported grade is 8"));
         connect(gradeBox,SIGNAL(valueChanged(int)),this,SLOT(updatePlot()));
 
-        QLabel *segmentLabel = new QLabel("Segment Length");
+        QLabel *segmentLabel = new QLabel(tr("Segment Length"));
         segmentBox = new QSpinBox();
         segmentBox->setMinimum(0);
         segmentBox->setMaximum((metricUnits ? 1000 : 5120));
         segmentBox->setValue((metricUnits ? 1000 : 5120)/2);
         segmentBox->setSingleStep((metricUnits ? 1000 : 5120)/100);
-        s = QString("Segment length is based on ") + QString(metricUnits ? "meters": "feet");
+        s = QString(tr("Segment length is based on"))+ " " + QString(metricUnits ? tr("meters"): tr("feet"));
         segmentBox->setToolTip((s));
         connect(segmentBox,SIGNAL(valueChanged(int)),this,SLOT(updatePlot()));
         QHBoxLayout *bottomLayout = new QHBoxLayout();
@@ -710,8 +734,8 @@ void ImportPage::updatePlot()
         prevAlt = alt;
     }
     QMap<QString, QString> metrics;
-    metrics["Elevation Climbed"] = QString::number((int)gain);
-    metrics["Distance"] = QString::number(totalDistance,'f',1);
+    metrics[tr("Elevation Climbed")] = QString::number((int)gain);
+    metrics[tr("Distance")] = QString::number(totalDistance,'f',1);
     metricsSummary->updateMetrics(metrics);
 
     plot->setData(x,y);
@@ -723,8 +747,8 @@ void ImportPage::updatePlot()
 void ImportPage::SaveWorkout()
 {
     QString workoutDir = appsettings->value(this,GC_WORKOUTDIR).toString();
-    QString filename = QFileDialog::getSaveFileName(this,QString("Save Workout"),
-                                                    workoutDir,"Computrainer Format *.crs");
+    QString filename = QFileDialog::getSaveFileName(this,QString(tr("Save Workout")),
+                                                    workoutDir,tr("Computrainer Format *.crs"));
     if(!filename.endsWith(".crs"))
     {
         filename.append(".crs");
@@ -744,10 +768,19 @@ void ImportPage::SaveWorkout()
         prevDistance = p.first;
     }
     stream << "[END COURSE DATA]" << endl;
+    f.close();
+
+    // import them via the workoutimporter
+    QStringList files;
+    files << filename;
+    Library::importFiles(hackContext, files);
 }
 
 WorkoutWizard::WorkoutWizard(Context *context) :QWizard(context->mainWindow)
 {
+    HelpWhatsThis *help = new HelpWhatsThis(this);
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Tools_CreateWorkout));
+
     hackContext = context;
     setPage(WW_WorkoutTypePage, new WorkoutTypePage());
     setPage(WW_AbsWattagePage, new AbsWattagePage());

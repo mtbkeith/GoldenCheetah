@@ -79,8 +79,8 @@ class PfPvPlot : public QwtPlot
         void showCompareIntervals();
 
     public slots:
-        void configChanged();
-        void intervalHover(RideFileInterval);
+        void configChanged(qint32);
+        void intervalHover(IntervalItem*);
 
     signals:
         void changedCP( const QString& );

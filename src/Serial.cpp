@@ -30,7 +30,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <math.h>
+#include <cmath>
 #include <regex.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -322,6 +322,7 @@ Serial::name() const
 bool
 Serial::setBaudRate(int speed, QString &err)
 {
+    Q_UNUSED(err);
 
     // only really needed for Moxy 
     // so not doing a big old switch/case

@@ -19,6 +19,7 @@
 #include "Lucene.h"
 #include "Context.h"
 #include "Athlete.h"
+#include "RideItem.h"
 
 // stdc strings
 using namespace std;
@@ -40,6 +41,7 @@ Lucene::Lucene(QObject *parent, Context *context) : QObject(parent), context(con
 
     try {
 
+	// set lock timeout to a bit longer
         bool indexExists = IndexReader::indexExists(dir.canonicalPath().toLocal8Bit().data());
 
         // clear any locks
@@ -47,6 +49,9 @@ Lucene::Lucene(QObject *parent, Context *context) : QObject(parent), context(con
             IndexReader::unlock(dir.canonicalPath().toLocal8Bit().data());
 
         if (!indexExists) {
+
+            // ridecache will need to build the index !
+            context->athlete->emptyindex = true;
 
             IndexWriter *create = new IndexWriter(dir.canonicalPath().toLocal8Bit().data(), &analyzer, true);
 
@@ -65,30 +70,31 @@ Lucene::~Lucene()
 {
 }
 
-bool Lucene::importRide(SummaryMetrics *, RideFile *ride, QColor , unsigned long, bool)
+bool Lucene::importRide(RideFile *ride)
 {
+    QMutexLocker locker(&mutex);
+
     // create a document
     Document doc;
 
     // add Filename special field (unique)
     std::wstring cname = ride->getTag("Filename","").toStdWString();
     Field *fadd = new Field(_T("Filename"), cname.c_str(), Field::STORE_YES | Field::INDEX_UNTOKENIZED);
-    doc.add( *fadd );
+    doc.add(*fadd);
 
     QString alltexts;
 
     // And all the metadata texts individually
-    foreach(FieldDefinition field, context->athlete->rideMetadata()->getFields()) {
+    QMapIterator<QString,QString> iterate(ride->tags());
+    while (iterate.hasNext()) {
+        iterate.next();
 
-        if (!context->specialFields.isMetric(field.name) && (field.type < 3 || field.type == 7)) {
+        std::wstring name = iterate.key().toStdWString();
+        std::wstring value = iterate.value().toStdWString();
 
-            std::wstring name = context->specialFields.makeTechName(field.name).toStdWString();
-            std::wstring value = ride->getTag(field.name,"").toStdWString();
-
-            alltexts += ride->getTag(field.name,"") + " ";
-            Field *add = new Field(name.c_str(), value.c_str(), Field::STORE_YES | Field::INDEX_TOKENIZED);
-            doc.add( *add );
-        }
+        alltexts += iterate.value() + " ";
+        Field *add = new Field(name.c_str(), value.c_str(), Field::STORE_YES | Field::INDEX_TOKENIZED);
+        doc.add( *add );
     }
 
     // add a catchall text which is concat of all text fields
@@ -96,29 +102,31 @@ bool Lucene::importRide(SummaryMetrics *, RideFile *ride, QColor , unsigned long
     Field *cadd = new Field(_T("contents"), value.c_str(), Field::STORE_YES | Field::INDEX_TOKENIZED);
     doc.add( *cadd );
     
-    // delete if already in the index
-    deleteRide(ride->getTag("Filename", ""));
-
     // now add to index
+    IndexWriter *writer = NULL;
     try { 
 
         // now lets open using a mnodifier since the API is much simpler
-        IndexWriter *writer = new IndexWriter(dir.canonicalPath().toLocal8Bit().data(), &analyzer, false); // for updates
+        writer = new IndexWriter(dir.canonicalPath().toLocal8Bit().data(), &analyzer, false); // for updates
         writer->addDocument(&doc); 
-        writer->close();
-        delete writer;
+    	doc.clear();
 
     } catch (CLuceneError &e) {
         qDebug()<<"add document clucene error!"<<e.what();
     }
 
-    doc.clear();
+    if (writer) {
+    	writer->close();
+	delete writer;
+    }
 
     return true;
 }
 
 bool Lucene::deleteRide(QString name)
 {
+    QMutexLocker locker(&mutex);
+
     std::wstring cname = name.toStdWString();
 
     try {
@@ -133,6 +141,31 @@ bool Lucene::deleteRide(QString name)
         qDebug()<<"deleteDocuments clucene error!"<<e.what();
     }
     return true;
+}
+
+bool Lucene::exists(QString name)
+{
+    bool returning = false;
+    std::wstring cname = name.toStdWString();
+
+    try {
+
+        IndexReader *reader = IndexReader::open(dir.canonicalPath().toLocal8Bit().data());
+
+        Term check = Term(_T("Filename"), cname.c_str());
+        TermDocs *td = reader->termDocs(&check);
+        if (td->next()) returning = true;
+
+        td->close();
+        delete td;
+        reader->close();
+        delete reader;
+
+    } catch (CLuceneError &e) {
+        qDebug()<<"termDocs clucene error!"<<e.what();
+    }
+
+    return returning;
 }
 
 void Lucene::optimise()

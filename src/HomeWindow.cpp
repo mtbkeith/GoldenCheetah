@@ -25,13 +25,19 @@
 #include "LTMSettings.h"
 #include "LTMWindow.h"
 #include "Settings.h"
+#include "GcUpgrade.h" // for VERSION_CONFIG_PREFIX url to -layout.xml
+#include "LTMSettings.h" // for special case of edit LTM settings
 #include "ChartBar.h"
 
-#include <QGraphicsDropShadowEffect>
+#include <QDesktopWidget>
 #include <QStyle>
 #include <QStyleFactory>
 #include <QScrollBar>
 
+// getting config via URL
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 static const int tileMargin = 20;
 static const int tileSpacing = 10;
 
@@ -79,7 +85,8 @@ HomeWindow::HomeWindow(Context *context, QString name, QString /* windowtitle */
     layout->addWidget(style);
 
     QPalette palette;
-    palette.setBrush(backgroundRole(), QColor("#B3B4B6"));
+    //palette.setBrush(backgroundRole(), QColor("#B3B4B6"));
+    palette.setBrush(backgroundRole(), GColor(CPLOTBACKGROUND));
     setAutoFillBackground(false);
 
     // each style has its own container widget
@@ -92,6 +99,7 @@ HomeWindow::HomeWindow(Context *context, QString name, QString /* windowtitle */
 
     chartbar = new ChartBar(context);
     tabLayout->addWidget(chartbar);
+    tabLayout->addWidget(new ProgressLine(this, context));
     tabLayout->addWidget(tabbed);
     style->addWidget(tabArea);
 
@@ -147,12 +155,15 @@ HomeWindow::HomeWindow(Context *context, QString name, QString /* windowtitle */
 
     connect(this, SIGNAL(rideItemChanged(RideItem*)), this, SLOT(rideSelected()));
     connect(this, SIGNAL(dateRangeChanged(DateRange)), this, SLOT(dateRangeChanged(DateRange)));
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     //connect(tabbed, SIGNAL(currentChanged(int)), this, SLOT(tabSelected(int)));
     //connect(tabbed, SIGNAL(tabCloseRequested(int)), this, SLOT(removeChart(int)));
     //connect(tb, SIGNAL(tabMoved(int,int)), this, SLOT(tabMoved(int,int)));
     connect(chartbar, SIGNAL(currentIndexChanged(int)), this, SLOT(tabSelected(int)));
     connect(titleEdit, SIGNAL(textChanged(const QString&)), SLOT(titleChanged()));
+
+    // trends view we should select a library chart when a chart is selected.
+    if (name == "home") connect(context, SIGNAL(presetSelected(int)), this, SLOT(presetSelected(int)));
 
     installEventFilter(this);
     qApp->installEventFilter(this);
@@ -186,12 +197,19 @@ HomeWindow::addChartFromMenu(QAction*action)
 }
 
 void
-HomeWindow::configChanged()
+HomeWindow::configChanged(qint32)
 {
     // update scroll bar
 //#ifndef Q_OS_MAC
     tileArea->verticalScrollBar()->setStyleSheet(TabView::ourStyleSheet());
 //#endif
+    QPalette palette;
+    palette.setBrush(backgroundRole(), GColor(CPLOTBACKGROUND));
+    setPalette(palette);
+    tileWidget->setPalette(palette);
+    tileArea->setPalette(palette);
+    winWidget->setPalette(palette);
+    winArea->setPalette(palette);
 }
 
 void
@@ -396,6 +414,7 @@ HomeWindow::styleChanged(int id)
         default:
             break;
         }
+        charts[i]->setProperty("style", id);
 
     }
 
@@ -515,6 +534,7 @@ HomeWindow::addChart(GcWindow* newone)
         RideItem *notconst = (RideItem*)context->currentRideItem();
         newone->setProperty("ride", QVariant::fromValue<RideItem*>(notconst));
         newone->setProperty("dateRange", property("dateRange"));
+        newone->setProperty("style", currentStyle);
 
         // add to tabs
         switch (currentStyle) {
@@ -654,21 +674,7 @@ HomeWindow::removeChart(int num, bool confirm)
 void
 HomeWindow::resetLayout()
 {
-    setUpdatesEnabled(false);
-    int numCharts = charts.count();
-    for(int i = numCharts - 1; i >= 0; i--) {
-        removeChart(i,false);
-    }
     restoreState(true);
-    for(int i = 0; i < charts.count(); i++) {
-        RideItem *notconst = (RideItem*)context->currentRideItem();
-        charts[i]->setProperty("ride", QVariant::fromValue<RideItem*>(notconst));
-        charts[i]->setProperty("dateRange", property("dateRange"));
-        if (currentStyle != 0) charts[i]->show();
-        
-    }
-    setUpdatesEnabled(true);
-    if (currentStyle == 0 && charts.count()) tabSelected(0);
 }
 
 void
@@ -1026,13 +1032,18 @@ HomeWindow::drawCursor()
     }
 }
 
-GcWindowDialog::GcWindowDialog(GcWinID type, Context *context, GcWindow **here) : context(context), type(type), here(here)
+GcWindowDialog::GcWindowDialog(GcWinID type, Context *context, GcWindow **here, bool sidebar, LTMSettings *use) : context(context), type(type), here(here), sidebar(sidebar)
 {
     //setAttribute(Qt::WA_DeleteOnClose);
     setWindowFlags(windowFlags());
     setWindowTitle(tr("Chart Setup"));
+
+    QRect size= desktop->availableGeometry();
     setMinimumHeight(500);
-    setMinimumWidth(800);
+
+    // chart and settings side by side need to be big!
+    if (size.width() >= 1300) setMinimumWidth(1200); 
+    else setMinimumWidth(800); // otherwise the old default
     setWindowModality(Qt::ApplicationModal);
 
     mainLayout = new QVBoxLayout(this);
@@ -1052,10 +1063,16 @@ GcWindowDialog::GcWindowDialog(GcWinID type, Context *context, GcWindow **here) 
     // lets not have space for controls if there aren't any
     layout->setStretch(0, 100);
     if (win->controls()) {
-        controlLayout = new QFormLayout;
-        controlLayout->addRow(win->controls());
-        layout->addLayout(controlLayout);
+        layout->addWidget(win->controls());
         layout->setStretch(1, 50);
+    }
+
+    // settings passed as we're editing LTM chart sidebar
+    // bit of a hack, but good enough for now.
+    if (type == GcWindowTypes::LTM && use) {
+        static_cast<LTMWindow*>(win)->applySettings(*use);
+        win->setProperty("title", use->name);
+        title->setText(use->name);
     }
 
     RideItem *notconst = (RideItem*)context->currentRideItem();
@@ -1063,13 +1080,18 @@ GcWindowDialog::GcWindowDialog(GcWinID type, Context *context, GcWindow **here) 
     DateRange dr = context->currentDateRange();
     win->setProperty("dateRange", QVariant::fromValue<DateRange>(dr));
 
-
     QHBoxLayout *buttons = new QHBoxLayout;
     mainLayout->addLayout(buttons);
 
     buttons->addStretch();
     buttons->addWidget((cancel=new QPushButton(tr("Cancel"), this)));
     buttons->addWidget((ok=new QPushButton(tr("OK"), this)));
+
+    // no basic tab for library charts - remove once all in place.
+    if (sidebar) {
+        // hide the basic tab
+        static_cast<LTMWindow*>(win)->hideBasic();
+    }
 
     connect(ok, SIGNAL(clicked()), this, SLOT(okClicked()));
     connect(cancel, SIGNAL(clicked()), this, SLOT(cancelClicked()));
@@ -1083,7 +1105,6 @@ void GcWindowDialog::okClicked()
     // note that in reject they are not and will
     // get deleted (this has been verified with
     // some debug statements in ~GcWindow).
-
     // set its title property and geometry factors
     win->setProperty("title", title->text());
     win->setProperty("widthFactor", 2.00);
@@ -1098,8 +1119,8 @@ int
 GcWindowDialog::exec()
 {
     if (QDialog::exec()) {
-
         *here = win;
+
     } else {
         *here = NULL;
     } 
@@ -1159,7 +1180,14 @@ HomeWindow::saveState()
 
     QString filename = context->athlete->home->config().canonicalPath() + "/" + name + "-layout.xml";
     QFile file(filename);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly)) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(tr("Problem Saving Chart Bar Layout"));
+        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        msgBox.exec();
+        return;
+    };
     file.resize(0);
     QTextStream out(&file);
     out.setCodec("UTF-8");
@@ -1208,69 +1236,131 @@ HomeWindow::saveState()
 void
 HomeWindow::restoreState(bool useDefault)
 {
-    bool defaultUsed = false;
-
     // restore window state
     QString filename = context->athlete->home->config().canonicalPath() + "/" + name + "-layout.xml";
     QFileInfo finfo(filename);
 
-    if (useDefault) QFile::remove(filename);
+    QString content = "";
 
-    // use a default if not there
-    if (!finfo.exists()) {
-        filename = QString(":xml/%1-layout.xml").arg(name);
-        defaultUsed = true;
-    }
+    // set content from the default
+    if (useDefault) {
 
-    // now go read...
-    QFile file(filename);
+        // for getting config
+        QNetworkAccessManager nam;
 
-    // setup the handler
-    QXmlInputSource source(&file);
-    QXmlSimpleReader xmlReader;
-    ViewParser handler(context);
-    xmlReader.setContentHandler(&handler);
-    xmlReader.setErrorHandler(&handler);
+        // remove the current saved version
+        QFile::remove(filename);
 
-    // parse and instantiate the charts
-    xmlReader.parse(source);
-    // translate the titles
-    translateChartTitles(handler.charts);
+        // fetch from the goldencheetah.org website
+        QString request = QString("%1/%2-layout.xml")
+                             .arg(VERSION_CONFIG_PREFIX)
+                             .arg(name);
 
-    // translate the metrics, but only if the built-in "default.XML"s are read (and only for LTM charts)
-    if (defaultUsed) {
-        // define and fill translation maps
-        QMap<QString, QString> nMap;  // names
-        QMap<QString, QString> uMap;  // unit of measurement
-        LTMTool::getMetricsTranslationMap(nMap, uMap, context->athlete->useMetricUnits);
+        QNetworkReply *reply = nam.get(QNetworkRequest(QUrl(request)));
 
-        // check all charts for LTMWindow(s)
-        for (int i=0; i<handler.charts.count(); i++) {
-            // find out if it's an LTMWindow via dynamic_cast
-            LTMWindow* ltmW = dynamic_cast<LTMWindow*> (handler.charts[i]);
-            if (ltmW) {
-                // the current chart is an LTMWindow, let's translate
+        if (reply->error() == QNetworkReply::NoError) {
 
-                // now get the LTMMetrics
-                LTMSettings workSettings = ltmW->getSettings();
-                for (int j=0; j<workSettings.metrics.count(); j++){
-                    // now map and substitute
-                    QString n  = nMap.value(workSettings.metrics[j].symbol, workSettings.metrics[j].uname);
-                    QString u  = uMap.value(workSettings.metrics[j].symbol, workSettings.metrics[j].uunits);
-                    // set name, units only if there was a description before
-                    if (workSettings.metrics[j].name != "") workSettings.metrics[j].name = n;
-                    workSettings.metrics[j].uname = n;
-                    if (workSettings.metrics[j].units != "") workSettings.metrics[j].units = u;
-                    workSettings.metrics[j].uunits = u;
-                }
-                ltmW->applySettings(workSettings);
+            // lets wait for a response with an event loop
+            // it quits on a 5s timeout or reply coming back
+            QEventLoop loop;
+            QTimer timer;
+            timer.setSingleShot(true);
+            connect(&timer, SIGNAL(timeout()), &loop, SLOT(quit()));
+            connect(reply, SIGNAL(finished()), &loop, SLOT(quit()));
+            timer.start(5000);
+
+            // lets block until signal received
+            loop.exec(QEventLoop::WaitForMoreEvents);
+
+            // all good?
+            if (reply->error() == QNetworkReply::NoError) {
+                content = reply->readAll();
             }
         }
     }
 
-    // layout the results
-    styleChanged(handler.style);
-    foreach(GcWindow *chart, handler.charts) addChart(chart);
+    //  if we don't have content read from file/resource
+    if (content == "") {
+
+        // if no local file fall back to qresource
+        if (!finfo.exists()) {
+            filename = QString(":xml/%1-layout.xml").arg(name);
+            useDefault = true;
+        }
+
+        QFile file(filename);
+        if (file.open(QIODevice::ReadOnly)) {
+            content = file.readAll();
+            file.close();
+        }
+    }
+
+    // if we *still* don't have content then something went
+    // badly wrong, so only reset if its not blank
+    if (content != "") {
+
+        // whilst this happens don't show user
+        setUpdatesEnabled(false);
+
+        // clear whatever we got
+        int numCharts = charts.count();
+        for(int i = numCharts - 1; i >= 0; i--) {
+            removeChart(i,false);
+        }
+
+        // setup the handler
+        QXmlInputSource source;
+        source.setData(content);
+        QXmlSimpleReader xmlReader;
+        ViewParser handler(context);
+        xmlReader.setContentHandler(&handler);
+        xmlReader.setErrorHandler(&handler);
+
+        // parse and instantiate the charts
+        xmlReader.parse(source);
+
+        // are we english language?
+        QVariant lang = appsettings->value(this, GC_LANG, QLocale::system().name());
+        bool english = lang.toString().startsWith("en") ? true : false;
+
+        // translate the metrics, but only if the built-in "default.XML"s are read (and only for LTM charts)
+        // and only if the language is not English (i.e. translation is required).
+        if (useDefault && !english) {
+
+            // translate the titles
+            translateChartTitles(handler.charts);
+
+            // translate the LTM settings
+            for (int i=0; i<handler.charts.count(); i++) {
+                // find out if it's an LTMWindow via dynamic_cast
+                LTMWindow* ltmW = dynamic_cast<LTMWindow*> (handler.charts[i]);
+                if (ltmW) {
+                    // the current chart is an LTMWindow, let's translate
+
+                    // now get the LTMMetrics
+                    LTMSettings workSettings = ltmW->getSettings();
+                    // replace name and unit for translated versions
+                    workSettings.translateMetrics(context->athlete->useMetricUnits);
+                    ltmW->applySettings(workSettings);
+                }
+            }
+        }
+
+        // layout the results
+        styleChanged(handler.style);
+        foreach(GcWindow *chart, handler.charts) addChart(chart);
+    }
+
+    // set to whatever we have selected
+    for(int i = 0; i < charts.count(); i++) {
+        RideItem *notconst = (RideItem*)context->currentRideItem();
+        charts[i]->setProperty("ride", QVariant::fromValue<RideItem*>(notconst));
+        charts[i]->setProperty("dateRange", property("dateRange"));
+        if (currentStyle != 0) charts[i]->show();
+        
+    }
+    setUpdatesEnabled(true);
+    if (currentStyle == 0 && charts.count()) tabSelected(0);
 }
 
 //
@@ -1393,7 +1483,10 @@ void HomeWindow::translateChartTitles(QList<GcWindow*> charts)
     titleMap.insert("Target Power", tr("Target Power"));
     titleMap.insert("Time and Distance", tr("Time and Distance"));
     titleMap.insert("Time In Zone", tr("Time In Zone"));
+    titleMap.insert("W' In Zone", tr("W' In Zone"));
+    titleMap.insert("Sustained In Zone", tr("Sustained In Zone"));
     titleMap.insert("Training Mix", tr("Training Mix"));
+    titleMap.insert("Navigator", tr("Navigator"));
     titleMap.insert("W/kg", tr("W/kg"));
     titleMap.insert("Workout", tr("Workout"));
     titleMap.insert("Stress", tr("Stress"));
@@ -1404,9 +1497,42 @@ void HomeWindow::translateChartTitles(QList<GcWindow*> charts)
     titleMap.insert("Tracker", tr("Tracker"));
     titleMap.insert("CP History", tr("CP History"));
     titleMap.insert("Library", tr("Library"));
+    titleMap.insert("CV", tr("CV"));
 
     foreach(GcWindow *chart, charts) {
         QString chartTitle = chart->property("title").toString();
         chart->setProperty("title", titleMap.value(chartTitle, chartTitle));
+    }
+}
+
+void
+HomeWindow::presetSelected(int n)
+{
+    if (n > 0) {
+
+        // if we are in tabbed mode and we are not on a 'library' LTM chart
+        // then we need to select a library chart to show the selection
+
+        // tabbed is an LTM?
+        if (!currentStyle && tabbed->currentIndex() >= 0 && charts.count() > 0) {
+
+            int index = tabbed->currentIndex();
+            GcWinID type = charts[index]->property("type").value<GcWinID>();
+
+            // not on a 'library' chart
+            if (type != GcWindowTypes::LTM || static_cast<LTMWindow*>(charts[index])->preset() == false) {
+
+                // find a 'library' chart
+                for(int n=0; n<charts.count(); n++) {
+                    GcWinID type = charts[n]->property("type").value<GcWinID>();
+                    if (type == GcWindowTypes::LTM) {
+                        if (static_cast<LTMWindow*>(charts[n])->preset() == true) {
+                            chartbar->setCurrentIndex(n);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 }

@@ -47,38 +47,28 @@ class MetricAggregator : public QObject
 
         void refreshMetrics();
         void refreshMetrics(QDateTime forceAfterThisDate);
-        void refreshCPModelMetrics(bool bg=false); // metrics derived from model
 
-        void getFirstLast(QDate &, QDate &);
         DBAccess *db() { return dbaccess; }
-        SummaryMetrics getAllMetricsFor(QString filename); // for a single ride
-        QList<SummaryMetrics> getAllMetricsFor(QDateTime start, QDateTime end);
-        QList<SummaryMetrics> getAllMetricsFor(DateRange);
-        QList<SummaryMetrics> getAllMeasuresFor(QDateTime start, QDateTime end);
-        QList<SummaryMetrics> getAllMeasuresFor(DateRange);
-        SummaryMetrics getRideMetrics(QString filename);
-        void writeAsCSV(QString filename); // export all...
-        QStringList allActivityFilenames();
 
     signals:
         void dataChanged(); // when metricDB table changed
-        void modelProgress(int, int); // let others know when we're refreshing the model estimates
 
     public slots:
         void update();
         void addRide(RideItem*);
-        void importMeasure(SummaryMetrics *sm);
 
     private:
         Context *context;
         DBAccess *dbaccess;
         bool first;
+        bool refreshing;
 
 	    typedef QHash<QString,RideMetric*> MetricMap;
 	    bool importRide(QDir path, RideFile *ride, QString fileName, unsigned long, bool modify);
+#ifdef GC_HAVE_INTERVALS
         bool importInterval(IntervalItem *interval, QString type, QString group, unsigned long fingerprint, bool modify);
-
         void refreshBestIntervals();
+#endif
 
 	    MetricMap metrics;
         ColorEngine *colorEngine;

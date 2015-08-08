@@ -23,10 +23,9 @@
 
 #include "Context.h"
 #include "Athlete.h"
-#include "MetricAggregator.h"
-#include "SummaryMetrics.h"
 #include "ChartSettings.h"
 #include "ColorButton.h"
+#include "Colors.h"
 #include "PowerHist.h"
 #include "RideFile.h"
 #include "RideFileCache.h"
@@ -35,16 +34,14 @@
 
 #include "Zones.h"
 #include "HrZones.h"
-#include "SummaryMetrics.h"
 
 #include "Season.h"
 #include "SeasonParser.h"
 
-#ifdef GC_HAVE_LUCENE
 #include "SearchFilterBox.h"
-#endif
 
 #include <QtGui>
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QTextEdit>
 #include <QHeaderView>
@@ -69,9 +66,7 @@ class HistogramWindow : public GcChartWindow
     Q_PROPERTY(bool shade READ shade WRITE setShade USER true)
     Q_PROPERTY(bool zoned READ zoned WRITE setZoned USER true)
     Q_PROPERTY(bool cpZoned READ cpZoned WRITE setCPZoned USER true)
-#ifdef GC_HAVE_LUCENE
     Q_PROPERTY(QString filter READ filter WRITE setFilter USER true)
-#endif
     Q_PROPERTY(QDate fromDate READ fromDate WRITE setFromDate USER true)
     Q_PROPERTY(QDate toDate READ toDate WRITE setToDate USER true)
     Q_PROPERTY(QDate startDate READ startDate WRITE setStartDate USER true)
@@ -109,12 +104,11 @@ class HistogramWindow : public GcChartWindow
         void setCPZoned(bool x) { return showInCPZones->setChecked(x); }
         bool zoned() const { return showInZones->isChecked(); }
         void setZoned(bool x) { return showInZones->setChecked(x); }
-#ifdef GC_HAVE_LUCENE
         bool isFiltered() const { if (rangemode) return (isfiltered || context->ishomefiltered || context->isfiltered);
                                   else return false; }
         QString filter() const { return searchBox->filter(); }
         void setFilter(QString x) { searchBox->setFilter(x); }
-#endif
+
         // properties
         int useSelected() { return dateSetting->mode(); }
         void setUseSelected(int x) { dateSetting->setMode(x); }
@@ -151,14 +145,14 @@ class HistogramWindow : public GcChartWindow
 
     public slots:
 
+        void refreshUpdate(QDate);
         void rideSelected();
         void rideAddorRemove(RideItem*);
         void intervalSelected();
         void zonesChanged();
-#ifdef GC_HAVE_LUCENE
         void clearFilter();
         void setFilter(QStringList files);
-#endif
+
         // date settings
         void useCustomRange(DateRange);
         void useStandardRange();
@@ -181,7 +175,7 @@ class HistogramWindow : public GcChartWindow
         void compareChanged();
 
         // update on config
-        void configChanged();
+        void configChanged(qint32);
 
     protected slots:
 
@@ -193,7 +187,6 @@ class HistogramWindow : public GcChartWindow
         void updateChart();
 
         void treeSelectionChanged();
-        void treeSelectionTimeout();
 
     private:
 
@@ -225,11 +218,10 @@ class HistogramWindow : public GcChartWindow
         QDate cfrom, cto;
         RideFileCache *source;
         bool interval;
-#ifdef GC_HAVE_LUCENE
+
         SearchFilterBox *searchBox;
         bool isfiltered;
         QStringList files;
-#endif
 
         bool active,  // active switching mode between data series and metric
              bactive; // active setting binwidth
@@ -264,10 +256,9 @@ class HistogramWindow : public GcChartWindow
         // scrolls up and down metric/total treewidget. This is
         // to have a slight lag before redrawing since it is expensive
         // and users are likely to move up and down with the arrow keys
-        QTimer *lagger;
         ColorButton *colorButton;
-        QList<SummaryMetrics> results;
         DateRange last;
+        QTime lastupdate;
 };
 
 #endif // _GC_HistogramWindow_h

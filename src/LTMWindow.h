@@ -26,7 +26,6 @@
 #include <QWebView>
 #include <QTimer>
 #include "Context.h"
-#include "MetricAggregator.h"
 #include "Season.h"
 #include "LTMPlot.h"
 #include "LTMPopup.h"
@@ -34,10 +33,13 @@
 #include "LTMSettings.h"
 #include "LTMCanvasPicker.h"
 #include "GcPane.h"
+#include "Settings.h"
+#include "Colors.h"
 
-#include <math.h>
+#include <cmath>
 
 class QwtPlotPanner;
+class QxtSpanSlider;
 class QwtPlotPicker;
 class AllPlot;
 
@@ -56,21 +58,27 @@ class LTMToolTip : public QwtPlotPicker
                 RubberBand rb, DisplayMode dm, QWidget *pc, QString fmt) :
                 QwtPlotPicker(xaxis, yaxis, rb, dm, pc),
         format(fmt) { setStateMachine(new QwtPickerDragPointMachine());}
+
+    virtual QRect trackerRect(const QFont &font) const
+    {
+        return QwtPlotPicker::trackerRect(font).adjusted(-3,-3,3,3);
+    }
+
     virtual QwtText trackerText(const QPoint &/*pos*/) const
     {
-        QColor bg = QColor(Qt::lightGray);
-#if QT_VERSION >= 0x040300
-        bg.setAlpha(200);
-#endif
-        QwtText text;
-        QFont def;
-        //def.setPointSize(8); // too small on low res displays (Mac)
-        //double val = ceil(pos.y()*100) / 100; // round to 2 decimal place
-        //text.setText(QString("%1 %2").arg(val).arg(format), QwtText::PlainText);
-        text.setText(tip);
-        text.setFont(def);
-        text.setBackgroundBrush( QBrush( bg ));
-        text.setRenderFlags(Qt::AlignLeft | Qt::AlignTop);
+        QwtText text(tip);
+
+        QFont stGiles;
+        stGiles.fromString(appsettings->value(this, GC_FONT_CHARTLABELS, QFont().toString()).toString());
+        stGiles.setPointSize(appsettings->value(NULL, GC_FONT_CHARTLABELS_SIZE, 8).toInt());
+        stGiles.setWeight(QFont::Bold);
+        text.setFont(stGiles);
+
+        text.setBackgroundBrush(QBrush( GColor(CPLOTMARKER)));
+        text.setColor(GColor(CRIDEPLOTBACKGROUND));
+        text.setBorderRadius(6);
+        text.setRenderFlags(Qt::AlignCenter | Qt::AlignVCenter);
+
         return text;
     }
     void setFormat(QString fmt) { format = fmt; }
@@ -97,9 +105,7 @@ class LTMWindow : public GcChartWindow
     Q_PROPERTY(int stackWidth READ stackW WRITE setStackW USER true)
     Q_PROPERTY(bool legend READ legend WRITE setLegend USER true)
     Q_PROPERTY(bool events READ events WRITE setEvents USER true)
-#ifdef GC_HAVE_LUCENE
     Q_PROPERTY(QString filter READ filter WRITE setFilter USER true)
-#endif
     Q_PROPERTY(QDate fromDate READ fromDate WRITE setFromDate USER true)
     Q_PROPERTY(QDate toDate READ toDate WRITE setToDate USER true)
     Q_PROPERTY(QDate startDate READ startDate WRITE setStartDate USER true)
@@ -116,9 +122,7 @@ class LTMWindow : public GcChartWindow
 
         // reveal / filters
         bool hasReveal() { return true; }
-#ifdef GC_HAVE_LUCENE
         bool isFiltered() const { return (ltmTool->isFiltered() || context->ishomefiltered || context->isfiltered); }
-#endif
 
         // comparing things
         bool isCompare() const { return context->isCompareDateRanges; }
@@ -163,10 +167,8 @@ class LTMWindow : public GcChartWindow
         int prevN() { return ltmTool->dateSetting->prevN(); }
         void setPrevN(int x) { ltmTool->dateSetting->setPrevN(x); }
 
-#ifdef GC_HAVE_LUCENE
         QString filter() const { return ltmTool->searchBox->filter(); }
         void setFilter(QString x) { ltmTool->searchBox->setFilter(x); }
-#endif
 
         LTMSettings getSettings() const { return settings; }
         void applySettings(LTMSettings x) { 
@@ -177,6 +179,11 @@ class LTMWindow : public GcChartWindow
             ltmTool->applySettings();
         }
 
+        // when part of library don't show the basic
+        // tab, its not relevant, but do make sure the
+        // use sidebar settings is not true !
+        void hideBasic(); 
+
     public slots:
         void rideSelected();        // notification to refresh
         void presetSelected(int index); // when a preset is selected in the sidebar
@@ -186,6 +193,7 @@ class LTMWindow : public GcChartWindow
         void refreshStackPlots();   // stacked plots
         void refreshDataTable();    // data table
 
+        void styleChanged(int);
         void compareChanged();
         void dateRangeChanged(DateRange);
         void filterChanged();
@@ -198,6 +206,7 @@ class LTMWindow : public GcChartWindow
         void zoomSliderChanged();
         void showLegendClicked(int);
         void applyClicked();
+        void refreshUpdate(QDate);
         void refresh();
         void pointClicked(QwtPlotCurve*, int);
         int groupForDate(QDate);
@@ -206,10 +215,16 @@ class LTMWindow : public GcChartWindow
         void useStandardRange();
         void useThruToday();
 
+        // user changed the date range
+        void spanSliderChanged();
+        void moveLeft();
+        void moveRight();
+
         void exportData();
+        void exportConfig();
         QString dataTable(bool html=true); // true as html, false as csv
 
-        void configChanged();
+        void configChanged(qint32);
 
     private:
         // passed from Context *
@@ -237,13 +252,11 @@ class LTMWindow : public GcChartWindow
         bool compareDirty;
 
         LTMSettings settings; // all the plot settings
-        QList<SummaryMetrics> results;
-        QList<SummaryMetrics> measures;
-        QList<SummaryMetrics> bestsresults;
+        QList<RideBest> bestsresults;
 
         // when one curve per plot we split the settings
         QScrollArea *plotArea;
-        QWidget *plotsWidget;
+        QWidget *plotWidget, *plotsWidget;
         QVBoxLayout *plotsLayout;
         QList<LTMSettings> plotSettings;
         QList<LTMPlot *> plots;
@@ -258,12 +271,16 @@ class LTMWindow : public GcChartWindow
 
         // Widgets
         LTMPlot *ltmPlot;
+        QxtSpanSlider *spanSlider;
+        QPushButton *scrollLeft, *scrollRight;
         LTMTool *ltmTool;
 
         // reveal controls
         QxtStringSpinBox    *rGroupBy;
         QCheckBox           *rData,
                             *rStack;
+
+        QTime lastRefresh;
 };
 
 #endif // _GC_LTMWindow_h

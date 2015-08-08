@@ -20,8 +20,8 @@
 #define _GC_Colors_h 1
 #include "GoldenCheetah.h"
 
-#include <QObject>
 #include <QString>
+#include <QObject>
 #include <QColor>
 #include <QLabel>
 
@@ -47,10 +47,13 @@ struct SizeSettings {
 };
 
 extern SizeSettings defaultAppearance[];
+extern float GCDPIScale; // font scaling for display
+extern QColor standardColor(int num);
 
 class Colors
 {
 public:
+        static unsigned long fingerprint(const Colors*set);
         QString name,
                 setting;
         QColor  color;
@@ -92,11 +95,8 @@ class ColorLabel : public QLabel
 class GCColor : public QObject
 {
     Q_OBJECT
-    G_OBJECT
 
-        void setupColors();
     public:
-        GCColor(Context *);
         static QColor getColor(int);
         static void setColor(int,QColor);
         static const Colors *colorSet();
@@ -113,12 +113,12 @@ class GCColor : public QObject
         // for styling things with current preferences
         static bool isFlat();
         static QLinearGradient linearGradient(int size, bool active, bool alternate=false);
-        static QString css();
+        static QString css(bool ridesummary=true);
         static QPalette palette();
         static QString stylesheet();
+        static void readConfig();
+        static void setupColors();
 
-    public slots:
-        void readConfig();
 };
 
 // return a color for a ride file
@@ -134,7 +134,7 @@ class ColorEngine : public QObject
         QColor defaultColor, reverseColor;
 
     public slots:
-        void configUpdate();
+        void configChanged(qint32);
 
     private:
         QMap<QString, QColor> workoutCodes;
@@ -146,100 +146,102 @@ class ColorEngine : public QObject
 #define GColor(x) GCColor::getColor(x)
 
 // Define how many cconfigurable metric colors are available
-#define CNUMOFCFGCOLORS       93
+#define CNUMOFCFGCOLORS       95
 
 #define CPLOTBACKGROUND       0
 #define CRIDEPLOTBACKGROUND   1
-#define CTRAINPLOTBACKGROUND  2
-#define CPLOTSYMBOL           3
-#define CRIDEPLOTXAXIS        4
-#define CRIDEPLOTYAXIS        5
-#define CPLOTTHUMBNAIL        6
-#define CPLOTTITLE            7
-#define CPLOTSELECT           8
-#define CPLOTTRACKER          9
-#define CPLOTMARKER           10
-#define CPLOTGRID             11
-#define CINTERVALHIGHLIGHTER  12
-#define CHEARTRATE            13
-#define CSPEED                14
-#define CACCELERATION         15
-#define CPOWER                16
-#define CNPOWER               17
-#define CXPOWER               18
-#define CAPOWER               19
-#define CCP                   20
-#define CCADENCE              21
-#define CALTITUDE             22
-#define CALTITUDEBRUSH        23
-#define CWINDSPEED            24
-#define CTORQUE               25
-#define CSLOPE                26
-#define CGEAR                 27
-#define CRV                   28
-#define CRCAD                 29
-#define CRGCT                 30
-#define CSMO2                 31
-#define CTHB                  32
-#define CO2HB                 33
-#define CHHB                  34
-#define CLOAD                 35
-#define CTSS                  36
-#define CSTS                  37
-#define CLTS                  38
-#define CSB                   39
-#define CDAILYSTRESS          40
-#define CBIKESCORE            41
-#define CCALENDARTEXT         42
-#define CZONE1                43
-#define CZONE2                44
-#define CZONE3                45
-#define CZONE4                46
-#define CZONE5                47
-#define CZONE6                48
-#define CZONE7                49
-#define CZONE8                50
-#define CZONE9                51
-#define CZONE10               52
-#define CHZONE1               53
-#define CHZONE2               54
-#define CHZONE3               55
-#define CHZONE4               56
-#define CHZONE5               57
-#define CHZONE6               58
-#define CHZONE7               59
-#define CHZONE8               60
-#define CHZONE9               61
-#define CHZONE10              62
-#define CAEROVE               63
-#define CAEROEL               64
-#define CCALCELL              65
-#define CCALHEAD              66
-#define CCALCURRENT           67
-#define CCALACTUAL            68
-#define CCALPLANNED           69
-#define CCALTODAY             70
-#define CPOPUP                71
-#define CPOPUPTEXT            72
-#define CTILEBAR              73
-#define CTILEBARSELECT        74
-#define CTOOLBAR              75
-#define CRIDEGROUP            76
-#define CSPINSCANLEFT         77
-#define CSPINSCANRIGHT        78
-#define CTEMP                 79
-#define CDIAL                 80
-#define CALTPOWER             81
-#define CBALANCELEFT          82
-#define CBALANCERIGHT         83
-#define CWBAL                 84
-#define CRIDECP               85
-#define CATISS                86
-#define CANTISS               87
-#define CLTE                  88
-#define CRTE                  89
-#define CLPS                  90
-#define CRPS                  91
-#define CCHROME               92
+#define CTRENDPLOTBACKGROUND  2
+#define CTRAINPLOTBACKGROUND  3
+#define CPLOTSYMBOL           4
+#define CRIDEPLOTXAXIS        5
+#define CRIDEPLOTYAXIS        6
+#define CPLOTTHUMBNAIL        7
+#define CPLOTTITLE            8
+#define CPLOTSELECT           9
+#define CPLOTTRACKER          10
+#define CPLOTMARKER           11
+#define CPLOTGRID             12
+#define CINTERVALHIGHLIGHTER  13
+#define CHEARTRATE            14
+#define CCORETEMP             15
+#define CSPEED                16
+#define CACCELERATION         17
+#define CPOWER                18
+#define CNPOWER               19
+#define CXPOWER               20
+#define CAPOWER               21
+#define CCP                   22
+#define CCADENCE              23
+#define CALTITUDE             24
+#define CALTITUDEBRUSH        25
+#define CWINDSPEED            26
+#define CTORQUE               27
+#define CSLOPE                28
+#define CGEAR                 29
+#define CRV                   30
+#define CRCAD                 31
+#define CRGCT                 32
+#define CSMO2                 33
+#define CTHB                  34
+#define CO2HB                 35
+#define CHHB                  36
+#define CLOAD                 37
+#define CTSS                  38
+#define CSTS                  39
+#define CLTS                  40
+#define CSB                   41
+#define CDAILYSTRESS          42
+#define CBIKESCORE            43
+#define CCALENDARTEXT         44
+#define CZONE1                45
+#define CZONE2                46
+#define CZONE3                47
+#define CZONE4                48
+#define CZONE5                49
+#define CZONE6                50
+#define CZONE7                51
+#define CZONE8                52
+#define CZONE9                53
+#define CZONE10               54
+#define CHZONE1               55
+#define CHZONE2               56
+#define CHZONE3               57
+#define CHZONE4               58
+#define CHZONE5               59
+#define CHZONE6               60
+#define CHZONE7               61
+#define CHZONE8               62
+#define CHZONE9               63
+#define CHZONE10              64
+#define CAEROVE               65
+#define CAEROEL               66
+#define CCALCELL              67
+#define CCALHEAD              68
+#define CCALCURRENT           69
+#define CCALACTUAL            70
+#define CCALPLANNED           71
+#define CCALTODAY             72
+#define CPOPUP                73
+#define CPOPUPTEXT            74
+#define CTILEBAR              75
+#define CTILEBARSELECT        76
+#define CTOOLBAR              77
+#define CRIDEGROUP            78
+#define CSPINSCANLEFT         79
+#define CSPINSCANRIGHT        80
+#define CTEMP                 81
+#define CDIAL                 82
+#define CALTPOWER             83
+#define CBALANCELEFT          84
+#define CBALANCERIGHT         85
+#define CWBAL                 86
+#define CRIDECP               87
+#define CATISS                88
+#define CANTISS               89
+#define CLTE                  90
+#define CRTE                  91
+#define CLPS                  92
+#define CRPS                  93
+#define CCHROME               94
 
 #endif

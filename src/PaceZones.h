@@ -88,6 +88,9 @@ class PaceZones : public QObject
 
     private:
 
+        // Sport
+        bool swim;
+
         // Scheme
         bool defaults_from_user;
         PaceZoneScheme scheme;
@@ -96,12 +99,12 @@ class PaceZones : public QObject
         QList<PaceZoneRange> ranges;
 
         // utility
-        QString err, warning;
+        QString err, warning, fileName_;
         void setZonesFromCV(PaceZoneRange &range);
 
     public:
 
-        PaceZones() : defaults_from_user(false) {
+        PaceZones(bool swim=false) : swim(swim), defaults_from_user(false) {
                 initializeZoneParameters();
         }
 
@@ -116,8 +119,11 @@ class PaceZones : public QObject
         QString getDefaultZoneDesc(int z) const;
 
         // set zone parameters to either user-specified defaults
-        // or to defaults using Coggan's coefficients
+        // or to defaults using Skiba's coefficients
         void initializeZoneParameters();
+
+        // Sport
+        bool isSwim() { return swim; }
 
         //
         // Zone history - Ranges
@@ -150,6 +156,7 @@ class PaceZones : public QObject
         //
         bool read(QFile &file);
         void write(QDir home);
+        const QString &fileName() const { return fileName_; }
         const QString &errorString() const { return err; }
         const QString &warningString() const { return warning; }
 
@@ -162,6 +169,7 @@ class PaceZones : public QObject
         int whichRange(const QDate &date) const;
 
         // which zone is the power value in for a given range
+        // will return -1 if not in any zone
         int whichZone(int range, double value) const;
 
         // how many zones are there for a given range
@@ -195,6 +203,17 @@ class PaceZones : public QObject
         // data is changed since last referenced in Metric code
         // could also be used in Configuration pages (later)
         quint16 getFingerprint() const;
+
+        // this is the fingerprint for a specific DATE so that we
+        // can be more granular -- did the zone config for the date of
+        // a particular ride change ?
+        quint16 getFingerprint(QDate date) const;
+
+        // convert to/from Pace
+        double kphFromTime(QTimeEdit *cvedit, bool metric) const;
+        QString kphToPaceString(double kph, bool metric) const;
+        QString paceUnits(bool metric) const;
+        QString paceSetting() const;
 };
 
 QColor paceZoneColor(int zone, int num_zones);

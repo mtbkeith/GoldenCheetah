@@ -25,7 +25,7 @@
 #include <QtAlgorithms>
 #include <qcolor.h>
 #include <assert.h>
-#include <math.h>
+#include <cmath>
 
 
 // the infinity endpoints are indicated with extreme date ranges
@@ -83,6 +83,7 @@ bool Zones::read(QFile &file)
     int warning_lines = 0;
     const int max_warning_lines = 100;
     int defaultwprime = 20000; // default to 20kJ
+    int defaultpmax = 1000;
 
     // macro to append lines to the warning
     #define append_to_warning(s) \
@@ -116,6 +117,7 @@ bool Zones::read(QFile &file)
                 Qt::CaseInsensitive)
     };
     QRegExp wprimerx("^W'=(\\d+)$");
+    QRegExp pmaxx("^Pmax=(\\d+)$");
     QRegExp zonerx("^\\s*([^ ,][^,]*),\\s*([^ ,][^,]*),\\s*"
                    "(\\d+)\\s*(%?)\\s*(?:,\\s*(\\d+|MAX)\\s*(%?)\\s*)?$",
                    Qt::CaseInsensitive);
@@ -130,6 +132,7 @@ bool Zones::read(QFile &file)
     QDate begin = date_zero, end = date_infinity;
     int cp=0;
     int wprime=0;
+    int pmax=0;
     QList<ZoneInfo> zoneInfos;
 
     // true if zone defaults are found in the file (then we need to write them)
@@ -169,7 +172,7 @@ bool Zones::read(QFile &file)
                 if (in_range) {
 
                     // if zones are empty, then generate them
-                    ZoneRange range(begin, end, cp, wprime ? wprime : defaultwprime);
+                    ZoneRange range(begin, end, cp, wprime ? wprime : defaultwprime, pmax ? pmax : defaultpmax);
                     range.zones = zoneInfos;
 
                     if (range.zones.empty()) {
@@ -254,6 +257,16 @@ bool Zones::read(QFile &file)
                 }
             }
         }
+
+        // check for Pmax
+        if (pmaxx.indexIn(line, 0) != -1) {
+            if (!in_range)
+                qDebug()<<"ignoring errant Pmax= in power.zones";
+            else {
+                pmax = pmaxx.cap(1).toInt();
+            }
+        }
+
 
         // check for zone definition
         if (zonerx.indexIn(line, 0) != -1) {
@@ -342,7 +355,7 @@ next_line: {}
 
     if (in_range) {
 
-        ZoneRange range(begin, end, cp, wprime ? wprime : defaultwprime);
+        ZoneRange range(begin, end, cp, wprime ? wprime : defaultwprime, pmax ? pmax : defaultpmax);
         range.zones = zoneInfos;
 
         if (range.zones.empty()) {
@@ -514,7 +527,7 @@ int Zones::whichZone(int rnum, double value) const
     }
 
     // if we got here either it is negative, nan, inf or way high
-    if (value < 0 || isnan(value)) return 0; else return range.zones.size()-1;
+    return -1;
 }
 
 void Zones::zoneInfo(int rnum, int znum, QString &name, QString &description, int &low, int &high) const
@@ -541,6 +554,12 @@ int Zones::getWprime(int rnum) const
     return ranges[rnum].wprime;
 }
 
+int Zones::getPmax(int rnum) const
+{
+    assert(rnum < ranges.size());
+    return ranges[rnum].pmax;
+}
+
 void Zones::setCP(int rnum, int cp)
 {
     ranges[rnum].cp = cp;
@@ -550,6 +569,12 @@ void Zones::setCP(int rnum, int cp)
 void Zones::setWprime(int rnum, int wprime)
 {
     ranges[rnum].wprime = wprime;
+    modificationTime = QDateTime::currentDateTime();
+}
+
+void Zones::setPmax(int rnum, int pmax)
+{
+    ranges[rnum].pmax = pmax;
     modificationTime = QDateTime::currentDateTime();
 }
 
@@ -735,6 +760,7 @@ void Zones::write(QDir home)
 
         int cp = getCP(i);
         int wprime = getWprime(i);
+        int pmax = getPmax(i);
 
         // print header for range
         // note this explicitly sets the first and last ranges such that all time is spanned
@@ -748,6 +774,8 @@ void Zones::write(QDir home)
 
         // wite out the W' value
         strzones += QString("W'=%1\n").arg(wprime);
+        // wite out the Pmax value
+        strzones += QString("Pmax=%1\n").arg(pmax);
 
         // step through and print the zones if they've been explicitly set
         if (!ranges[i].zonesSetFromCP) {
@@ -796,17 +824,24 @@ void Zones::write(QDir home)
         QTextStream stream(&file);
         stream << strzones;
         file.close();
+    } else {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(tr("Problem Saving Power Zones"));
+        msgBox.setInformativeText(tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(home.canonicalPath() + "/power.zones"));
+        msgBox.exec();
+        return;
     }
 }
 
-void Zones::addZoneRange(QDate _start, QDate _end, int _cp, int _wprime)
+void Zones::addZoneRange(QDate _start, QDate _end, int _cp, int _wprime, int _pmax)
 {
-    ranges.append(ZoneRange(_start, _end, _cp, _wprime));
+    ranges.append(ZoneRange(_start, _end, _cp, _wprime, _pmax));
 }
 
 // insert a new zone range using the current scheme
 // return the range number
-int Zones::addZoneRange(QDate _start, int _cp, int _wprime)
+int Zones::addZoneRange(QDate _start, int _cp, int _wprime, int _pmax)
 {
     int rnum;
 
@@ -814,8 +849,8 @@ int Zones::addZoneRange(QDate _start, int _cp, int _wprime)
     for(rnum=0; rnum < ranges.count(); rnum++) if (ranges[rnum].begin > _start) break;
 
     // at the end ?
-    if (rnum == ranges.count()) ranges.append(ZoneRange(_start, date_infinity, _cp, _wprime)); 
-    else ranges.insert(rnum, ZoneRange(_start, ranges[rnum].begin, _cp, _wprime));
+    if (rnum == ranges.count()) ranges.append(ZoneRange(_start, date_infinity, _cp, _wprime, _pmax));
+    else ranges.insert(rnum, ZoneRange(_start, ranges[rnum].begin, _cp, _wprime, _pmax));
 
     // modify previous end date
     if (rnum) ranges[rnum-1].end = _start;
@@ -892,7 +927,7 @@ QColor zoneColor(int z, int) {
     case 7: return GColor(CZONE8); break;
     case 8: return GColor(CZONE9); break;
     case 9: return GColor(CZONE10); break;
-    default: return QColor(128,128,128); break;
+    default: return QColor(128,128,128,128); break;
     }
 }
 
@@ -913,7 +948,7 @@ int Zones::deleteRange(int rnum) {
 }
 
 quint16
-Zones::getFingerprint(Context *context) const
+Zones::getFingerprint() const
 {
     quint64 x = 0;
     for (int i=0; i<ranges.size(); i++) {
@@ -929,6 +964,9 @@ Zones::getFingerprint(Context *context) const
         // W'
         x += ranges[i].wprime;
 
+        // W'
+        x += ranges[i].pmax;
+
         // each zone definition (manual edit/default changed)
         for (int j=0; j<ranges[i].zones.count(); j++) {
             x += ranges[i].zones[j].lo;
@@ -936,7 +974,37 @@ Zones::getFingerprint(Context *context) const
     }
     QByteArray ba = QByteArray::number(x);
 
-    // if default athlete weight changes everything needs to change !
-    double weight = appsettings->cvalue(context->athlete->cyclist, GC_WEIGHT, "0.0").toDouble();
-    return qChecksum(ba, ba.length()) + weight + (appsettings->value(this, GC_ELEVATION_HYSTERESIS).toDouble()*10);
+    // we spot other things separately
+    return qChecksum(ba, ba.length());
 }
+
+// get fingerprint just for the range that applies on this date
+quint16
+Zones::getFingerprint(QDate forDate) const
+{
+    quint64 x = 0;
+
+    // which range to apply ?
+    int i = whichRange(forDate);
+    if (i >= 0) {
+
+        // CP
+        x += ranges[i].cp;
+
+        // W'
+        x += ranges[i].wprime;
+
+        // Pmax
+        x += ranges[i].pmax;
+
+        // each zone definition (manual edit/default changed)
+        for (int j=0; j<ranges[i].zones.count(); j++) {
+            x += ranges[i].zones[j].lo;
+        }
+    }
+    QByteArray ba = QByteArray::number(x);
+
+    // limits to only zones now as we sport weight separately
+    return qChecksum(ba, ba.length());
+}
+

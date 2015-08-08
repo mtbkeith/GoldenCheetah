@@ -99,14 +99,14 @@ GcOverlayWidget::GcOverlayWidget(Context *context, QWidget *parent) : QWidget(pa
     m_isEditing = true;
     installEventFilter(parent);
 
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
 
     // setup colors
-    configChanged();
+    configChanged(CONFIG_APPEARANCE);
 }
 
 void
-GcOverlayWidget::configChanged()
+GcOverlayWidget::configChanged(qint32)
 {
     if (GCColor::isFlat()) {
         titleLabel->setStyleSheet(QString("color: %1;").arg(GCColor::invertColor(GColor(CCHROME)).name()));
@@ -215,7 +215,7 @@ GcOverlayWidget::paintBackground(QPaintEvent *)
     QLinearGradient inactive = GCColor::linearGradient(23, false); 
 
     // title
-    QRect title(0,0,width(),23);
+    QRect title(1,1,width()-2,22);
     painter.fillRect(title, QColor(Qt::white));
     painter.fillRect(title, isActiveWindow() ? active : inactive);
 
@@ -224,9 +224,9 @@ GcOverlayWidget::paintBackground(QPaintEvent *)
         painter.setPen(black);
         painter.drawLine(0,22, width()-1, 22);
 
-        QPen gray(QColor(230,230,230));
-        painter.setPen(gray);
-        painter.drawLine(0,0, width()-1, 0);
+        //QPen gray(QColor(230,230,230));
+        //painter.setPen(gray);
+        //painter.drawLine(0,0, width()-1, 0);
     }
 
     painter.restore();

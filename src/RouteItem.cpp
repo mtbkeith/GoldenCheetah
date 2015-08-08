@@ -23,10 +23,11 @@
 #include "RideFile.h"
 #include "RideItem.h"
 #include "Athlete.h"
+#include "RideCache.h"
 #include "Zones.h"
 #include "HrZones.h"
 #include <assert.h>
-#include <math.h>
+#include <cmath>
 
 /*RouteItem::RouteItem(RouteSegment *route, int type,
                    QString path, QString fileName, const QDateTime &dateTime,
@@ -42,9 +43,10 @@
 }*/
 
 RouteItem::RouteItem(RouteSegment *route, const RouteRide *routeRide,
-                   QString path, Context *context) :
-    QTreeWidgetItem(ROUTE_TYPE), route(route), routeRide(routeRide),
-    ride_(NULL), context(context), isdirty(false), isedit(false), path(path)
+                    QString path, Context *context) :
+                    QTreeWidgetItem(ROUTE_TYPE),
+                    ride_(NULL), route(route), routeRide(routeRide), 
+                    context(context), isdirty(false), isedit(false), path(path)
 {
     QDateTime dateTime = routeRide->startTime.addSecs(routeRide->start);
 
@@ -54,15 +56,14 @@ RouteItem::RouteItem(RouteSegment *route, const RouteRide *routeRide,
     setTextAlignment(1, Qt::AlignRight);
     setTextAlignment(2, Qt::AlignRight);
 
-    QDateTime dt;
-    QStringListIterator i(RideFileFactory::instance().listRideFiles(context->athlete->home->activities()));
-    while (i.hasNext()) {
-        QString name = i.next(), notesFileName;
+    //QDateTime dt;
+    //foreach(RideItem *item, context->athlete->rideCache->rides()) {
 
-        if ((route->parseRideFileName(context, name, &notesFileName, &dt)) && (dt == routeRide->startTime)) { //
-            fileName = name;
-        }
-    }
+        //XXX what is this code trying to do ??? XXX
+        //if ((route->parseRideFileName(context, item->fileName, &notesFileName, &dt)) && (dt == routeRide->startTime)) { //
+        //    fileName = item->fileName;
+        //}
+    //}
 }
 
 RouteItem::RouteItem(RouteSegment *route, int type,
@@ -90,6 +91,7 @@ RouteItem::setTextAlignment(int column, int alignment)
 void
 RouteItem::setData(int column, int role, const QVariant &value, bool write)
 {
+    Q_UNUSED(write);
     //qDebug() << "setData";
     QTreeWidgetItem::setData(column, role, value);
     //if (write)

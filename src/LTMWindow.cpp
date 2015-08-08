@@ -20,15 +20,17 @@
 #include "LTMTool.h"
 #include "LTMPlot.h"
 #include "LTMSettings.h"
+#include "LTMChartParser.h"
 #include "TabView.h"
 #include "Context.h"
 #include "Context.h"
 #include "Athlete.h"
+#include "RideCache.h"
 #include "RideFileCache.h"
-#include "SummaryMetrics.h"
 #include "Settings.h"
-#include "math.h"
+#include "cmath"
 #include "Units.h" // for MILES_PER_KM
+#include "HelpWhatsThis.h"
 
 #include <QtGui>
 #include <QString>
@@ -37,6 +39,12 @@
 #include <QWebFrame>
 #include <QStyle>
 #include <QStyleFactory>
+
+// span slider specials
+#include <qxtspanslider.h>
+#include <QStyleFactory>
+#include <QStyle>
+#include <QScrollBar>
 
 #include <qwt_plot_panner.h>
 #include <qwt_plot_zoomer.h>
@@ -48,15 +56,67 @@ LTMWindow::LTMWindow(Context *context) :
 {
     useToToday = useCustom = false;
     plotted = DateRange(QDate(01,01,01), QDate(01,01,01));
+    lastRefresh = QTime::currentTime().addSecs(-10);
 
     // the plot
     QVBoxLayout *mainLayout = new QVBoxLayout;
+
+    QPalette palette;
+    palette.setBrush(QPalette::Background, QBrush(GColor(CTRENDPLOTBACKGROUND)));
+
+    // single plot
+    plotWidget = new QWidget(this);
+    plotWidget->setPalette(palette);
+    QVBoxLayout *plotLayout = new QVBoxLayout(plotWidget);
+    plotLayout->setSpacing(0);
+    plotLayout->setContentsMargins(0,0,0,0);
+    
     ltmPlot = new LTMPlot(this, context, true);
+    spanSlider = new QxtSpanSlider(Qt::Horizontal, this);
+    spanSlider->setFocusPolicy(Qt::NoFocus);
+    spanSlider->setHandleMovementMode(QxtSpanSlider::NoOverlapping);
+    spanSlider->setLowerValue(0);
+    spanSlider->setUpperValue(15);
+
+    QFont small;
+    small.setPointSize(6);
+
+    scrollLeft = new QPushButton("<", this);
+    scrollLeft->setFont(small);
+    scrollLeft->setAutoRepeat(true);
+    scrollLeft->setFixedHeight(16);
+    scrollLeft->setFixedWidth(16);
+    scrollLeft->setContentsMargins(0,0,0,0);
+
+    scrollRight = new QPushButton(">", this);
+    scrollRight->setFont(small);
+    scrollRight->setAutoRepeat(true);
+    scrollRight->setFixedHeight(16);
+    scrollRight->setFixedWidth(16);
+    scrollRight->setContentsMargins(0,0,0,0);
+
+    QHBoxLayout *span = new QHBoxLayout;
+    span->addWidget(scrollLeft);
+    span->addWidget(spanSlider);
+    span->addWidget(scrollRight);
+    plotLayout->addWidget(ltmPlot);
+    plotLayout->addLayout(span);
+
+#ifdef Q_OS_MAC
+    // BUG in QMacStyle and painting of spanSlider
+    // so we use a plain style to avoid it, but only
+    // on a MAC, since win and linux are fine
+#if QT_VERSION > 0x5000
+    QStyle *style = QStyleFactory::create("fusion");
+#else
+    QStyle *style = QStyleFactory::create("Cleanlooks");
+#endif
+    spanSlider->setStyle(style);
+    scrollLeft->setStyle(style);
+    scrollRight->setStyle(style);
+#endif
 
     // the stack of plots
-    QPalette palette;
-    palette.setBrush(QPalette::Background, QBrush(GColor(CPLOTBACKGROUND)));
-
     plotsWidget = new QWidget(this);
     plotsWidget->setPalette(palette);
     plotsLayout = new QVBoxLayout(plotsWidget);
@@ -107,13 +167,16 @@ LTMWindow::LTMWindow(Context *context) :
 
     // the stack
     stackWidget = new QStackedWidget(this);
-    stackWidget->addWidget(ltmPlot);
+    stackWidget->addWidget(plotWidget);
     stackWidget->addWidget(dataSummary);
     stackWidget->addWidget(plotArea);
     stackWidget->addWidget(compareplotArea);
     stackWidget->setCurrentIndex(0);
     mainLayout->addWidget(stackWidget);
     setChartLayout(mainLayout);
+
+    HelpWhatsThis *helpStack = new HelpWhatsThis(stackWidget);
+    stackWidget->setWhatsThis(helpStack->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends));
 
     // reveal controls
     QHBoxLayout *revealLayout = new QHBoxLayout;
@@ -148,10 +211,14 @@ LTMWindow::LTMWindow(Context *context) :
     // controls since the menu is SET from setControls
     QAction *exportData = new QAction(tr("Export Chart Data..."), this);
     addAction(exportData);
+    QAction *exportConfig = new QAction(tr("Export Chart Configuration..."), this);
+    addAction(exportConfig);
 
     // the controls
     QWidget *c = new QWidget;
     c->setContentsMargins(0,0,0,0);
+    HelpWhatsThis *helpConfig = new HelpWhatsThis(c);
+    c->setWhatsThis(helpConfig->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends));
     QVBoxLayout *cl = new QVBoxLayout(c);
     cl->setContentsMargins(0,0,0,0);
     cl->setSpacing(0);
@@ -168,7 +235,6 @@ LTMWindow::LTMWindow(Context *context) :
 
     // initialise
     settings.ltmTool = ltmTool;
-    settings.data = NULL;
     settings.groupBy = LTM_DAY;
     settings.legend = ltmTool->showLegend->isChecked();
     settings.events = ltmTool->showEvents->isChecked();
@@ -181,6 +247,7 @@ LTMWindow::LTMWindow(Context *context) :
     cl->addWidget(ltmTool);
 
     connect(this, SIGNAL(dateRangeChanged(DateRange)), this, SLOT(dateRangeChanged(DateRange)));
+    connect(this, SIGNAL(styleChanged(int)), this, SLOT(styleChanged(int)));
     connect(ltmTool, SIGNAL(filterChanged()), this, SLOT(filterChanged()));
     connect(context, SIGNAL(homeFilterChanged()), this, SLOT(filterChanged()));
     connect(ltmTool->groupBy, SIGNAL(currentIndexChanged(int)), this, SLOT(groupBySelected(int)));
@@ -198,7 +265,9 @@ LTMWindow::LTMWindow(Context *context) :
     connect(ltmTool, SIGNAL(useThruToday()), this, SLOT(useThruToday()));
     connect(ltmTool, SIGNAL(useStandardRange()), this, SLOT(useStandardRange()));
     connect(ltmTool, SIGNAL(curvesChanged()), this, SLOT(refresh()));
-    connect(context, SIGNAL(filterChanged()), this, SLOT(refresh()));
+    connect(context, SIGNAL(filterChanged()), this, SLOT(filterChanged()));
+    connect(context, SIGNAL(refreshUpdate(QDate)), this, SLOT(refreshUpdate(QDate)));
+    connect(context, SIGNAL(refreshEnd()), this, SLOT(refresh()));
 
     // comparing things
     connect(context, SIGNAL(compareDateRangesStateChanged(bool)), this, SLOT(compareChanged()));
@@ -206,13 +275,21 @@ LTMWindow::LTMWindow(Context *context) :
 
     connect(context, SIGNAL(rideAdded(RideItem*)), this, SLOT(refresh(void)));
     connect(context, SIGNAL(rideDeleted(RideItem*)), this, SLOT(refresh(void)));
-    connect(context, SIGNAL(configChanged()), this, SLOT(configChanged()));
+    connect(context, SIGNAL(rideSaved(RideItem*)), this, SLOT(refresh(void)));
+    connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     connect(context, SIGNAL(presetSelected(int)), this, SLOT(presetSelected(int)));
 
     // custom menu item
     connect(exportData, SIGNAL(triggered()), this, SLOT(exportData()));
+    connect(exportConfig, SIGNAL(triggered()), this, SLOT(exportConfig()));
 
-    configChanged();
+    // normal view
+    connect(spanSlider, SIGNAL(lowerPositionChanged(int)), this, SLOT(spanSliderChanged()));
+    connect(spanSlider, SIGNAL(upperPositionChanged(int)), this, SLOT(spanSliderChanged()));
+    connect(scrollLeft, SIGNAL(clicked()), this, SLOT(moveLeft()));
+    connect(scrollRight, SIGNAL(clicked()), this, SLOT(moveRight()));
+
+    configChanged(CONFIG_APPEARANCE);
 }
 
 LTMWindow::~LTMWindow()
@@ -221,13 +298,35 @@ LTMWindow::~LTMWindow()
 }
 
 void
-LTMWindow::configChanged()
+LTMWindow::hideBasic()
+{
+    ltmTool->hideBasic();
+}
+
+void
+LTMWindow::configChanged(qint32)
 {
 #ifndef Q_OS_MAC
     plotArea->setStyleSheet(TabView::ourStyleSheet());
     compareplotArea->setStyleSheet(TabView::ourStyleSheet());
 #endif
     refresh();
+}
+
+void
+LTMWindow::styleChanged(int style)
+{
+    if (style) {
+        // hide spanslider
+        spanSlider->hide();
+        scrollLeft->hide();
+        scrollRight->hide();
+    } else {
+        // show spanslider
+        spanSlider->show();
+        scrollLeft->show();
+        scrollRight->show();
+    }
 }
 
 void
@@ -275,9 +374,7 @@ LTMWindow::presetSelected(int index)
 
         // now get back the local chart setup
         settings.ltmTool = ltmTool;
-        settings.data = &results;
         settings.bests = &bestsresults;
-        settings.measures = &measures;
         settings.groupBy = groupBy;
         settings.legend = legend;
         settings.events = events;
@@ -286,9 +383,64 @@ LTMWindow::presetSelected(int index)
         settings.start = start;
         settings.end = end;
 
+        // Set the specification
+        FilterSet fs;
+        fs.addFilter(context->isfiltered, context->filters);
+        fs.addFilter(context->ishomefiltered, context->homeFilters);
+        fs.addFilter(ltmTool->isFiltered(), ltmTool->filters());
+        settings.specification.setFilterSet(fs);
+        settings.specification.setDateRange(DateRange(settings.start.date(), settings.end.date()));
+
         ltmTool->applySettings();
         refresh();
     }
+}
+
+void
+LTMWindow::refreshUpdate(QDate here)
+{
+    if (isVisible() && here > settings.start.date() && lastRefresh.secsTo(QTime::currentTime()) > 5) {
+        lastRefresh = QTime::currentTime();
+        refresh();
+    }
+}
+
+void
+LTMWindow::moveLeft()
+{
+    // move across by 5% of the span, or to zero if not much left
+    int span = spanSlider->upperValue() - spanSlider->lowerValue();
+    int delta = span / 20;
+    if (delta > (spanSlider->lowerValue() - spanSlider->minimum()))
+        delta = spanSlider->lowerValue() - spanSlider->minimum();
+
+    spanSlider->setLowerValue(spanSlider->lowerValue()-delta);
+    spanSlider->setUpperValue(spanSlider->upperValue()-delta);
+
+    spanSliderChanged();
+}
+
+void
+LTMWindow::moveRight()
+{
+    // move across by 5% of the span, or to zero if not much left
+    int span = spanSlider->upperValue() - spanSlider->lowerValue();
+    int delta = span / 20;
+    if (delta > (spanSlider->maximum() - spanSlider->upperValue()))
+        delta = spanSlider->maximum() - spanSlider->upperValue();
+
+    spanSlider->setLowerValue(spanSlider->lowerValue()+delta);
+    spanSlider->setUpperValue(spanSlider->upperValue()+delta);
+
+    spanSliderChanged();
+}
+
+void
+LTMWindow::spanSliderChanged()
+{
+    // so reset the axis range for ltmPlot
+    ltmPlot->setAxisScale(QwtPlot::xBottom, spanSlider->lowerValue(), spanSlider->upperValue());
+    ltmPlot->replot();
 }
 
 void
@@ -324,8 +476,12 @@ LTMWindow::refreshPlot()
                 ltmPlot->setData(&settings);
                 stackWidget->setCurrentIndex(0);
                 dirty = false;
-            }
 
+                spanSlider->setMinimum(ltmPlot->axisScaleDiv(QwtPlot::xBottom).lowerBound());
+                spanSlider->setMaximum(ltmPlot->axisScaleDiv(QwtPlot::xBottom).upperBound());
+                spanSlider->setLowerValue(spanSlider->minimum());
+                spanSlider->setUpperValue(spanSlider->maximum());
+            }
         }
     }
 }
@@ -589,21 +745,21 @@ LTMWindow::useThruToday()
 void
 LTMWindow::refresh()
 {
-    setProperty("color", GColor(CPLOTBACKGROUND)); // called on config change
+    setProperty("color", GColor(CTRENDPLOTBACKGROUND)); // called on config change
 
     // not if in compare mode
     if (isCompare()) return; 
 
     // refresh for changes to ridefiles / zones
-    if (amVisible() == true && context->athlete->metricDB != NULL) {
-        results.clear(); // clear any old data
-        results = context->athlete->metricDB->getAllMetricsFor(settings.start, settings.end);
-        measures.clear(); // clear any old data
-        measures = context->athlete->metricDB->getAllMeasuresFor(settings.start, settings.end);
+    if (amVisible() == true) {
+
         bestsresults.clear();
-        bestsresults = RideFileCache::getAllBestsFor(context, settings.metrics, settings.start, settings.end);
+        bestsresults = RideFileCache::getAllBestsFor(context, settings.metrics, settings.specification);
+
         refreshPlot();
         repaint(); // title changes color when filters change
+
+        // set spanslider to limits of ltmPlot
 
     } else {
         stackDirty = dirty = true;
@@ -619,8 +775,6 @@ LTMWindow::dateRangeChanged(DateRange range)
     // we already plotted that date range
     if (amVisible() || dirty || range.from != plotted.from || range.to  != plotted.to) {
 
-         settings.data = &results;
-         settings.measures = &measures;
          settings.bests = &bestsresults;
 
         // we let all the state get updated, but lets not actually plot
@@ -647,7 +801,7 @@ LTMWindow::filterChanged()
     // ignore in compare mode
     if (isCompare()) return;
 
-    if (amVisible() == false || context->athlete->metricDB == NULL) return;
+    if (amVisible() == false) return;
 
     if (useCustom) {
 
@@ -669,9 +823,14 @@ LTMWindow::filterChanged()
 
     }
     settings.title = myDateRange.name;
-    settings.data = &results;
-    settings.bests = &bestsresults;
-    settings.measures = &measures;
+
+    // Set the specification
+    FilterSet fs;
+    fs.addFilter(context->isfiltered, context->filters);
+    fs.addFilter(context->ishomefiltered, context->homeFilters);
+    fs.addFilter(ltmTool->isFiltered(), ltmTool->filters());
+    settings.specification.setFilterSet(fs);
+    settings.specification.setDateRange(DateRange(settings.start.date(), settings.end.date()));
 
     // if we want weeks and start is not a monday go back to the monday
     int dow = settings.start.date().dayOfWeek();
@@ -679,59 +838,9 @@ LTMWindow::filterChanged()
         settings.start = settings.start.addDays(-1*(dow-1));
 
     // we need to get data again and apply filter
-    results.clear(); // clear any old data
-    results = context->athlete->metricDB->getAllMetricsFor(settings.start, settings.end);
-    measures.clear(); // clear any old data
-    measures = context->athlete->metricDB->getAllMeasuresFor(settings.start, settings.end);
     bestsresults.clear();
-    bestsresults = RideFileCache::getAllBestsFor(context, settings.metrics, settings.start, settings.end);
-
-    // loop through results removing any not in stringlist..
-    if (ltmTool->isFiltered()) {
-
-        // metrics filtering
-        QList<SummaryMetrics> filteredresults;
-        foreach (SummaryMetrics x, results) {
-            if (ltmTool->filters().contains(x.getFileName()))
-                filteredresults << x;
-        }
-        results = filteredresults;
-
-        // metrics filtering
-        QList<SummaryMetrics> filteredbestsresults;
-        foreach (SummaryMetrics x, bestsresults) {
-            if (ltmTool->filters().contains(x.getFileName()))
-                filteredbestsresults << x;
-        }
-        bestsresults = filteredbestsresults;
-
-        settings.data = &results;
-        settings.measures = &measures;
-        settings.bests = &bestsresults;
-    }
-
-    if (context->ishomefiltered) {
-
-        // metrics filtering
-        QList<SummaryMetrics> filteredresults;
-        foreach (SummaryMetrics x, results) {
-            if (context->homeFilters.contains(x.getFileName()))
-                filteredresults << x;
-        }
-        results = filteredresults;
-
-        // metrics filtering
-        QList<SummaryMetrics> filteredbestsresults;
-        foreach (SummaryMetrics x, bestsresults) {
-            if (context->homeFilters.contains(x.getFileName()))
-                filteredbestsresults << x;
-        }
-        bestsresults = filteredbestsresults;
-
-        settings.data = &results;
-        settings.measures = &measures;
-        settings.bests = &bestsresults;
-    }
+    bestsresults = RideFileCache::getAllBestsFor(context, settings.metrics, settings.specification);
+    settings.bests = &bestsresults;
 
     refreshPlot();
 
@@ -832,9 +941,7 @@ LTMWindow::applyClicked()
 
         // now get back the local chart setup
         settings.ltmTool = ltmTool;
-        settings.data = &results;
         settings.bests = &bestsresults;
-        settings.measures = &measures;
         settings.groupBy = groupBy;
         settings.legend = legend;
         settings.events = events;
@@ -842,6 +949,14 @@ LTMWindow::applyClicked()
         settings.shadeZones = shadeZones;
         settings.start = start;
         settings.end = end;
+
+        // Set the specification
+        FilterSet fs;
+        fs.addFilter(context->isfiltered, context->filters);
+        fs.addFilter(context->ishomefiltered, context->homeFilters);
+        fs.addFilter(ltmTool->isFiltered(), ltmTool->filters());
+        settings.specification.setFilterSet(fs);
+        settings.specification.setDateRange(DateRange(settings.start.date(), settings.end.date()));
 
         ltmTool->applySettings();
         refresh();
@@ -909,28 +1024,35 @@ LTMWindow::refreshDataTable()
 	dataSummary->page()->mainFrame()->setHtml(summary);
 }
 
+// for storing curve data without using a curve
+class TableCurveData {
+    public:
+        QVector<double> x,y;
+        int n;
+};
+
 QString
 LTMWindow::dataTable(bool html)
 {
     // truncate date range to the actual data when not set to any date
-    if (settings.data != NULL && (*settings.data).count() != 0) {
+    if (context->athlete->rideCache->rides().count()) {
+
+        QDateTime first = context->athlete->rideCache->rides().first()->dateTime;
+        QDateTime last = context->athlete->rideCache->rides().last()->dateTime;
 
         // end
         if (settings.end == QDateTime() || settings.end.date() > QDate::currentDate().addYears(40))
-                settings.end = (*settings.data).last().getRideDate();
+                settings.end = last;
 
         // start
         if (settings.start == QDateTime() || settings.start.date() < QDate::currentDate().addYears(-40))
-            settings.start = (*settings.data).first().getRideDate();
+            settings.start = first;
     }
-
-    // need to redo this
-    ltmPlot->resetPMC();
 
     // now set to new (avoids a weird crash)
     QString summary;
 
-    QColor bgColor = GColor(CPLOTBACKGROUND);
+    QColor bgColor = GColor(CTRENDPLOTBACKGROUND);
     QColor altColor = GCColor::alternateColor(bgColor);
 
     // html page prettified with a title
@@ -967,225 +1089,27 @@ LTMWindow::dataTable(bool html)
 
     //
     // STEP1: AGGREGATE DATA INTO GROUPBY FOR EACH METRIC
-    //        This is essentially a refactored version of createCurveData
-    //        from LTMPlot, but updated to produce aggregates for all metrics
-    //        at once, so we can embed into an HTML table
-    //
-    QList<GroupedData> aggregates;
+    //        This is performed by reusing the existing code in
+    //        LTMPlot for creating curve data, but storing it
+    //        in columns and forceing zero values
+    QList<TableCurveData> columns;
+    bool first=true;
+    int rows = 0;
 
-    // for estimates we take the metric data and augment
-    // it with the estimate that applies for that date
-    QList<SummaryMetrics> estimates = *(settings.data);
+    // create curve data for each metric detail to iterate over
+    foreach(MetricDetail metricDetail, settings.metrics) {
+        TableCurveData add;
 
-    foreach (MetricDetail metricDetail, settings.metrics) {
+        ltmPlot->settings=&settings; // for stack mode ltmPlot isn't set
+        ltmPlot->createCurveData(context, &settings, metricDetail, add.x, add.y, add.n, true);
 
-        // do we aggregate zero values ?
-        bool aggZero = metricDetail.metric ? metricDetail.metric->aggregateZero() : false;
+        columns << add;
 
-        QList<SummaryMetrics> *data = NULL; // source data (metrics, bests etc)
-        GroupedData a; // aggregated data
-
-        // resize the curve array to maximum possible size
-        a.maxdays = groupForDate(settings.end.date()) - groupForDate(settings.start.date());
-        a.x.resize(a.maxdays+1);
-        a.y.resize(a.maxdays+1);
-
-
-        // set source for data
-        QList<SummaryMetrics> PMCdata;
-        if (metricDetail.type == METRIC_DB || metricDetail.type == METRIC_META) {
-            data = settings.data;
-        } else if (metricDetail.type == METRIC_MEASURE) {
-            data = settings.measures;
-        } else if (metricDetail.type == METRIC_PM) {
-            // PMC fixup later
-            ltmPlot->createPMCCurveData(context, &settings, metricDetail, PMCdata);
-            data = &PMCdata;
-        } else if (metricDetail.type == METRIC_BEST) {
-            data = settings.bests;
-        } else if (metricDetail.type == METRIC_ESTIMATE) {
-
-            // WE BASICALLY TAKE A COPY OF THE RIDE METRICS AND
-            // ADD IN THE ESTIMATE FOR THAT DAY -- SO YOU ONLY
-            // GET ESTIMATES FOR DAYS WITH RIDES
-
-            // lets refresh the model data if we don't have any
-            if (context->athlete->PDEstimates.count() == 0) 
-                context->athlete->metricDB->refreshCPModelMetrics(); 
-
-            // lets nip through all the rides and add in the estimate
-            // that applied for that date
-            data = &estimates;
-
-            // update each ride by adding the estimate for that day
-            for (int i=0; i<estimates.count(); i++) {
-
-                // get the date
-                QDate date = estimates[i].getRideDate().date();
-
-                // get the value
-                double value = 0;
-                foreach(PDEstimate est, context->athlete->PDEstimates) {
-
-                    // ooh this is a match!
-                    if (date >= est.from && date <= est.to && est.wpk == metricDetail.wpk 
-                         && est.model == metricDetail.model) {
-
-                        switch(metricDetail.estimate) {
-                        case ESTIMATE_WPRIME :
-                            value = est.WPrime;
-                            break;
-
-                        case ESTIMATE_CP :
-                            value = est.CP;
-                            break;
-
-                        case ESTIMATE_FTP :
-                            value = est.FTP;
-                            break;
-
-                        case ESTIMATE_PMAX :
-                            value = est.PMax;
-                            break;
-
-                        case ESTIMATE_BEST :
-                            {
-                                value = 0;
-
-                                // we need to find the model 
-                                foreach(PDModel *model, ltmPlot->models) {
-
-                                    // not the one we want
-                                    if (model->code() != metricDetail.model) continue;
-
-                                    // set the parameters previously derived
-                                    model->loadParameters(est.parameters);
-
-                                    // get the model estimate for our duration
-                                    value = model->y(metricDetail.estimateDuration * metricDetail.estimateDuration_units);
-                                }
-                            }
-                            break;
-
-                        case ESTIMATE_EI :
-                            value = est.EI;
-                            break;
-                        }
-                        break;
-                    }
-                }
-
-                // insert the value for this symbol
-                estimates[i].setForSymbol(metricDetail.symbol, value);
-            }
-        }
-
-        // initialise before looping through the data for this metric
-        int n=-1;
-        int lastDay=groupForDate(settings.start.date());
-        unsigned long secondsPerGroupBy=0;
-        bool wantZero = true;
-
-        foreach (SummaryMetrics rideMetrics, *data) { 
-
-            // filter out unwanted rides but not for PMC type metrics
-            // because that needs to be done in the stress calculator
-            if (metricDetail.type != METRIC_PM && context->isfiltered && 
-                !context->filters.contains(rideMetrics.getFileName())) continue;
-
-            // day we are on
-            int currentDay = groupForDate(rideMetrics.getRideDate().date());
-
-            // value for day -- measures are stored differently
-            double value;
-            if (metricDetail.type == METRIC_MEASURE)
-                value = rideMetrics.getText(metricDetail.symbol, "0.0").toDouble();
-            else if (metricDetail.type == METRIC_BEST)
-                value = rideMetrics.getForSymbol(metricDetail.bestSymbol);
-            else
-                value = rideMetrics.getForSymbol(metricDetail.symbol);
-
-            // check values are bounded to stop QWT going berserk
-            if (isnan(value) || isinf(value)) value = 0;
-
-            // set aggZero to false and value to zero if is temperature and -255
-            if (metricDetail.metric && metricDetail.metric->symbol() == "average_temp" && value == RideFile::NoTemp) {
-                value = 0;
-                aggZero = false;
-            }
-
-            // Special computed metrics (LTS/STS) have a null metric pointer
-            if (metricDetail.type != METRIC_BEST && metricDetail.metric) {
-                // convert from stored metric value to imperial
-                if (context->athlete->useMetricUnits == false) {
-                    value *= metricDetail.metric->conversion();
-                    value += metricDetail.metric->conversionSum();
-                }
-
-            // convert seconds to hours
-            if (metricDetail.metric->units(true) == "seconds" ||
-                metricDetail.metric->units(true) == tr("seconds")) value /= 3600;
-            }
-
-            if (value || wantZero) {
-                unsigned long seconds = rideMetrics.getForSymbol("workout_time");
-                if (metricDetail.type == METRIC_BEST || metricDetail.type == METRIC_MEASURE) seconds = 1;
-                if (n < a.x.size() && currentDay > lastDay) {
-                    if (lastDay && wantZero) {
-                        while (n<(a.x.size()-1) && lastDay<currentDay) {
-                            lastDay++;
-                            n++;
-                            a.x[n]=lastDay - groupForDate(settings.start.date());
-                            a.y[n]=0;
-                        }
-                    } else {
-                        n++;
-                    }
-
-                    a.y[n] = value;
-                    a.x[n] = currentDay - groupForDate(settings.start.date());
-
-                    if (value || aggZero) secondsPerGroupBy = seconds; // reset for new group
-
-                } else {
-                    // sum totals, average averages and choose best for Peaks
-                    int type = metricDetail.metric ? metricDetail.metric->type() : RideMetric::Average;
-
-                    if (metricDetail.uunits == "Ramp" ||
-                        metricDetail.uunits == tr("Ramp")) type = RideMetric::Total;
-
-                    if (metricDetail.type == METRIC_BEST) type = RideMetric::Peak;
-
-                    // just in case
-                    if (n < 0) n=0;
-
-                    switch (type) {
-                    case RideMetric::Total:
-                        a.y[n] += value;
-                        break;
-                    case RideMetric::Average:
-                        {
-                        // average should be calculated taking into account
-                        // the duration of the ride, otherwise high value but
-                        // short rides will skew the overall average
-                        if (value || aggZero) a.y[n] = ((a.y[n]*secondsPerGroupBy)+(seconds*value)) / (secondsPerGroupBy+seconds);
-                        break;
-                        }
-                    case RideMetric::Low:
-                        if (value < a.y[n]) a.y[n] = value;
-                        break;
-                    case RideMetric::Peak:
-                        if (value > a.y[n]) a.y[n] = value;
-                        break;
-                    }
-                    secondsPerGroupBy += seconds; // increment for same group
-                }
-                lastDay = currentDay;
-            }
-        }
-
-        // save to our list
-        aggregates << a;
+        // truncate to shortest set of rows available as 
+        // we dont pad with zeroes in the data table
+        if (first) rows=add.n;
+        else if (add.n < rows) rows=add.n;
+        first=false;
     }
 
     //
@@ -1193,15 +1117,7 @@ LTMWindow::dataTable(bool html)
     //         But note there will be no data if there are no curves of if there
     //         is no date range selected of no data anyway!
     //
-    if (aggregates.count()) {
-
-        // fill in the remainder if data doesn't extend to
-        // the period we are summarising
-        if (settings.groupBy != LTM_ALL) {
-            for (int n=0; n < aggregates[0].x.count(); n++) {
-                aggregates[0].x[n] = n;
-            }
-        }
+    if (rows) {
 
         // formatting ...
         LTMScaleDraw lsd(settings.start, groupForDate(settings.start.date()), settings.groupBy);
@@ -1250,16 +1166,15 @@ LTMWindow::dataTable(bool html)
             summary += "\n";
         }
 
-        int row=0;
-        for(int i=0; i<aggregates[0].y.count(); i++) {
+        for(int row=0; row<=rows; row++) {
 
             // in day mode we don't list all the zeroes .. its too many!
             bool nonzero = false;
             if (settings.groupBy == LTM_DAY) {
 
                 // nonzeros?
-                for(int j=0; j<aggregates.count(); j++) 
-                    if (int(aggregates[j].y[i])) nonzero = true;
+                for(int j=0; j<columns.count(); j++) 
+                    if (int(columns[j].y[row])) nonzero = true;
 
                 // skip all zeroes if day mode
                 if (nonzero == false) continue;
@@ -1269,16 +1184,15 @@ LTMWindow::dataTable(bool html)
             if (html) {
                 if (row%2) summary += "<tr bgcolor='" + altColor.name() + "'>";
                 else summary += "<tr>";
-                row++;
             }
 
             // First column, date / month year etc
             if (html) summary += "<td align=\"center\" valign=\"top\">%1</td>";
             else summary += "%1";
-            summary = summary.arg(lsd.label(aggregates[0].x[i]+0.5).text().replace("\n", " "));
+            summary = summary.arg(lsd.label(columns[0].x[row]+0.5).text().replace("\n", " "));
 
             // Remaining columns - each metric value
-            for(int j=0; j<aggregates.count(); j++) {
+            for(int j=0; j<columns.count(); j++) {
                 if (html) summary += "<td align=\"center\" valign=\"top\">%1</td>";
                 else summary += ", %1";
 
@@ -1291,13 +1205,13 @@ LTMWindow::dataTable(bool html)
                     if (settings.metrics[j].uunits == "seconds" || settings.metrics[j].uunits == tr("seconds")) precision=1;
 
                     // we have a metric so lets be precise ...
-                    QString v = QString("%1").arg(aggregates[j].y[i], 0, 'f', precision);
+                    QString v = QString("%1").arg(columns[j].y[row], 0, 'f', precision);
 
                     summary = summary.arg(v);
 
                 } else {
                     // no precision
-                    summary = summary.arg(QString("%1").arg(aggregates[j].y[i], 0, 'f', 0));
+                    summary = summary.arg(QString("%1").arg(columns[j].y[row], 0, 'f', 0));
                 }
             }
 
@@ -1314,6 +1228,24 @@ LTMWindow::dataTable(bool html)
     if (html) summary += "</center>";
 
     return summary;
+}
+
+void
+LTMWindow::exportConfig()
+{
+    // collect the config to export
+    QList<LTMSettings> mine;
+    mine << settings;
+    mine[0].title = mine[0].name = title();
+
+    // get a filename
+    QString filename = title()+".xml";
+    filename = QFileDialog::getSaveFileName(this, tr("Export Chart Config"),  filename, title()+".xml (*.xml)");
+
+    // export it!
+    if (!filename.isEmpty()) {
+        LTMChartParser::serialize(filename, mine);
+    }
 }
 
 void

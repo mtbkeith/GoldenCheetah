@@ -36,30 +36,42 @@
 
 #include "JsonRideFile.h"
 
-// Set during parser processing, using same
-// naming conventions as yacc/lex -p
-static RideFile *JsonRide;
+// now we have a reentrant parser we save context data
+// in a structure rather than in global variables -- so
+// you can run the parser concurrently.
+struct JsonContext {
 
-// term state data is held in these variables
-static RideFilePoint JsonPoint;
-static RideFileInterval JsonInterval;
-static RideFileCalibration JsonCalibration;
-static QString JsonString,
-               JsonTagKey, JsonTagValue,
-               JsonOverName, JsonOverKey, JsonOverValue;
-static double JsonNumber;
-static QStringList JsonRideFileerrors;
-static QMap <QString, QString> JsonOverrides;
+    // the scanner
+    void *scanner;
+
+    // Set during parser processing, using same
+    // naming conventions as yacc/lex -p
+    RideFile *JsonRide;
+
+    // term state data is held in these variables
+    RideFilePoint JsonPoint;
+    RideFileInterval JsonInterval;
+    RideFileCalibration JsonCalibration;
+    QString JsonString,
+                JsonTagKey, JsonTagValue,
+                JsonOverName, JsonOverKey, JsonOverValue;
+    double JsonNumber;
+    QStringList JsonRideFileerrors;
+    QMap <QString, QString> JsonOverrides;
+
+};
+
+#define YYSTYPE QString
 
 // Lex scanner
-extern int JsonRideFilelex(); // the lexer aka yylex()
-extern void JsonRideFile_setString(QString);
-extern int JsonRideFilelex_destroy(void); // the cleaner for lexer
+extern int JsonRideFilelex(YYSTYPE*,void*); // the lexer aka yylex()
+extern int JsonRideFilelex_init(void**);
+extern void JsonRideFile_setString(QString, void *);
+extern int JsonRideFilelex_destroy(void*); // the cleaner for lexer
 
 // yacc parser
-extern char *JsonRideFiletext; // set by the lexer aka yytext
-void JsonRideFileerror(const char *error) // used by parser aka yyerror()
-{ JsonRideFileerrors << error; }
+void JsonRideFileerror(void*jc, const char *error) // used by parser aka yyerror()
+{ static_cast<JsonContext*>(jc)->JsonRideFileerrors << error; }
 
 //
 // Utility functions
@@ -84,33 +96,14 @@ static QString protect(const QString string)
     return s;
 }
 
-// Un-Escape special characters (JSON compliance)
-static QString unprotect(const char * string)
-{
-    // sending UTF-8 to FLEX demands symetric conversion back to QString
-    QString string2 = QString::fromUtf8(string);
-
-    // this is a lexer string so it will be enclosed
-    // in quotes. Lets strip those first
-    QString s = string2.mid(1,string2.length()-2);
-
-    // does it end with a space (to avoid token conflict) ?
-    if (s.endsWith(" ")) s = s.mid(0, s.length()-1);
-
-    // now un-escape the control characters
-    s.replace("\\t", "\t");  // tab
-    s.replace("\\n", "\n");  // newline
-    s.replace("\\r", "\r");  // carriage-return
-    s.replace("\\b", "\b");  // backspace
-    s.replace("\\f", "\f");  // formfeed
-    s.replace("\\/", "/");   // solidus
-    s.replace("\\\"", "\""); // quote
-    s.replace("\\\\", "\\"); // backslash
-
-    return s;
-}
+// extract scanner from the context
+#define scanner jc->scanner
 
 %}
+
+%pure-parser
+%lex-param { void *scanner }
+%parse-param { struct JsonContext *jc }
 
 %token JS_STRING JS_INTEGER JS_FLOAT
 %token RIDE STARTTIME RECINTSECS DEVICETYPE IDENTIFIER
@@ -120,6 +113,7 @@ static QString unprotect(const char * string)
 %token REFERENCES
 %token SAMPLES SECS KM WATTS NM CAD KPH HR ALTITUDE LAT LON HEADWIND SLOPE TEMP 
 %token LRBALANCE LTE RTE LPS RPS THB SMO2 RVERT RCAD RCON
+%token LPCO RPCO LPPB RPPB LPPE RPPE LPPPB RPPPB LPPPE RPPPE
 
 %start document
 %%
@@ -155,13 +149,13 @@ rideelement: starttime
  * First class variables
  */
 starttime: STARTTIME ':' string         {
-                                          QDateTime aslocal = QDateTime::fromString(JsonString, DATETIME_FORMAT);
+                                          QDateTime aslocal = QDateTime::fromString(jc->JsonString, DATETIME_FORMAT);
                                           QDateTime asUTC = QDateTime(aslocal.date(), aslocal.time(), Qt::UTC);
-                                          JsonRide->setStartTime(asUTC.toLocalTime());
+                                          jc->JsonRide->setStartTime(asUTC.toLocalTime());
                                         }
-recordint: RECINTSECS ':' number        { JsonRide->setRecIntSecs(JsonNumber); }
-devicetype: DEVICETYPE ':' string       { JsonRide->setDeviceType(JsonString); }
-identifier: IDENTIFIER ':' string       { JsonRide->setId(JsonString); }
+recordint: RECINTSECS ':' number        { jc->JsonRide->setRecIntSecs(jc->JsonNumber); }
+devicetype: DEVICETYPE ':' string       { jc->JsonRide->setDeviceType(jc->JsonString); }
+identifier: IDENTIFIER ':' string       { jc->JsonRide->setId(jc->JsonString); }
 
 /*
  * Metric Overrides
@@ -169,40 +163,41 @@ identifier: IDENTIFIER ':' string       { JsonRide->setId(JsonString); }
 overrides: OVERRIDES ':' '[' overrides_list ']' ;
 overrides_list: override | overrides_list ',' override ;
 
-override: '{' override_name ':' override_values '}' { JsonRide->metricOverrides.insert(JsonOverName, JsonOverrides);
-                                                      JsonOverrides.clear();
+override: '{' override_name ':' override_values '}' { jc->JsonRide->metricOverrides.insert(jc->JsonOverName, jc->JsonOverrides);
+                                                      jc->JsonOverrides.clear();
                                                     }
-override_name: string                   { JsonOverName = JsonString; }
+override_name: string                   { jc->JsonOverName = jc->JsonString; }
 
 override_values: '{' override_value_list '}';
 override_value_list: override_value | override_value_list ',' override_value ;
-override_value: override_key ':' override_value { JsonOverrides.insert(JsonOverKey, JsonOverValue); }
-override_key : string                   { JsonOverKey = JsonString; }
-override_value : string                 { JsonOverValue = JsonString; }
+override_value: override_key ':' override_value { jc->JsonOverrides.insert(jc->JsonOverKey, jc->JsonOverValue); }
+override_key : string                   { jc->JsonOverKey = jc->JsonString; }
+override_value : string                 { jc->JsonOverValue = jc->JsonString; }
 
 /*
  * Ride metadata tags
  */
 tags: TAGS ':' '{' tags_list '}'
 tags_list: tag | tags_list ',' tag ;
-tag: tag_key ':' tag_value              { JsonRide->setTag(JsonTagKey, JsonTagValue); }
+tag: tag_key ':' tag_value              { jc->JsonRide->setTag(jc->JsonTagKey, jc->JsonTagValue); }
 
-tag_key : string                        { JsonTagKey = JsonString; }
-tag_value : string                      { JsonTagValue = JsonString; }
+tag_key : string                        { jc->JsonTagKey = jc->JsonString; }
+tag_value : string                      { jc->JsonTagValue = jc->JsonString; }
 
 /*
  * Intervals
  */
 intervals: INTERVALS ':' '[' interval_list ']' ;
 interval_list: interval | interval_list ',' interval ;
-interval: '{' NAME ':' string ','       { JsonInterval.name = JsonString; }
-              START ':' number ','      { JsonInterval.start = JsonNumber; }
-              STOP ':' number           { JsonInterval.stop = JsonNumber; }
+interval: '{' NAME ':' string ','       { jc->JsonInterval.name = jc->JsonString; }
+              START ':' number ','      { jc->JsonInterval.start = jc->JsonNumber; }
+              STOP ':' number           { jc->JsonInterval.stop = jc->JsonNumber; }
           '}'
-                                        { JsonRide->addInterval(JsonInterval.start,
-                                                                JsonInterval.stop,
-                                                                JsonInterval.name);
-                                          JsonInterval = RideFileInterval();
+                                        { jc->JsonRide->addInterval(RideFileInterval::USER,
+                                                                jc->JsonInterval.start,
+                                                                jc->JsonInterval.stop,
+                                                                jc->JsonInterval.name);
+                                          jc->JsonInterval = RideFileInterval();
                                         }
 
 /*
@@ -210,14 +205,14 @@ interval: '{' NAME ':' string ','       { JsonInterval.name = JsonString; }
  */
 calibrations: CALIBRATIONS ':' '[' calibration_list ']' ;
 calibration_list: calibration | calibration_list ',' calibration ;
-calibration: '{' NAME ':' string ','    { JsonCalibration.name = JsonString; }
-                 START ':' number ','   { JsonCalibration.start = JsonNumber; }
-                 VALUE ':' number       { JsonCalibration.value = JsonNumber; }
+calibration: '{' NAME ':' string ','    { jc->JsonCalibration.name = jc->JsonString; }
+                 START ':' number ','   { jc->JsonCalibration.start = jc->JsonNumber; }
+                 VALUE ':' number       { jc->JsonCalibration.value = jc->JsonNumber; }
              '}'
-                                        { JsonRide->addCalibration(JsonCalibration.start,
-                                                                   JsonCalibration.value,
-                                                                   JsonCalibration.name);
-                                          JsonCalibration = RideFileCalibration();
+                                        { jc->JsonRide->addCalibration(jc->JsonCalibration.start,
+                                                                   jc->JsonCalibration.value,
+                                                                   jc->JsonCalibration.name);
+                                          jc->JsonCalibration = RideFileCalibration();
                                         }
 
 
@@ -226,11 +221,11 @@ calibration: '{' NAME ':' string ','    { JsonCalibration.name = JsonString; }
  */
 references: REFERENCES ':' '[' reference_list ']'
                                         {
-                                          JsonPoint = RideFilePoint();
+                                          jc->JsonPoint = RideFilePoint();
                                         }
 reference_list: reference | reference_list ',' reference;
-reference: '{' series '}'               { JsonRide->appendReference(JsonPoint);
-                                          JsonPoint = RideFilePoint();
+reference: '{' series '}'               { jc->JsonRide->appendReference(jc->JsonPoint);
+                                          jc->JsonPoint = RideFilePoint();
                                         }
 
 /*
@@ -238,44 +233,60 @@ reference: '{' series '}'               { JsonRide->appendReference(JsonPoint);
  */
 samples: SAMPLES ':' '[' sample_list ']' ;
 sample_list: sample | sample_list ',' sample ;
-sample: '{' series_list '}'             { JsonRide->appendPoint(JsonPoint.secs, JsonPoint.cad,
-                                                    JsonPoint.hr, JsonPoint.km, JsonPoint.kph,
-                                                    JsonPoint.nm, JsonPoint.watts, JsonPoint.alt,
-                                                    JsonPoint.lon, JsonPoint.lat,
-                                                    JsonPoint.headwind,
-                                                    JsonPoint.slope, JsonPoint.temp, JsonPoint.lrbalance,
-                                                    JsonPoint.lte, JsonPoint.rte,
-                                                    JsonPoint.lps, JsonPoint.rps,
-                                                    JsonPoint.smo2, JsonPoint.thb,
-                                                    JsonPoint.rvert, JsonPoint.rcad, JsonPoint.rcontact,
-                                                    JsonPoint.interval);
-                                          JsonPoint = RideFilePoint();
+sample: '{' series_list '}'             { jc->JsonRide->appendPoint(jc->JsonPoint.secs, jc->JsonPoint.cad,
+                                                    jc->JsonPoint.hr, jc->JsonPoint.km, jc->JsonPoint.kph,
+                                                    jc->JsonPoint.nm, jc->JsonPoint.watts, jc->JsonPoint.alt,
+                                                    jc->JsonPoint.lon, jc->JsonPoint.lat,
+                                                    jc->JsonPoint.headwind,
+                                                    jc->JsonPoint.slope, jc->JsonPoint.temp, jc->JsonPoint.lrbalance,
+                                                    jc->JsonPoint.lte, jc->JsonPoint.rte,
+                                                    jc->JsonPoint.lps, jc->JsonPoint.rps,
+                                                    jc->JsonPoint.lpco, jc->JsonPoint.rpco,
+                                                    jc->JsonPoint.lppb, jc->JsonPoint.rppb,
+                                                    jc->JsonPoint.lppe, jc->JsonPoint.rppe,
+                                                    jc->JsonPoint.lpppb, jc->JsonPoint.rpppb,
+                                                    jc->JsonPoint.lpppe, jc->JsonPoint.rpppe,
+                                                    jc->JsonPoint.smo2, jc->JsonPoint.thb,
+                                                    jc->JsonPoint.rvert, jc->JsonPoint.rcad, jc->JsonPoint.rcontact,
+                                                    jc->JsonPoint.tcore,
+                                                    jc->JsonPoint.interval);
+                                          jc->JsonPoint = RideFilePoint();
                                         }
 
 series_list: series | series_list ',' series ;
-series: SECS ':' number                 { JsonPoint.secs = JsonNumber; }
-        | KM ':' number                 { JsonPoint.km = JsonNumber; }
-        | WATTS ':' number              { JsonPoint.watts = JsonNumber; }
-        | NM ':' number                 { JsonPoint.nm = JsonNumber; }
-        | CAD ':' number                { JsonPoint.cad = JsonNumber; }
-        | KPH ':' number                { JsonPoint.kph = JsonNumber; }
-        | HR ':' number                 { JsonPoint.hr = JsonNumber; }
-        | ALTITUDE ':' number           { JsonPoint.alt = JsonNumber; }
-        | LAT ':' number                { JsonPoint.lat = JsonNumber; }
-        | LON ':' number                { JsonPoint.lon = JsonNumber; }
-        | HEADWIND ':' number           { JsonPoint.headwind = JsonNumber; }
-        | SLOPE ':' number              { JsonPoint.slope = JsonNumber; }
-        | TEMP ':' number               { JsonPoint.temp = JsonNumber; }
-        | LRBALANCE ':' number          { JsonPoint.lrbalance = JsonNumber; }
-        | LTE ':' number                { JsonPoint.lte = JsonNumber; }
-        | RTE ':' number                { JsonPoint.rte = JsonNumber; }
-        | LPS ':' number                { JsonPoint.lps = JsonNumber; }
-        | RPS ':' number                { JsonPoint.rps = JsonNumber; }
-        | SMO2 ':' number               { JsonPoint.smo2 = JsonNumber; }
-        | THB ':' number                { JsonPoint.thb = JsonNumber; }
-        | RVERT ':' number              { JsonPoint.rvert = JsonNumber; }
-        | RCAD ':' number               { JsonPoint.rcad = JsonNumber; }
-        | RCON ':' number               { JsonPoint.rcontact = JsonNumber; }
+series: SECS ':' number                 { jc->JsonPoint.secs = jc->JsonNumber; }
+        | KM ':' number                 { jc->JsonPoint.km = jc->JsonNumber; }
+        | WATTS ':' number              { jc->JsonPoint.watts = jc->JsonNumber; }
+        | NM ':' number                 { jc->JsonPoint.nm = jc->JsonNumber; }
+        | CAD ':' number                { jc->JsonPoint.cad = jc->JsonNumber; }
+        | KPH ':' number                { jc->JsonPoint.kph = jc->JsonNumber; }
+        | HR ':' number                 { jc->JsonPoint.hr = jc->JsonNumber; }
+        | ALTITUDE ':' number           { jc->JsonPoint.alt = jc->JsonNumber; }
+        | LAT ':' number                { jc->JsonPoint.lat = jc->JsonNumber; }
+        | LON ':' number                { jc->JsonPoint.lon = jc->JsonNumber; }
+        | HEADWIND ':' number           { jc->JsonPoint.headwind = jc->JsonNumber; }
+        | SLOPE ':' number              { jc->JsonPoint.slope = jc->JsonNumber; }
+        | TEMP ':' number               { jc->JsonPoint.temp = jc->JsonNumber; }
+        | LRBALANCE ':' number          { jc->JsonPoint.lrbalance = jc->JsonNumber; }
+        | LTE ':' number                { jc->JsonPoint.lte = jc->JsonNumber; }
+        | RTE ':' number                { jc->JsonPoint.rte = jc->JsonNumber; }
+        | LPS ':' number                { jc->JsonPoint.lps = jc->JsonNumber; }
+        | RPS ':' number                { jc->JsonPoint.rps = jc->JsonNumber; }
+        | LPCO ':' number               { jc->JsonPoint.lpco = jc->JsonNumber; }
+        | RPCO ':' number               { jc->JsonPoint.rpco = jc->JsonNumber; }
+        | LPPB ':' number               { jc->JsonPoint.lppb = jc->JsonNumber; }
+        | RPPB ':' number               { jc->JsonPoint.rppb = jc->JsonNumber; }
+        | LPPE ':' number               { jc->JsonPoint.lppe = jc->JsonNumber; }
+        | RPPE ':' number               { jc->JsonPoint.rppe = jc->JsonNumber; }
+        | LPPPB ':' number              { jc->JsonPoint.lpppb = jc->JsonNumber; }
+        | RPPPB ':' number              { jc->JsonPoint.rpppb = jc->JsonNumber; }
+        | LPPPE ':' number              { jc->JsonPoint.lpppe = jc->JsonNumber; }
+        | RPPPE ':' number              { jc->JsonPoint.rpppe = jc->JsonNumber; }
+        | SMO2 ':' number               { jc->JsonPoint.smo2 = jc->JsonNumber; }
+        | THB ':' number                { jc->JsonPoint.thb = jc->JsonNumber; }
+        | RVERT ':' number              { jc->JsonPoint.rvert = jc->JsonNumber; }
+        | RCAD ':' number               { jc->JsonPoint.rcad = jc->JsonNumber; }
+        | RCON ':' number               { jc->JsonPoint.rcontact = jc->JsonNumber; }
         | string ':' number             { }
         | string ':' string
         ;
@@ -284,11 +295,11 @@ series: SECS ':' number                 { JsonPoint.secs = JsonNumber; }
 /*
  * Primitives
  */
-number: JS_INTEGER                         { JsonNumber = QString(JsonRideFiletext).toInt(); }
-        | JS_FLOAT                         { JsonNumber = QString(JsonRideFiletext).toDouble(); }
+number: JS_INTEGER                         { jc->JsonNumber = QString($1).toInt(); }
+        | JS_FLOAT                         { jc->JsonNumber = QString($1).toDouble(); }
         ;
 
-string: JS_STRING                          { JsonString = unprotect(JsonRideFiletext); }
+string: JS_STRING                          { jc->JsonString = $1; }
         ;
 %%
 
@@ -330,12 +341,16 @@ JsonFileReader::openRideFile(QFile &file, QStringList &errors, QList<RideFile*>*
         return NULL; 
     }
 
+    // create scanner context for reentrant parsing
+    JsonContext *jc = new JsonContext;
+    JsonRideFilelex_init(&scanner);
+
     // inform the parser/lexer we have a new file
-    JsonRideFile_setString(contents);
+    JsonRideFile_setString(contents, scanner);
 
     // setup
-    JsonRide = new RideFile;
-    JsonRideFileerrors.clear();
+    jc->JsonRide = new RideFile;
+    jc->JsonRideFileerrors.clear();
 
     // set to non-zero if you want to
     // to debug the yyparse() state machine
@@ -343,17 +358,23 @@ JsonFileReader::openRideFile(QFile &file, QStringList &errors, QList<RideFile*>*
     //yydebug = 0;
 
     // parse it
-    JsonRideFileparse();
+    JsonRideFileparse(jc);
 
     // clean up
-    JsonRideFilelex_destroy();
+    JsonRideFilelex_destroy(scanner);
 
     // Only get errors so fail if we have any
+    // and always delete context now we're done
     if (errors.count()) {
-        errors << JsonRideFileerrors;
-        delete JsonRide;
+        errors << jc->JsonRideFileerrors;
+        delete jc->JsonRide;
+        delete jc;
         return NULL;
-    } else return JsonRide;
+    } else {
+        RideFile *returning = jc->JsonRide;
+        delete jc;
+        return returning;
+    }
 }
 
 // Writes valid .json (validated at www.jsonlint.com)
@@ -450,14 +471,14 @@ JsonFileReader::writeRideFile(Context *, const RideFile *ride, QFile &file) cons
         out << ",\n\t\t\"INTERVALS\":[\n";
         bool first = true;
 
-        foreach (RideFileInterval i, ride->intervals()) {
+        foreach (RideFileInterval *i, ride->intervals()) {
             if (first) first=false;
             else out << ",\n";
 
             out << "\t\t\t{ ";
-            out << "\"NAME\":\"" << protect(i.name) << "\"";
-            out << ", \"START\": " << QString("%1").arg(i.start);
-            out << ", \"STOP\": " << QString("%1").arg(i.stop) << " }";
+            out << "\"NAME\":\"" << protect(i->name) << "\"";
+            out << ", \"START\": " << QString("%1").arg(i->start);
+            out << ", \"STOP\": " << QString("%1").arg(i->stop) << " }";
         }
         out <<"\n\t\t]";
     }
@@ -470,14 +491,14 @@ JsonFileReader::writeRideFile(Context *, const RideFile *ride, QFile &file) cons
         out << ",\n\t\t\"CALIBRATIONS\":[\n";
         bool first = true;
 
-        foreach (RideFileCalibration i, ride->calibrations()) {
+        foreach (RideFileCalibration *i, ride->calibrations()) {
             if (first) first=false;
             else out << ",\n";
 
             out << "\t\t\t{ ";
-            out << "\"NAME\":\"" << protect(i.name) << "\"";
-            out << ", \"START\": " << QString("%1").arg(i.start);
-            out << ", \"VALUE\": " << QString("%1").arg(i.value) << " }";
+            out << "\"NAME\":\"" << protect(i->name) << "\"";
+            out << ", \"START\": " << QString("%1").arg(i->start);
+            out << ", \"VALUE\": " << QString("%1").arg(i->value) << " }";
         }
         out <<"\n\t\t]";
     }
@@ -543,6 +564,16 @@ JsonFileReader::writeRideFile(Context *, const RideFile *ride, QFile &file) cons
             if (ride->areDataPresent()->rte) out << ", \"RTE\":" << QString("%1").arg(p->rte);
             if (ride->areDataPresent()->lps) out << ", \"LPS\":" << QString("%1").arg(p->lps);
             if (ride->areDataPresent()->rps) out << ", \"RPS\":" << QString("%1").arg(p->rps);
+            if (ride->areDataPresent()->lpco) out << ", \"LPCO\":" << QString("%1").arg(p->lpco);
+            if (ride->areDataPresent()->rpco) out << ", \"RPCO\":" << QString("%1").arg(p->rpco);
+            if (ride->areDataPresent()->lppb) out << ", \"LPPB\":" << QString("%1").arg(p->lppb);
+            if (ride->areDataPresent()->rppb) out << ", \"RPPB\":" << QString("%1").arg(p->rppb);
+            if (ride->areDataPresent()->lppe) out << ", \"LPPE\":" << QString("%1").arg(p->lppe);
+            if (ride->areDataPresent()->rppe) out << ", \"RPPE\":" << QString("%1").arg(p->rppe);
+            if (ride->areDataPresent()->lpppb) out << ", \"LPPPB\":" << QString("%1").arg(p->lpppb);
+            if (ride->areDataPresent()->rpppb) out << ", \"RPPPB\":" << QString("%1").arg(p->rpppb);
+            if (ride->areDataPresent()->lpppe) out << ", \"LPPPE\":" << QString("%1").arg(p->lpppe);
+            if (ride->areDataPresent()->rpppe) out << ", \"RPPPE\":" << QString("%1").arg(p->rpppe);
             if (ride->areDataPresent()->smo2) out << ", \"SMO2\":" << QString("%1").arg(p->smo2);
             if (ride->areDataPresent()->thb) out << ", \"THB\":" << QString("%1").arg(p->thb);
             if (ride->areDataPresent()->rcad) out << ", \"RCAD\":" << QString("%1").arg(p->rcad);

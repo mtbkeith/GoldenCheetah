@@ -22,6 +22,7 @@
 #include <QSet>
 #include <stdio.h>
 #include <stdint.h>
+#include <time.h>
 
 #define RECORD_TYPE__META 0
 #define RECORD_TYPE__RIDE_DATA 1
@@ -487,7 +488,7 @@ struct BinFileReaderState
         int lat = 0;
 
         // the 0.0 values are L and R torque efficiency and pedal smoothness which are not available in this format
-        rideFile->appendPoint(secs, cad, hr, km, kph, nm, watts, alt, lng, lat, headwind, grade, temperature, lrbalance, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
+        rideFile->appendPoint(secs, cad, hr, km, kph, nm, watts, alt, lng, lat, headwind, grade, temperature, lrbalance, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, interval);
     }
 
     void decodeSparseData(const BinDefinition &def, const std::vector<int> values) {
@@ -546,7 +547,7 @@ struct BinFileReaderState
             }
         }
         if (interval>1) {
-            rideFile->addInterval(last_interval_secs, secs, QString("%1").arg(interval-1));
+            rideFile->addInterval(RideFileInterval::DEVICE, last_interval_secs, secs, QString("%1").arg(interval-1));
         }
         last_interval_secs = secs;
 
@@ -738,7 +739,7 @@ struct BinFileReaderState
         }
 
         if (last_interval_secs>0) {
-            rideFile->addInterval(last_interval_secs, rideFile->dataPoints().last()->secs, QString("%1").arg(interval));
+            rideFile->addInterval(RideFileInterval::DEVICE, last_interval_secs, rideFile->dataPoints().last()->secs, QString("%1").arg(interval));
         }
         if (stop) {
             file.close();

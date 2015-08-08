@@ -22,6 +22,8 @@
 #include "Athlete.h"
 #include "GcSideBarItem.h" // for iconFromPNG
 
+#include <QMessageBox>
+
 // Escape special characters (JSON compliance & XML)
 static QString protect(const QString string)
 {
@@ -84,6 +86,21 @@ NamedSearches::read()
 
     // go read them!
     list = handler.getResults();
+
+    // If there is no filters yet, add some for multisport use.
+    if (list.isEmpty()) {
+        NamedSearch namedSearch;
+        namedSearch.type = NamedSearch::filter;
+        namedSearch.name = tr("Swim");
+        namedSearch.text = "isSwim<>0";
+        list.append(namedSearch);
+        namedSearch.name = tr("Bike");
+        namedSearch.text = "(isRun=0) and (isSwim=0)";
+        list.append(namedSearch);
+        namedSearch.name = tr("Run");
+        namedSearch.text = "isRun<>0";
+        list.append(namedSearch);
+    }
 
     // let everyone know they have changed
     changed();
@@ -172,7 +189,14 @@ NamedSearchParser::serialize(QString filename, QList<NamedSearch>NamedSearches)
 {
     // open file - truncate contents
     QFile file(filename);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly)) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText(QObject::tr("Problem Saving Named Search Configuration"));
+        msgBox.setInformativeText(QObject::tr("File: %1 cannot be opened for 'Writing'. Please check file properties.").arg(filename));
+        msgBox.exec();
+        return false;
+    };
     file.resize(0);
     QTextStream out(&file);
     out.setCodec("UTF-8");

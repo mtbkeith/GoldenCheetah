@@ -63,6 +63,7 @@ private:
     };
 
     RideNavigator *rideNavigator;
+    QAbstractItemModel *model;
     int groupBy;
     int calendarText;
     int colorColumn;
@@ -103,9 +104,7 @@ public:
     }
     ~GroupByModel() {}
 
-    void setSourceModel(QAbstractItemModel *model) {
-        QAbstractProxyModel::setSourceModel(model);
-        setGroupBy(groupBy);
+    void setIndexes() {
 
         // find the Calendar TextColumn
         calendarText = -1;
@@ -114,19 +113,24 @@ public:
         isRunIndex = -1;
         tempIndex = -1;
         for(int i=0; i<model->columnCount(); i++) {
-            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "Xaverage_temp") {
+
+            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "average_temp") {
                 tempIndex = i;
             }
             if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "isRun") {
                 isRunIndex = i;
             }
-            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "filename") {
+            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "filename" ||
+                model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == tr("File")) {
                 fileIndex = i;
             }
             if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "color") {
                 colorColumn = i;
             }
-            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "ZCalendar_Text") {
+            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "Calendar_Text") {
+                calendarText = i;
+            }
+            if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "Calendar Text") {
                 calendarText = i;
             }
             if (model->headerData(i, Qt::Horizontal, Qt::DisplayRole).toString() == "ride_date") {
@@ -134,6 +138,14 @@ public:
             }
             starttimeHeader = "ride_time"; //initialisation with techname
         }
+    }
+
+    void setSourceModel(QAbstractItemModel *model) {
+
+        this->model=model;
+        QAbstractProxyModel::setSourceModel(model);
+        setGroupBy(groupBy);
+        setIndexes();
 
         connect(model, SIGNAL(modelReset()), this, SLOT(sourceModelChanged()));
         connect(model, SIGNAL(dataChanged(QModelIndex, QModelIndex)), this, SLOT(sourceModelChanged()));
@@ -238,13 +250,14 @@ public:
 
             // serialize
             stream << (int)1;
-            stream << QString(tr("Entire Ride"));
-            stream << (quint64)(ride->ride()); // ridefile
+            stream << QString(tr("Entire Activity"));
+            stream << (quint64)(ride); // rideitem
             stream << (quint64)ride->ride()->dataPoints().first()->secs
                    << (quint64)ride->ride()->dataPoints().last()->secs;
             stream << (quint64)ride->ride()->dataPoints().first()->km
                    << (quint64)ride->ride()->dataPoints().last()->km;
-            stream << (quint64)1;
+            stream << (quint64)1; // sequence interval only
+            stream << QUuid(); // route interval only
 
         } else {
             stream << (int)0; // nothing
@@ -279,7 +292,6 @@ public:
                     int groupNo = ((QModelIndex*)proxyIndex.internalPointer())->row();
                     if (groupNo < 0 || groupNo >= groups.count() || proxyIndex.column() == 0) returning="";
                     else string = sourceModel()->data(sourceModel()->index(groupToSourceRow.value(groups[groupNo])->at(proxyIndex.row()), calendarText)).toString();
-
                     // get rid of cr, lf and tab chars
                     string.replace("\n", " ");
                     string.replace("\t", " ");
@@ -313,7 +325,7 @@ public:
 
             } else if (role == (Qt::UserRole+1)) { // FILENAME ?
 
-                if (colorColumn != -1 && proxyIndex.internalPointer()) {
+                if (fileIndex != -1 && proxyIndex.internalPointer()) {
 
                     QString filename;
 
@@ -382,13 +394,13 @@ public:
 
                 // format the group by with ride count etc
                 if (groupBy != -1) {
-                    QString returnString = QString(tr("%1: %2 (%3 rides)"))
+                    QString returnString = QString(tr("%1: %2 (%3 activities)"))
                                            .arg(sourceModel()->headerData(groupBy, Qt::Horizontal).toString())
                                            .arg(group)
                                            .arg(groupToSourceRow.value(groups[proxyIndex.row()])->count());
                     returning = QVariant(returnString);
                 } else {
-                    QString returnString = QString(tr("%1 rides"))
+                    QString returnString = QString(tr("%1 activities"))
                                            .arg(groupToSourceRow.value(groups[proxyIndex.row()])->count());
                     returning = QVariant(returnString);
                 }
@@ -479,7 +491,7 @@ public:
     QString whichGroup(int row) const {
 
         if (row < 0 || row >= rankedRows.count()) return ("");
-        if (groupBy == -1) return tr("All Rides");
+        if (groupBy == -1) return tr("All Activities");
         else return groupFromValue(headerData(groupBy+2, // accommodate virtual column
                                     Qt::Horizontal).toString(),
                                     sourceModel()->data(sourceModel()->index(row,groupBy)).toString(),
@@ -547,13 +559,13 @@ public:
 
         } else {
 
-            // Just one group by 'All Rides'
+            // Just one group by 'All Activities'
             QVector<int> *rows = new QVector<int>;
             for (int i=0; i<sourceModel()->rowCount(QModelIndex()); i++) {
                 rows->append(i);
                 sourceRowToGroupRow.append(i);
             }
-            groupToSourceRow.insert("All Rides", rows);
+            groupToSourceRow.insert("All Activities", rows);
 
         }
 
@@ -578,12 +590,17 @@ public slots:
 
         clearGroups();
         setGroupBy(groupBy+2); // accommodate virtual columns
+        setIndexes();
 
         endResetModel();// we're clean
 
         // lets expand column 0 for the groupBy heading
         for (int i=0; i < groupCount(); i++)
             rideNavigator->tableView->setFirstColumnSpanned(i, QModelIndex(), true);
+
+        // reset the view
+        rideNavigator->resetView();
+
         // now show em
         rideNavigator->tableView->expandAll();
     }

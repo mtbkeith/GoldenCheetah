@@ -19,7 +19,6 @@
 #ifndef _TimeUtils_h
 #define _TimeUtils_h
 
-#include <QObject>
 #include <QDate>
 #include <QDateEdit>
 #include <QDateTime>
@@ -46,6 +45,15 @@ class DateRange : QObject
         DateRange& operator=(const DateRange &);
         QDate from, to;
         QString name;
+
+        // does this date fall in the range selection ?
+        bool pass(QDate date) {
+            if (from == QDate() && to == QDate()) return true;
+            if (from == QDate() && date <= to) return true;
+            if (to == QDate() && date >= from) return true;
+            if (date >= from && date <= to) return true;
+            return false;
+        }
 
     signals:
         void changed(QDate from, QDate to);

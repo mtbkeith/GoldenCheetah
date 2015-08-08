@@ -41,6 +41,7 @@
 #endif
 
 class ChartBar;
+class LTMSettings;
 
 class HomeWindow : public GcWindow
 {
@@ -62,7 +63,8 @@ class HomeWindow : public GcWindow
         // GC signals
         void rideSelected();
         void dateRangeChanged(DateRange);
-        void configChanged();
+        void configChanged(qint32);
+        void presetSelected(int n);
 
         // QT Widget events and signals
         void tabSelected(int id);
@@ -146,7 +148,7 @@ class GcWindowDialog : public QDialog
     Q_OBJECT
 
     public:
-        GcWindowDialog(GcWinID, Context *, GcWindow **);
+        GcWindowDialog(GcWinID, Context *, GcWindow **, bool sidebar=false, LTMSettings *use=NULL);
         int exec();               // return pointer to window, or NULL if cancelled
 
     public slots:
@@ -157,6 +159,7 @@ class GcWindowDialog : public QDialog
         Context *context;
         GcWinID type;
         GcWindow **here;
+        bool sidebar;
 
         // we remove from the layout at the end
         QHBoxLayout *layout;

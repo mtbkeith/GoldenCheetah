@@ -29,6 +29,7 @@
 #include <qwt_plot_curve.h>
 #include <qwt_plot_dict.h>
 #include <qwt_plot_marker.h>
+#include <qwt_plot_intervalcurve.h>
 #include <qwt_point_3d.h>
 #include <qwt_scale_widget.h>
 #include <qwt_compat.h>
@@ -69,7 +70,7 @@ class CurveColors : public QObject
     Q_OBJECT;
 
     public:
-        CurveColors(QwtPlot *plot) : isolated(false), plot(plot) {
+        CurveColors(QwtPlot *plot, bool allplot=false) : isolated(false), allplot(allplot), plot(plot) {
 
             // span slider appears when curve isolated
             // to enable zooming in and out
@@ -104,19 +105,37 @@ class CurveColors : public QObject
 
         void restoreState() {
 
+            // if a curve is hidden, don't show its labels we hack this
+            // by hiding any labels with the same color, a bit of a
+            // hack but works largely and avoids having to integrate
+            // with the plot object to understand the relationship between
+            // labels and curves (which is only really known by LTMPlot)
+            QList<QColor> shown;
+
+            // make all the curves visible (that should be)
+            // and remember the colors so we can show/hide 
+            // the associated labels
+            QHashIterator<QwtPlotSeriesItem *, bool> c(state);
+            while (c.hasNext()) {
+                c.next();
+                c.key()->setVisible(c.value());
+
+                if (c.value()) {
+                    if (c.key()->rtti() == QwtPlotItem::Rtti_PlotIntervalCurve) {
+                        shown << static_cast<QwtPlotIntervalCurve*>(c.key())->pen().color();
+                    } else if (c.key()->rtti() == QwtPlotItem::Rtti_PlotCurve) {
+                        shown << static_cast<QwtPlotCurve*>(c.key())->pen().color();
+                    }
+                }
+            }
+
             // show all labels
             QHashIterator<QwtPlotMarker *, QwtScaleWidget*> l(labels);
             while (l.hasNext()) {
                 l.next();
 
-                l.key()->setVisible(true);
-            }
-
-            // make all the curves visible (that should be)
-            QHashIterator<QwtPlotSeriesItem *, bool> c(state);
-            while (c.hasNext()) {
-                c.next();
-                c.key()->setVisible(c.value());
+                // we cannot hide via legend on allplot so always hide/show labels
+                l.key()->setVisible(allplot || shown.contains(l.key()->label().color()));
             }
 
             // make all the axes have the right color
@@ -216,6 +235,13 @@ class CurveColors : public QObject
             isolatedAxis = plot->axisWidget(id);
             isolatedDiv = plot->axisScaleDiv(id);
 
+            // if a curve is hidden, don't show its labels we hack this
+            // by hiding any labels with the same color, a bit of a
+            // hack but works largely and avoids having to integrate
+            // with the plot object to understand the relationship between
+            // labels and curves (which is only really known by LTMPlot)
+            QList<QColor> shown;
+
             // hide curves that are not ours
             QHashIterator<QwtPlotSeriesItem *, bool> c(state);
             while (c.hasNext()) {
@@ -223,7 +249,16 @@ class CurveColors : public QObject
 
                 // isolate on axis hover (but leave huighlighters alone)
                 if (c.key()->yAxis() == id || c.key()->yAxis() == QwtAxisId(QwtAxis::yLeft,2)) {
+
+                    // show and remember color
                     c.key()->setVisible(c.value());
+                    if (c.value()) {
+                        if (c.key()->rtti() == QwtPlotItem::Rtti_PlotIntervalCurve) {
+                            shown << static_cast<QwtPlotIntervalCurve*>(c.key())->pen().color();
+                        } else if (c.key()->rtti() == QwtPlotItem::Rtti_PlotCurve) {
+                            shown << static_cast<QwtPlotCurve*>(c.key())->pen().color();
+                        }
+                    }
 
                     if (showslider && c.key()->yAxis() == id) {
 
@@ -269,14 +304,15 @@ class CurveColors : public QObject
                 if (l.value() != ours) {
                     l.key()->setVisible(false);
                 } else {
-                    l.key()->setVisible(true);
+                    // we cannot hide via legend on allplot so always hide/show labels
+                    l.key()->setVisible(allplot || shown.contains(l.key()->label().color()));
                 }
             }
 
             isolated = true;
         }
 
-        bool isolated;
+        bool isolated, allplot;
 
     public slots:
         void zoomChanged() {
@@ -352,6 +388,7 @@ class AllPlotObject : public QObject
     QwtPlotCurve *xpCurve;
     QwtPlotCurve *apCurve;
     QwtPlotCurve *hrCurve;
+    QwtPlotCurve *tcoreCurve;
     QwtPlotCurve *speedCurve;
     QwtPlotCurve *accelCurve;
     QwtPlotCurve *wattsDCurve;
@@ -371,6 +408,12 @@ class AllPlotObject : public QObject
     QwtPlotCurve *rteCurve;
     QwtPlotCurve *lpsCurve;
     QwtPlotCurve *rpsCurve;
+    QwtPlotCurve *lpcoCurve;
+    QwtPlotCurve *rpcoCurve;
+    QwtPlotIntervalCurve *lppCurve;
+    QwtPlotIntervalCurve *rppCurve;
+    QwtPlotIntervalCurve *lpppCurve;
+    QwtPlotIntervalCurve *rpppCurve;
 
     // source data
     QVector<double> match;
@@ -382,6 +425,7 @@ class AllPlotObject : public QObject
     QVector<double> wprimeDist;
 
     QVector<double> hrArray;
+    QVector<double> tcoreArray;
     QVector<double> wattsArray;
     QVector<double> atissArray;
     QVector<double> antissArray;
@@ -415,6 +459,16 @@ class AllPlotObject : public QObject
     QVector<double> rteArray;
     QVector<double> lpsArray;
     QVector<double> rpsArray;
+    QVector<double> lpcoArray;
+    QVector<double> rpcoArray;
+    QVector<double> lppbArray;
+    QVector<double> rppbArray;
+    QVector<double> lppeArray;
+    QVector<double> rppeArray;
+    QVector<double> lpppbArray;
+    QVector<double> rpppbArray;
+    QVector<double> lpppeArray;
+    QVector<double> rpppeArray;
 
     // smoothed data
     QVector<double> smoothWatts;
@@ -432,6 +486,7 @@ class AllPlotObject : public QObject
     QVector<double> smoothAP;
     QVector<double> smoothXP;
     QVector<double> smoothHr;
+    QVector<double> smoothTcore;
     QVector<double> smoothSpeed;
     QVector<double> smoothAccel;
     QVector<double> smoothWattsD;
@@ -452,6 +507,12 @@ class AllPlotObject : public QObject
     QVector<double> smoothRTE;
     QVector<double> smoothLPS;
     QVector<double> smoothRPS;
+    QVector<double> smoothLPCO;
+    QVector<double> smoothRPCO;
+    QVector<QwtIntervalSample> smoothLPP;
+    QVector<QwtIntervalSample> smoothRPP;
+    QVector<QwtIntervalSample> smoothLPPP;
+    QVector<QwtIntervalSample> smoothRPPP;
     QVector<QwtIntervalSample> smoothRelSpeed;
 
     // highlighting intervals
@@ -516,6 +577,8 @@ class AllPlot : public QwtPlot
         void confirmTmpReference(double value, int axis, bool allowDelete);
         QwtPlotCurve* plotReferenceLine(const RideFilePoint *referencePoint);
 
+        virtual void replot();
+
         // remembering state etc
         CurveColors *curveColors;
 
@@ -536,6 +599,7 @@ class AllPlot : public QwtPlot
         void setShowXP(bool show);
         void setShowAP(bool show);
         void setShowHr(bool show);
+        void setShowTcore(bool show);
         void setShowSpeed(bool show);
         void setShowCad(bool show);
         void setShowAlt(bool show);
@@ -554,17 +618,20 @@ class AllPlot : public QwtPlot
         void setShowBalance(bool show);
         void setShowTE(bool show);
         void setShowPS(bool show);
+        void setShowPCO(bool show);
+        void setShowDC(bool show);
+        void setShowPPP(bool show);
         void setShowGrid(bool show);
         void setPaintBrush(int state);
         void setShadeZones(bool x) { shade_zones=x; }
         void setSmoothing(int value);
         void setByDistance(int value);
         void setWantAxis(bool x, bool y=false) { wantaxis = x; wantxaxis = y;}
-        void configChanged();
+        void configChanged(qint32);
 
         // for tooltip
         void pointHover(QwtPlotCurve*, int);
-        void intervalHover(RideFileInterval h);
+        void intervalHover(IntervalItem *h);
 
     protected:
 
@@ -578,7 +645,7 @@ class AllPlot : public QwtPlot
         RideItem *rideItem;
         AllPlotBackground *bg;
         QSettings *settings;
-        RideFileInterval hovered;
+        IntervalItem *hovered;
 
         // controls
         bool shade_zones;
@@ -590,6 +657,7 @@ class AllPlot : public QwtPlot
         bool showXP;
         bool showAP;
         bool showHr;
+        bool showTcore;
         bool showSpeed;
         bool showAccel;
         bool showPowerD;
@@ -606,6 +674,9 @@ class AllPlot : public QwtPlot
         bool showBalance;
         bool showTE;
         bool showPS;
+        bool showPCO;
+        bool showDC;
+        bool showPPP;
         bool showRV;
         bool showRGCT;
         bool showRCad;

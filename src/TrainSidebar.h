@@ -41,7 +41,7 @@
 #include <QFormLayout>
 #include <QSqlTableModel>
 
-#include "math.h" // for round()
+#include "cmath" // for round()
 #include "Units.h" // for MILES_PER_KM
 
 // Status settings
@@ -139,7 +139,7 @@ class TrainSidebar : public GcWindow
         void selectWorkout(QString fullpath);
 
     public slots:
-        void configChanged();
+        void configChanged(qint32);
         void deleteWorkouts(); // deletes selected workouts
         void deleteVideos(); // deletes selected workouts
 
@@ -207,6 +207,7 @@ class TrainSidebar : public GcWindow
         // update() - from a push device (quarqd ANT+)
         // Device->getRealtimeData() - from a pull device (Computrainer)
         double displayPower, displayHeartRate, displayCadence, displaySpeed;
+        double displayLRBalance, displayLTE, displayRTE, displayLPS, displayRPS;
         double displayDistance, displayWorkoutDistance;
         long load;
         double slope;

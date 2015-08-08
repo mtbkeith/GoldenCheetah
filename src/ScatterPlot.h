@@ -27,9 +27,10 @@
 #include "Context.h"
 #include "IntervalItem.h"
 #include "RideItem.h"
+#include "IntervalItem.h"
 #include "RideFile.h"
 #include "Units.h"
-#include "math.h"
+#include "cmath"
 
 #include <qwt_plot.h>
 #include <qwt_plot_grid.h>
@@ -66,6 +67,8 @@
 #define MODEL_GEAR          25
 #define MODEL_SMO2          26
 #define MODEL_THB           27
+#define MODEL_HHB           28
+#define MODEL_O2HB          29
 
 // the data provider for the plot
 class ScatterSettings;
@@ -84,9 +87,9 @@ class ScatterPlot : public QwtPlot
         void setAxisTitle(int axis, QString label);
 
     public slots:
-        void intervalHover(RideFileInterval);
+        void intervalHover(IntervalItem*);
         void mouseMoved();
-        void configChanged();
+        void configChanged(qint32);
 
     protected:
 
@@ -95,7 +98,8 @@ class ScatterPlot : public QwtPlot
         double cranklength;
 
         QList <QwtPlotCurve *> intervalCurves; // each curve on plot
-        QList <QwtPlotMarker *> intervalMarkers; // each curve on plot
+        QList <QwtPlotMarker *> intervalMarkers; // each marker on plot
+        QList <QwtPlotMarker *> labels; // each label on plot
 
         QwtPlotCurve *curve, *curve2; // when we are plotting l/r curve=left curve2=right
         QwtPlotCurve *hover, *hover2; // similarly for hover
@@ -105,6 +109,13 @@ class ScatterPlot : public QwtPlot
 
     private:
         static QString describeType(int type, bool longer, bool metric);
+
+        void addTrendLine(QVector<double> xval, QVector<double> yval, int nbPoints, QColor intervalColor);
+
+        void smooth(QVector<double> &xval, QVector<double> &yval, int count, int applySmooth);
+        void resample(QVector<double> &xval, QVector<double> &yval, int &count, double recInterval, int applySmooth);
+
+        bool skipValues(double xv, double yv, ScatterSettings *settings);
 
         // save the settings
         RideItem *ride; // what we plotting?
