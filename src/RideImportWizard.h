@@ -36,6 +36,8 @@
 // Dialog class to show filenames, import progress and to capture user input
 // of ride date and time
 
+class ImportFutureStatus;
+
 class RideImportWizard : public QDialog
 {
     Q_OBJECT
@@ -62,6 +64,10 @@ private slots:
 
 private:
     void init(QList<QString> files, Context *context);
+    ImportFutureStatus processFile(const QString filename, const int i);
+    void allocateRow(const QString filename, int i);
+    void processImportStatus(ImportFutureStatus& stat);
+
     QList <QString> filenames; // list of filenames passed
     int numberOfFiles; // number of files to be processed
     QList <bool> blanks; // record of which have a RideFileReader returned date & time
@@ -82,6 +88,8 @@ private:
     RideAutoImportConfig *importConfig;
 
     QStringList deleteMe; // list of temp files created during import
+    QMutex tableGrowMutex;
+    QFutureSynchronizer<ImportFutureStatus> synchronizer;
 };
 
 // Item Delegate for Editing Date and Time of Ride inside the
