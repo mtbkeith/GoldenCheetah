@@ -36,6 +36,8 @@
 // Dialog class to show filenames, import progress and to capture user input
 // of ride date and time
 
+class ImportFutureStatus;
+
 class RideImportWizard : public QDialog
 {
     Q_OBJECT
@@ -66,6 +68,10 @@ private slots:
 private:
     void init(QList<QString> files, Context *context);
     bool moveFile(const QString &source, const QString &target);
+    ImportFutureStatus processValidateFile(volatile bool *aborted, const QString filename, const int i);
+    ImportFutureStatus processSaveFile(volatile bool *aborted, const QString filename, const int i);
+    void allocateRow(const QString filename, int i);
+    void processImportStatus(ImportFutureStatus& stat);
 
     QList <QString> filenames; // list of filenames passed
     int numberOfFiles; // number of files to be processed
@@ -73,7 +79,7 @@ private:
     QDir homeImports; // target directory for source files
     QDir homeActivities; // target directory for .JSON
     QDir tmpActivities; // activitiy .JSON is stored here until rideCache() update was successfull
-    bool aborted;
+    volatile bool aborted;
     bool autoImportMode;
     bool autoImportStealth;
     bool _importInProcess;
@@ -90,7 +96,8 @@ private:
     RideAutoImportConfig *importConfig;
 
     QStringList deleteMe; // list of temp files created during import
-
+    QMutex tableGrowMutex;
+    QFutureSynchronizer<ImportFutureStatus> synchronizer;
 
 };
 
