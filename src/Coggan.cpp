@@ -16,12 +16,15 @@
  * Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
+#include "Context.h"
 #include "RideMetric.h"
 #include "RideItem.h"
 #include "Zones.h"
+#include "Settings.h"
 #include "Units.h"
 #include <cmath>
 #include <QApplication>
+
 
 class NP : public RideMetric {
     Q_DECLARE_TR_FUNCTIONS(NP)
@@ -89,7 +92,7 @@ class NP : public RideMetric {
         setValue(np);
         setCount(secs);
     }
-    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
+    bool isRelevantForRide(const RideItem*ride) const { return ride->present.contains("P") || (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new NP(*this); }
 };
 
@@ -127,7 +130,7 @@ class VI : public RideMetric {
             setCount(secs);
     }
 
-    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
+    bool isRelevantForRide(const RideItem*ride) const { return ride->present.contains("P") || (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new VI(*this); }
 };
 
@@ -151,13 +154,25 @@ class IntensityFactor : public RideMetric {
     void compute(const RideFile *r, const Zones *zones, int zoneRange,
                  const HrZones *, int,
                  const QHash<QString,RideMetric*> &deps,
-                 const Context *) {
+                 const Context *context) {
         if (zones && zoneRange >= 0) {
             assert(deps.contains("coggan_np"));
             NP *np = dynamic_cast<NP*>(deps.value("coggan_np"));
             assert(np);
-            int cp = r->getTag("CP","0").toInt();
-            rif = np->value(true) / (cp ? cp : zones->getCP(zoneRange));
+
+            int ftp = r->getTag("FTP","0").toInt();
+
+            bool useCPForFTP = (appsettings->cvalue(context->athlete->cyclist, GC_USE_CP_FOR_FTP, 0).toInt() == 0);
+
+            if (useCPForFTP) {
+                int cp = r->getTag("CP","0").toInt();
+                if (cp == 0)
+                    cp = zones->getCP(zoneRange);
+
+                ftp = cp;
+            }
+
+            rif = np->value(true) / (ftp ? ftp : zones->getFTP(zoneRange));
             secs = np->count();
 
             setValue(rif);
@@ -165,7 +180,7 @@ class IntensityFactor : public RideMetric {
         }
     }
 
-    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
+    bool isRelevantForRide(const RideItem*ride) const { return ride->present.contains("P") || (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new IntensityFactor(*this); }
 };
 
@@ -187,7 +202,7 @@ class TSS : public RideMetric {
     void compute(const RideFile *r, const Zones *zones, int zoneRange,
                  const HrZones *, int,
 	    const QHash<QString,RideMetric*> &deps,
-                 const Context *) {
+                 const Context *context) {
 	if (!zones || zoneRange < 0)
 	    return;
         assert(deps.contains("coggan_np"));
@@ -197,14 +212,26 @@ class TSS : public RideMetric {
         assert(rif);
         double normWork = np->value(true) * np->count();
         double rawTSS = normWork * rif->value(true);
-        int cp = r->getTag("CP","0").toInt();
-        double workInAnHourAtCP = (cp ? cp : zones->getCP(zoneRange)) * 3600;
+
+        int ftp = r->getTag("FTP","0").toInt();
+
+        bool useCPForFTP = (appsettings->cvalue(context->athlete->cyclist, GC_USE_CP_FOR_FTP, 0).toInt() == 0);
+
+        if (useCPForFTP) {
+            int cp = r->getTag("CP","0").toInt();
+            if (cp == 0)
+                cp = zones->getCP(zoneRange);
+
+            ftp = cp;
+        }
+
+        double workInAnHourAtCP = (ftp ? ftp : zones->getFTP(zoneRange)) * 3600;
         score = rawTSS / workInAnHourAtCP * 100.0;
 
         setValue(score);
     }
 
-    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
+    bool isRelevantForRide(const RideItem*ride) const { return ride->present.contains("P") || (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new TSS(*this); }
 };
 
@@ -249,7 +276,7 @@ class TSSPerHour : public RideMetric {
             setCount(hours);
     }
 
-    bool isRelevantForRide(const RideItem*ride) const { return (!ride->isRun && !ride->isSwim); }
+    bool isRelevantForRide(const RideItem*ride) const { return ride->present.contains("P") || (!ride->isRun && !ride->isSwim); }
     RideMetric *clone() const { return new TSSPerHour(*this); }
 };
 

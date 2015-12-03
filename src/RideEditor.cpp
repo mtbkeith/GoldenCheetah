@@ -26,6 +26,7 @@
 #include "Colors.h"
 #include "TabView.h"
 #include "HelpWhatsThis.h"
+#include "HrZones.h"
 
 #include <QtGui>
 #include <QString>
@@ -391,13 +392,30 @@ AnomalyDialog::check()
     //anomalyList->setHorizontalHeaderLabels(header);
     anomalyList->horizontalHeader()->hide();
 
+    // use MaxHR if available for suspicious, otherwise 200
+    const HrZones *hrZones = rideEditor->context->athlete->hrZones();
+    int hrZR = hrZones ? hrZones->whichRange(rideEditor->ride->dateTime.date()) : -1;
+    int maxHR = hrZR > 0 ? hrZones->getMaxHr(hrZR) : 200;
+
+    // Speed threshold depends on sport (9kph~20"/50m, 36kph~10"/100m)
+    double maxKPH = rideEditor->ride->isSwim ? 9.0 :
+                    rideEditor->ride->isRun ? 36.0 : 100.0;
+
+    // Cadence threshold depends on sport
+    int maxCad = rideEditor->ride->isSwim ? 80 :
+                 rideEditor->ride->isRun ? 120 : 200;
+
     QVector<double> power;
+    QVector<double> cad;
     QVector<double> secs;
     double lastdistance=9;
+    double lastpower=0;
+    double lastcad=0;
     int count = 0;
 
     foreach (RideFilePoint *point, rideEditor->ride->ride()->dataPoints()) {
         power.append(point->watts);
+        cad.append(point->cad);
         secs.append(point->secs);
 
         if (count) {
@@ -416,19 +434,35 @@ AnomalyDialog::check()
                 rideEditor->data->anomalies.insert(xsstring(count, RideFile::km),
                                        tr("Distance goes backwards."));
 
+            // check for non-zeroed cadence/power "triplet"
+            if (count >= 3 && point->cad == 0 && point->watts == 0 &&
+                              lastcad != 0 && lastpower != 0) {
+
+                // look at previous 3
+                if (power[count-1] == power[count-2] && power[count-2] == power[count-3] &&
+                    cad[count-1] == cad[count-2] && cad[count-2] == cad[count-3]) {
+
+                    rideEditor->data->anomalies.insert(xsstring(count-1, RideFile::cad),
+                                       tr("Cadence/Power duplicated when freewheeling."));
+                }
+            }
         }
+
+        // so we can look back one quickly
         lastdistance = point->km;
+        lastpower = point->watts;
+        lastcad = point->cad;
 
         // suspicious values
-        if (point->cad > 150) {
+        if (point->cad > maxCad) {
             rideEditor->data->anomalies.insert(xsstring(count, RideFile::cad),
                                    tr("Suspiciously high cadence"));
         }
-        if (point->hr > 200) {
+        if (point->hr > maxHR) {
             rideEditor->data->anomalies.insert(xsstring(count, RideFile::hr),
                                    tr("Suspiciously high heartrate"));
         }
-        if (point->kph > 100) {
+        if (point->kph > maxKPH) {
             rideEditor->data->anomalies.insert(xsstring(count, RideFile::kph),
                                    tr("Suspiciously high speed"));
         }
@@ -440,7 +474,11 @@ AnomalyDialog::check()
             rideEditor->data->anomalies.insert(xsstring(count, RideFile::lon),
                                    tr("Out of bounds value"));
         }
-        if (rideEditor->ride->ride()->areDataPresent()->cad && point->nm && !point->cad) {
+        // Non-zero torque but zero cadence is not an anomaly for runs or swims
+        if (!rideEditor->ride->isRun && !rideEditor->ride->isSwim &&
+            rideEditor->ride->ride()->areDataPresent()->cad &&
+            point->nm && !point->cad) {
+
             rideEditor->data->anomalies.insert(xsstring(count, RideFile::nm),
                                    tr("Non-zero torque but zero cadence"));
 
@@ -2148,7 +2186,7 @@ PasteSpecialDialog::setResultsTable()
         for (int i=0; hasHeader->isChecked() ? (i<sourceHeadings.count()) : (i<cells[0].count()); i++) {
             if (hasHeader->isChecked() == true) {
                 // have we mapped this before?
-                QString lookup = "colmap/" + sourceHeadings[i];
+                QString lookup = GC_QSETTINGS_GLOBAL_GENERAL+QString("colmap/") + sourceHeadings[i];
                 QString mapto = appsettings->value(this, lookup, "Ignore").toString();
                 // is this an available heading tho?
                 if (columnSelect->findText(mapto) != -1) {
@@ -2457,7 +2495,7 @@ PasteSpecialDialog::columnChanged()
 
     // lets remember this mapping if its to a source header
     if (hasHeader->isChecked() && headings[column] != "Ignore") {
-        QString lookup = "colmap/" + sourceHeadings[column];
+        QString lookup = GC_QSETTINGS_GLOBAL_GENERAL+QString("colmap/") + sourceHeadings[column];
         appsettings->setValue(lookup, headings[column]);
     }
 }

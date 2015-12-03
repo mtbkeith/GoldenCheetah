@@ -25,8 +25,49 @@
 #include "Settings.h"
 #include "Units.h"
 
+#include <QHeaderView>
+
+double
+VDOTCalculator::vdot(double mins, double vel)
+{
+    // estimated VO2 cost of running at vel speed in m/min
+    double VO2 = -4.6 + 0.182258*vel + 0.000104*pow(vel, 2);
+
+    // fractional utilization of VO2max for mins duration
+    double FVO2 = 0.8 + 0.1894393*exp(-0.012778*mins) + 0.2989558*exp(-0.1932605*mins);
+
+    // VDOT: estimated VO2max based on Daniels/Gilbert Formula
+    return VO2 / FVO2;
+}
+
+double
+VDOTCalculator::vVdot(double VDOT)
+{
+    // velocity at VO2max according to Daniels/Gilbert Formula
+    return 29.54 + 5.000663*VDOT - 0.007546*pow(VDOT, 2);
+}
+
+double
+VDOTCalculator::eqvTime(double VDOT, double dist)
+{
+    // equivalent time for VDOT at dist, estimated by Newton-Raphson method
+    double t = dist/vVdot(VDOT)/0.9; // initial guess at TPace
+    int iter = 100; // max iterations
+    double f_t, fprime_t;
+
+    do {
+        f_t = (0.000104*pow(dist, 2)*pow(t, -2) + 0.182258*dist*pow(t, -1) -4.6)/(0.2989558*exp(-0.1932605*t) + 0.1894393*exp(-0.012778*t) + 0.8) - VDOT;
+        fprime_t = ((0.2989558*exp(-0.1932605*t) + 0.1894393*exp(-0.012778*t) + 0.8)*(-0.000208*pow(dist, 2)*pow(t,-3) - 0.182258*dist*pow(t, -2)) - ((0.000104*pow(dist, 2)*pow(t, -2) + 0.182258*dist*pow(t, -1) -4.6) * (-0.1932605*0.2989558*exp( -0.1932605*t) + -0.012778*0.1894393*exp(-0.012778*t)))) / pow(0.2989558*exp(-0.1932605*t) + 0.1894393*exp(-0.012778*t) + 0.8, 2);
+        t -= f_t/fprime_t;
+        iter--;
+    } while (fabs(f_t/fprime_t) > 1e-3 && iter > 0);
+
+    return t;
+}
+
 VDOTCalculator::VDOTCalculator(QWidget *parent) : QDialog(parent)
 {
+    bool metricRnPace = appsettings->value(this, GC_PACE, true).toBool();
     setWindowTitle(tr("VDOT and T-Pace Calculator"));
 
     HelpWhatsThis *help = new HelpWhatsThis(this);
@@ -34,16 +75,16 @@ VDOTCalculator::VDOTCalculator(QWidget *parent) : QDialog(parent)
 
     setAttribute(Qt::WA_DeleteOnClose);
 
-    setFixedSize(300, 250);
+    setFixedSize(300, 480);
 
     QVBoxLayout *mainVBox = new QVBoxLayout(this);
 
-    mainVBox->addWidget(new QLabel(tr("Your race (1500 to Marathon):")));
-
     QHBoxLayout *distHBox = new QHBoxLayout;
+    distHBox->addWidget(new QLabel(tr("Your Test Race:")));
+    distHBox->addStretch();
     distSpinBox = new QDoubleSpinBox(this);
     distSpinBox->setDecimals(3);
-    if (appsettings->value(this, GC_PACE, true).toBool()) {
+    if (metricRnPace) {
         distSpinBox->setRange(1.5, 42.195);
         distSpinBox->setSuffix(tr(" km"));
         distSpinBox->setValue(10.0);
@@ -101,16 +142,67 @@ VDOTCalculator::VDOTCalculator(QWidget *parent) : QDialog(parent)
     vdotHBox->addStretch();
     mainVBox->addLayout(vdotHBox);
 
-    QHBoxLayout *tpaceHBox = new QHBoxLayout;
-    tpaceHBox->addStretch();
-    labelTPACE = new QLabel(tr("Your Threshold Pace:"));
-    tpaceHBox->addWidget(labelTPACE);
-    txtTPACE = new QLineEdit(this);
-    txtTPACE->setAlignment(Qt::AlignRight);
-    txtTPACE->setReadOnly(true);
-    tpaceHBox->addWidget(txtTPACE, Qt::AlignLeft);
-    tpaceHBox->addStretch();
-    mainVBox->addLayout(tpaceHBox);
+    mainVBox->addStretch();
+
+    // Training Pace Table
+    QVBoxLayout *tableLayout = new QVBoxLayout;
+    labelTPACE = new QLabel(tr("Your Training Paces:"));
+    tableLayout->addWidget(labelTPACE);
+    tableWidgetTPACE = new QTableWidget(5, 3, this);
+    for (int j = 0; j< 3; j++) tableWidgetTPACE->setColumnWidth(j, 60);
+    QStringList vLabels;
+    vLabels<<tr("E-Pace")<<tr("M-Pace")<< tr("T-Pace")<<tr("I-Pace")<<tr("R-Pace");
+    tableWidgetTPACE->setVerticalHeaderLabels(vLabels);
+    tableWidgetTPACE->verticalHeader()->setStretchLastSection(true);
+    QStringList hLabels;
+    hLabels<< tr("200")<<tr("400")<<(metricRnPace ? tr("1000") : tr("mile"));
+    tableWidgetTPACE->setHorizontalHeaderLabels(hLabels);
+    tableWidgetTPACE->horizontalHeader()->setStretchLastSection(true);
+    for (int i = 0; i < tableWidgetTPACE->rowCount(); i++) {
+        for (int j = 0; j < tableWidgetTPACE->rowCount(); j++) {
+            QTableWidgetItem *item = new QTableWidgetItem();
+            item->setFlags(item->flags() ^ Qt::ItemIsEditable);
+            item->setTextAlignment(Qt::AlignCenter);
+            tableWidgetTPACE->setItem(i, j, item);
+        }
+    }
+    tableWidgetTPACE->selectRow(2); // Highlight T-Pace
+    tableWidgetTPACE->resizeRowsToContents();
+    tableLayout->addWidget(tableWidgetTPACE);
+    mainVBox->addLayout(tableLayout);
+
+    mainVBox->addStretch();
+
+    QHBoxLayout *targetHBox = new QHBoxLayout;
+    targetHBox->addWidget(new QLabel(tr("Your Target Race:")));
+    targetHBox->addStretch();
+    targetSpinBox = new QDoubleSpinBox(this);
+    targetSpinBox->setDecimals(3);
+    if (metricRnPace) {
+        targetSpinBox->setRange(1.5, 42.195);
+        targetSpinBox->setSuffix(tr(" km"));
+        targetSpinBox->setValue(21.0975);
+    } else {
+        targetSpinBox->setRange(1.5/KM_PER_MILE, 42.195/KM_PER_MILE);
+        targetSpinBox->setSuffix(tr(" mi"));
+        targetSpinBox->setValue(21.0975/KM_PER_MILE);
+    }
+    targetSpinBox->setSingleStep(1.0);
+    targetSpinBox->setWrapping(false);
+    targetSpinBox->setAlignment(Qt::AlignRight);
+    targetHBox->addWidget(targetSpinBox);
+    targetHBox->addStretch();
+    mainVBox->addLayout(targetHBox);
+    QHBoxLayout *eqvHBox = new QHBoxLayout;
+    eqvHBox->addStretch();
+    labelEQV = new QLabel(tr("Equivalent Time:"));
+    eqvHBox->addWidget(labelEQV);
+    txtEQV = new QLineEdit(this);
+    txtEQV->setAlignment(Qt::AlignRight);
+    txtEQV->setReadOnly(true);
+    eqvHBox->addWidget(txtEQV, Qt::AlignLeft);
+    eqvHBox->addStretch();
+    mainVBox->addLayout(eqvHBox);
 
     mainVBox->addStretch();
 
@@ -136,22 +228,36 @@ void VDOTCalculator::on_btnOK_clicked()
 void VDOTCalculator::on_btnCalculate_clicked()
 {
     bool metricRnPace = appsettings->value(this, GC_PACE, true).toBool();
+    double paceFactor = metricRnPace ? 1.0 : KM_PER_MILE;
+
     double mins = hoursSpinBox->value() * 60.0 + minsSpinBox->value() + secsSpinBox->value() / 60.0;
     double dist = distSpinBox->value();
+
     // velocity m/min
-    double vel = (metricRnPace ? 1.0 : KM_PER_MILE)*1000*dist/mins;
-    // estimated VO2 costo of running at vel speed
-    double VO2 = -4.3 + 0.182258*vel + 0.000104*pow(vel, 2);
-    // fractional utilization of VO2max for mins duration
-    double FVO2 = 0.8 + 0.1894393*exp(-0.012778*mins) + 0.2989558*exp(-0.1932605*mins);
-    // VDOT: estimated VO2max based on Daniels/Gilbert Formula
-    double VDOT = VO2 / FVO2;
+    double vel = paceFactor*1000*dist/mins;
+
+    double VDOT = vdot(mins, vel);
     txtVDOT->setText(QString("%1 ml/min/kg").arg(round(VDOT*10)/10));
-    // velocity at VO2max according to Daniels/Gilbert Formula
-    double vVDOT = 29.54 + 5.000663*VDOT - 0.007546*pow(VDOT, 2);
-    // Threshold Pace estimated at 90%vVDOT, from Daniels's Running Formula
-    double TPACE = 1000.0/vVDOT/0.9;
-    txtTPACE->setText(QString("%1 %2")
-        .arg(QTime(0,0,0).addSecs(TPACE*60*(metricRnPace ? 1.0 : KM_PER_MILE)).toString("mm:ss"))
-        .arg(metricRnPace ? tr("min/km") : tr("min/mi")));
+
+    double vVDOT = vVdot(VDOT);
+
+    // Training Paces relative to vVDOT from Daniels's Running Formula
+    double relVDOT[] = { 0.72, 0.85, 0.9, 0.98, 1.05 };
+    double relVDOT200[] = { 0.72, 0.85, 0.9, 0.98, 1.07 };
+    for (int i = 0; i < tableWidgetTPACE->rowCount(); i++) {
+        // 200 m
+        double pace200 = 200.0*60.0/vVDOT/relVDOT200[i];
+        tableWidgetTPACE->item(i, 0)->setData(Qt::EditRole, QString("%1")
+            .arg(i > 2 ? QTime(0,0,0).addSecs(pace200).toString("mm:ss") : "-----"));
+        // 400m
+        double pace400 = 400.0*60.0/vVDOT/relVDOT[i];
+        tableWidgetTPACE->item(i, 1)->setData(Qt::EditRole, QString("%1")
+            .arg(i > 1 ? QTime(0,0,0).addSecs(pace400).toString("mm:ss") : "-----"));
+        // km or mile
+        double pace = 1000.0*60.0*paceFactor/vVDOT/relVDOT[i];
+        tableWidgetTPACE->item(i, 2)->setData(Qt::EditRole, QString("%1")
+            .arg(i < 4 ? QTime(0,0,0).addSecs(pace).toString("mm:ss") : "-----"));
+    }
+    double targetDist = paceFactor*1000*targetSpinBox->value();
+    txtEQV->setText(QTime(0,0,0).addSecs(60*eqvTime(VDOT, targetDist)).toString("hh:mm:ss"));
 }

@@ -25,11 +25,16 @@ RealtimeData::RealtimeData()
 {
     name[0] = '\0';
 	hr= watts= altWatts= speed= wheelRpm= load= slope = 0.0;
-	cadence = distance = virtualSpeed = wbal = 0.0;
+	cadence = distance = altDistance = virtualSpeed = wbal = 0.0;
 	lap = msecs = lapMsecs = lapMsecsRemaining = 0;
     thb = smo2 = o2hb = hhb = 0.0;
     lrbalance = rte = lte = lps = rps = 0.0;
-
+    trainerStatusAvailable = false;
+    trainerReady = true;
+    trainerRunning = true;
+    trainerCalibRequired = false;
+    trainerConfigRequired = false;
+    trainerBrakeFault = false;
     memset(spinScan, 0, 24);
 }
 
@@ -45,6 +50,12 @@ void RealtimeData::setWatts(double watts)
 {
     this->watts = (int)watts;
 }
+
+void RealtimeData::setAltDistance(double x)
+{
+    this->altDistance = x;
+}
+
 void RealtimeData::setHr(double hr)
 {
     this->hr = (int)hr;
@@ -125,6 +136,12 @@ RealtimeData::getName() const
 {
     return name;
 }
+
+double RealtimeData::getAltDistance() const
+{
+    return altDistance;
+}
+
 double RealtimeData::getAltWatts() const
 {
     return altWatts;
@@ -198,6 +215,65 @@ double RealtimeData::getRPS() const
     return rps;
 }
 
+void RealtimeData::setTrainerStatusAvailable(bool status)
+{
+    this->trainerStatusAvailable = status;
+}
+
+bool RealtimeData::getTrainerStatusAvailable() const
+{
+    return trainerStatusAvailable;
+}
+
+void RealtimeData::setTrainerReady(bool status)
+{
+    this->trainerReady = status;
+}
+
+void RealtimeData::setTrainerRunning(bool status)
+{
+    this->trainerRunning = status;
+}
+
+void RealtimeData::setTrainerCalibRequired(bool status)
+{
+    this->trainerCalibRequired = status;
+}
+
+void RealtimeData::setTrainerConfigRequired(bool status)
+{
+    this->trainerConfigRequired = status;
+}
+
+void RealtimeData::setTrainerBrakeFault(bool status)
+{
+    this->trainerBrakeFault = status;
+}
+
+bool RealtimeData::getTrainerReady() const
+{
+    return trainerReady;
+}
+
+bool RealtimeData::getTrainerRunning() const
+{
+    return trainerRunning;
+}
+
+bool RealtimeData::getTrainerCalibRequired() const
+{
+    return trainerCalibRequired;
+}
+
+bool RealtimeData::getTrainerConfigRequired() const
+{
+    return trainerConfigRequired;
+}
+
+bool RealtimeData::getTrainerBrakeFault() const
+{
+    return trainerBrakeFault;
+}
 
 double RealtimeData::value(DataSeries series) const
 {
@@ -266,7 +342,7 @@ double RealtimeData::value(DataSeries series) const
     case RightPedalSmoothness: return rps;
         break;
 
-    case None: 
+    case None:
     default:
         return 0;
         break;

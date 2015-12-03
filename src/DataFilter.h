@@ -23,6 +23,8 @@
 #include <QObject>
 #include <QDebug>
 #include <QList>
+#include <QMap>
+#include <QHash>
 #include <QStringList>
 #include <QTextDocument>
 #include "RideCache.h"
@@ -40,6 +42,7 @@ class Result {
         // construct a result
         Result (double value) : isNumber(true), string(""), number(value) {}
         Result (QString value) : isNumber(false), string(value), number(0.0f) {}
+        Result () : isNumber(true), string(""), number(0) {}
 
         // we can't use QString with union
         bool isNumber;           // if true, value is numeric
@@ -49,13 +52,14 @@ class Result {
 };
 
 class Leaf {
+    Q_DECLARE_TR_FUNCTIONS(Leaf)
 
     public:
 
         Leaf(int loc, int leng) : type(none),op(0),series(NULL),dynamic(false),loc(loc),leng(leng),inerror(false) { }
 
         // evaluate against a RideItem
-        Result eval(Context *context, DataFilter *df, Leaf *, RideItem *m);
+        Result eval(Context *context, DataFilter *df, Leaf *, float x, RideItem *m, RideFilePoint *p = NULL);
 
         // tree traversal etc
         void print(Leaf *, int level);  // print leaf and all children
@@ -64,6 +68,8 @@ class Leaf {
         void validateFilter(DataFilter *, Leaf*); // validate
         bool isNumber(DataFilter *df, Leaf *leaf);
         void clear(Leaf*);
+        QString toString(); // return as string
+        QString signature() { return toString(); }
 
         enum { none, Float, Integer, String, Symbol, 
                Logical, Operation, BinaryOperation, UnaryOperation,
@@ -100,6 +106,7 @@ class DataFilter : public QObject
         Context *context;
         QStringList &files() { return filenames; }
         QString signature() { return sig; }
+        Leaf *root() { return treeRoot; }
 
         // needs to be reapplied as the ride selection changes
         bool isdynamic;
@@ -109,11 +116,18 @@ class DataFilter : public QObject
         QMap<QString,bool> lookupType; // true if a number, false if a string
 
         // when used for formulas
-        Result evaluate(RideItem *rideItem);
+        Result evaluate(RideItem *rideItem, RideFilePoint *p = NULL);
         QStringList getErrors() { return errors; };
         void colorSyntax(QTextDocument *content, int pos);
 
         static QStringList functions(); // return list of functions supported
+        QStringList dataSeriesSymbols;
+
+        // pd models for estimates
+        QList <PDModel*>models;
+
+        // microcache for oft-repeated vector operations
+        QHash<QString, Result> snips;
 
     public slots:
         QStringList parseFilter(QString query, QStringList *list=0);
@@ -129,6 +143,7 @@ class DataFilter : public QObject
         void parseBad(QStringList erorrs);
 
         void results(QStringList);
+
 
     private:
         void setSignature(QString &query);

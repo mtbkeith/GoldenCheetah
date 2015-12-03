@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>gcconfig.pri</file>
+        <file>webservice/httpserver.ini</file>
         <file>images/devices/garminusb.png</file>
         <file>images/devices/computrainer.png</file>
         <file>images/devices/kickr.png</file>
@@ -84,6 +85,7 @@
         <file>translations/gc_cs.qm</file>
         <file>translations/gc_es.qm</file>
         <file>translations/gc_pt.qm</file>
+        <file>translations/gc_zh-tw.qm</file>
         <file>xml/charts.xml</file>
         <file>xml/metadata.xml</file>
         <file>xml/train-layout.xml</file>
@@ -142,5 +144,6 @@
         <file>images/sidebar/folder.png</file>
         <file>images/sidebar/movie.png</file>
         <file>images/sidebar/power.png</file>
+        <file>images/sidebar/sync.png</file>
     </qresource>
 </RCC>

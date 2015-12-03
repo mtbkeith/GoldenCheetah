@@ -37,6 +37,13 @@
 #if QT_VERSION > 0x050000
 #include <QUrlQuery>
 #endif
+// QWebEngine
+#if QT_VERSION > 0x050000 && defined(Q_OS_MAC)
+#include <QWebEngineHistory>
+#include <QWebEngineHistoryItem>
+#include <QWebEnginePage>
+#include <QWebEngineView>
+#endif
 
 
 class OAuthDialog : public QDialog
@@ -48,6 +55,7 @@ public:
     typedef enum {
         STRAVA,
         TWITTER,
+        DROPBOX,
         CYCLING_ANALYTICS,
         GOOGLE_CALENDAR,
     } OAuthSite;
@@ -80,7 +88,14 @@ private:
     OAuthSite site;
 
     QVBoxLayout *layout;
+
+    // QUrl split into QUrlQuerty in QT5
+    #if QT_VERSION < 0x050000 || !defined(Q_OS_MAC)
     QWebView *view;
+    #else
+    QWebEngineView *view;
+    #endif
+
     QNetworkAccessManager* manager;
 
     QUrl url;

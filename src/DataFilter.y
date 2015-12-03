@@ -45,7 +45,7 @@ extern QStringList DataFiltererrors;
 static void DataFiltererror(const char *error) { DataFiltererrors << QString(error);}
 extern int DataFilterparse();
 
-extern Leaf *root; // root node for parsed statement
+extern Leaf *DataFilterroot; // root node for parsed statement
 
 %}
 
@@ -54,7 +54,7 @@ extern Leaf *root; // root node for parsed statement
 
 // Constants can be a string or a number
 %token <leaf> DF_STRING DF_INTEGER DF_FLOAT
-%token <function> BEST TIZ STS LTS SB RR CONFIG CONST_ DATERANGE
+%token <function> BEST TIZ CONFIG CONST_ DATERANGE
 
 // comparative operators
 %token <op> EQ NEQ LT LTE GT GTE
@@ -83,7 +83,7 @@ extern Leaf *root; // root node for parsed statement
 %start filter;
 %%
 
-filter: lexpr                       { root = $1; }
+filter: lexpr                       { DataFilterroot = $1; }
         ;
 
 parms: lexpr                        { $$ = new Leaf(@1.first_column, @1.last_column);
@@ -239,26 +239,6 @@ expr : expr SUBTRACT expr              { $$ = new Leaf(@1.first_column, @3.last_
                                         $$->lvalue.l = $5;
                                       }
 
-      | LTS '(' symbol ')'            { $$ = new Leaf(@1.first_column, @4.last_column); $$->type = Leaf::Function;
-                                        $$->function = QString($1);
-                                        $$->series = $3;
-                                        $$->lvalue.l = NULL;
-                                      }
-      | STS '(' symbol ')'            { $$ = new Leaf(@1.first_column, @4.last_column); $$->type = Leaf::Function;
-                                        $$->function = QString($1);
-                                        $$->series = $3;
-                                        $$->lvalue.l = NULL;
-                                      }
-      | RR '(' symbol ')'             { $$ = new Leaf(@1.first_column, @4.last_column); $$->type = Leaf::Function;
-                                        $$->function = QString($1);
-                                        $$->series = $3;
-                                        $$->lvalue.l = NULL;
-                                      }
-      | SB '(' symbol ')'             { $$ = new Leaf(@1.first_column, @4.last_column); $$->type = Leaf::Function;
-                                        $$->function = QString($1);
-                                        $$->series = $3;
-                                        $$->lvalue.l = NULL;
-                                      }
       | CONFIG '(' symbol ')'       {   $$ = new Leaf(@1.first_column, @4.last_column); $$->type = Leaf::Function;
                                         $$->function = QString($1);
                                         $$->series = $3;
@@ -278,6 +258,7 @@ expr : expr SUBTRACT expr              { $$ = new Leaf(@1.first_column, @3.last_
                                     /* functions all have zero or more parameters */
 
       | symbol '(' parms ')'    { /* need to convert symbol to a function */
+                                  $1->leng = @4.last_column;
                                   $1->type = Leaf::Function;
                                   $1->series = NULL; // not tiz/best
                                   $1->function = *($1->lvalue.n);

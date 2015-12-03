@@ -36,6 +36,10 @@
 #include "OAuthDialog.h"
 #include "RideAutoImportConfig.h"
 #include "HelpWhatsThis.h"
+#if QT_VERSION >= 0x050000
+#include "Dropbox.h"
+#endif
+#include "LocalFileStore.h"
 
 //
 // Main Config Page - tabs for each sub-page
@@ -67,6 +71,7 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     langCombo->addItem(tr("Czech"));
     langCombo->addItem(tr("Spanish"));
     langCombo->addItem(tr("Portugese"));
+	langCombo->addItem(tr("Chinese (Traditional)"));
 
     // Default to system locale
     QVariant lang = appsettings->value(this, GC_LANG, QLocale::system().name());
@@ -81,79 +86,24 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     else if(lang.toString().startsWith("cs")) langCombo->setCurrentIndex(7);
     else if(lang.toString().startsWith("es")) langCombo->setCurrentIndex(8);
     else if(lang.toString().startsWith("pt")) langCombo->setCurrentIndex(9);
+	else if (lang.toString().startsWith("zh-tw")) langCombo->setCurrentIndex(10);
     else langCombo->setCurrentIndex(0);
 
     configLayout->addWidget(langLabel, 0,0, Qt::AlignRight);
     configLayout->addWidget(langCombo, 0,1, Qt::AlignLeft);
 
-    //
-    // Crank length - only used by PfPv chart (should move there!)
-    //
-    QLabel *crankLengthLabel = new QLabel(tr("Crank Length:"));
-    QVariant crankLength = appsettings->value(this, GC_CRANKLENGTH);
-    crankLengthCombo = new QComboBox();
-    crankLengthCombo->addItem("150");
-    crankLengthCombo->addItem("155");
-    crankLengthCombo->addItem("160");
-    crankLengthCombo->addItem("162.5");
-    crankLengthCombo->addItem("165");
-    crankLengthCombo->addItem("167.5");
-    crankLengthCombo->addItem("170");
-    crankLengthCombo->addItem("172.5");
-    crankLengthCombo->addItem("175");
-    crankLengthCombo->addItem("177.5");
-    crankLengthCombo->addItem("180");
-    crankLengthCombo->addItem("182.5");
-    crankLengthCombo->addItem("185");
-    if(crankLength.toString() == "150") crankLengthCombo->setCurrentIndex(0);
-    if(crankLength.toString() == "155") crankLengthCombo->setCurrentIndex(1);
-    if(crankLength.toString() == "160") crankLengthCombo->setCurrentIndex(2);
-    if(crankLength.toString() == "162.5") crankLengthCombo->setCurrentIndex(3);
-    if(crankLength.toString() == "165") crankLengthCombo->setCurrentIndex(4);
-    if(crankLength.toString() == "167.5") crankLengthCombo->setCurrentIndex(5);
-    if(crankLength.toString() == "170") crankLengthCombo->setCurrentIndex(6);
-    if(crankLength.toString() == "172.5") crankLengthCombo->setCurrentIndex(7);
-    if(crankLength.toString() == "175") crankLengthCombo->setCurrentIndex(8);
-    if(crankLength.toString() == "177.5") crankLengthCombo->setCurrentIndex(9);
-    if(crankLength.toString() == "180") crankLengthCombo->setCurrentIndex(10);
-    if(crankLength.toString() == "182.5") crankLengthCombo->setCurrentIndex(11);
-    if(crankLength.toString() == "185") crankLengthCombo->setCurrentIndex(12);
+    QLabel *unitlabel = new QLabel(tr("Unit"));
+    unitCombo = new QComboBox();
+    unitCombo->addItem(tr("Metric"));
+    unitCombo->addItem(tr("Imperial"));
 
-    configLayout->addWidget(crankLengthLabel, 1,0, Qt::AlignRight);
-    configLayout->addWidget(crankLengthCombo, 1,1, Qt::AlignLeft);
+    if (context->athlete->useMetricUnits)
+        unitCombo->setCurrentIndex(0);
+    else
+        unitCombo->setCurrentIndex(1);
 
-    //
-    // Wheel size
-    //
-    QLabel *wheelSizeLabel = new QLabel(tr("Wheelsize:"), this);
-    int wheelSize = appsettings->value(this, GC_WHEELSIZE, 2100).toInt();
-
-    rimSizeCombo = new QComboBox();
-    rimSizeCombo->addItems(WheelSize::RIM_SIZES);
-
-    tireSizeCombo = new QComboBox();
-    tireSizeCombo->addItems(WheelSize::TIRE_SIZES);
-
-
-    wheelSizeEdit = new QLineEdit(QString("%1").arg(wheelSize),this);
-    wheelSizeEdit->setInputMask("0000");
-    wheelSizeEdit->setFixedWidth(40);
-
-    QLabel *wheelSizeUnitLabel = new QLabel(tr("mm"), this);
-
-    QHBoxLayout *wheelSizeLayout = new QHBoxLayout();
-    wheelSizeLayout->addWidget(rimSizeCombo);
-    wheelSizeLayout->addWidget(tireSizeCombo);
-    wheelSizeLayout->addWidget(wheelSizeEdit);
-    wheelSizeLayout->addWidget(wheelSizeUnitLabel);
-
-    connect(rimSizeCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(calcWheelSize()));
-    connect(tireSizeCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(calcWheelSize()));
-    connect(wheelSizeEdit, SIGNAL(textEdited(QString)), this, SLOT(resetWheelSize()));
-
-    configLayout->addWidget(wheelSizeLabel, 2,0, Qt::AlignRight);
-    configLayout->addLayout(wheelSizeLayout, 2,1, Qt::AlignLeft);
-
+    configLayout->addWidget(unitlabel, 1,0, Qt::AlignRight);
+    configLayout->addWidget(unitCombo, 1,1, Qt::AlignLeft);
 
     //
     // Garmin crap
@@ -170,9 +120,9 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     garminHWMarkedit = new QLineEdit(garminHWMark.toString(),this);
     garminHWMarkedit->setInputMask("009");
 
-    configLayout->addWidget(garminSmartRecord, 3,1, Qt::AlignLeft);
-    configLayout->addWidget(garminHWLabel, 4,0, Qt::AlignRight);
-    configLayout->addWidget(garminHWMarkedit, 4,1, Qt::AlignLeft);
+    configLayout->addWidget(garminSmartRecord, 2,1, Qt::AlignLeft);
+    configLayout->addWidget(garminHWLabel, 3,0, Qt::AlignRight);
+    configLayout->addWidget(garminHWMarkedit, 3,1, Qt::AlignLeft);
 
     // Elevation hysterisis  GC_ELEVATION_HYSTERISIS
     QVariant elevationHysteresis = appsettings->value(this, GC_ELEVATION_HYSTERESIS);
@@ -183,8 +133,9 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     hystedit = new QLineEdit(elevationHysteresis.toString(),this);
     hystedit->setInputMask("9.00");
     
-    configLayout->addWidget(hystlabel, 7,0, Qt::AlignRight);
-    configLayout->addWidget(hystedit, 7,1, Qt::AlignLeft);
+    configLayout->addWidget(hystlabel, 4,0, Qt::AlignRight);
+    configLayout->addWidget(hystedit, 4,1, Qt::AlignLeft);
+
 
     // wbal formula preference
     QLabel *wbalFormLabel = new QLabel(tr("W' bal formula:"));
@@ -194,43 +145,26 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     if (appsettings->value(this, GC_WBALFORM, "diff").toString() == "diff") wbalForm->setCurrentIndex(0);
     else wbalForm->setCurrentIndex(1);
 
-    configLayout->addWidget(wbalFormLabel, 8,0, Qt::AlignRight);
-    configLayout->addWidget(wbalForm, 8,1, Qt::AlignLeft);
+    configLayout->addWidget(wbalFormLabel, 5,0, Qt::AlignRight);
+    configLayout->addWidget(wbalForm, 5,1, Qt::AlignLeft);
 
-    //
-    // Performance manager
-    //
-
-    perfManSTSLabel = new QLabel(tr("STS average (days):"));
-    perfManLTSLabel = new QLabel(tr("LTS average (days):"));
-    perfManSTSavgValidator = new QIntValidator(1,21,this);
-    perfManLTSavgValidator = new QIntValidator(7,56,this);
-
-    // get config or set to defaults
-    QVariant perfManSTSVal = appsettings->cvalue(context->athlete->cyclist, GC_STS_DAYS);
-    if (perfManSTSVal.isNull() || perfManSTSVal.toInt() == 0) perfManSTSVal = 7;
-    QVariant perfManLTSVal = appsettings->cvalue(context->athlete->cyclist, GC_LTS_DAYS);
-    if (perfManLTSVal.isNull() || perfManLTSVal.toInt() == 0) perfManLTSVal = 42;
-
-    perfManSTSavg = new QLineEdit(perfManSTSVal.toString(),this);
-    perfManSTSavg->setValidator(perfManSTSavgValidator);
-    perfManLTSavg = new QLineEdit(perfManLTSVal.toString(),this);
-    perfManLTSavg->setValidator(perfManLTSavgValidator);
-
-    showSBToday = new QCheckBox(tr("PMC Stress Balance Today"), this);
-    showSBToday->setChecked(appsettings->cvalue(context->athlete->cyclist, GC_SB_TODAY).toInt());
-
-    configLayout->addWidget(perfManSTSLabel, 9,0, Qt::AlignRight);
-    configLayout->addWidget(perfManSTSavg, 9,1, Qt::AlignLeft);
-    configLayout->addWidget(perfManLTSLabel, 10,0, Qt::AlignRight);
-    configLayout->addWidget(perfManLTSavg, 10,1, Qt::AlignLeft);
-    configLayout->addWidget(showSBToday, 11,1, Qt::AlignLeft);
 
     //
     // Warn to save on exit
     warnOnExit = new QCheckBox(tr("Warn for unsaved activities on exit"), this);
-    warnOnExit->setChecked(appsettings->cvalue(NULL, GC_WARNEXIT, true).toBool());
-    configLayout->addWidget(warnOnExit, 12,1, Qt::AlignLeft);
+    warnOnExit->setChecked(appsettings->value(NULL, GC_WARNEXIT, true).toBool());
+    configLayout->addWidget(warnOnExit, 6,1, Qt::AlignLeft);
+
+    //
+    // Run API web services when running
+    //
+    int offset=0;
+#ifdef GC_WANT_HTTP
+    offset += 1;
+    startHttp = new QCheckBox(tr("Enable API Web Services"), this);
+    startHttp->setChecked(appsettings->value(NULL, GC_START_HTTP, true).toBool());
+    configLayout->addWidget(startHttp, 7,1, Qt::AlignLeft);
+#endif
 
     //
     // Athlete directory (home of athletes)
@@ -243,9 +177,9 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     athleteBrowseButton = new QPushButton(tr("Browse"));
     athleteBrowseButton->setFixedWidth(120);
 
-    configLayout->addWidget(athleteLabel, 13,0, Qt::AlignRight);
-    configLayout->addWidget(athleteDirectory, 13,1);
-    configLayout->addWidget(athleteBrowseButton, 13,2);
+    configLayout->addWidget(athleteLabel, 7 + offset,0, Qt::AlignRight);
+    configLayout->addWidget(athleteDirectory, 7 + offset,1);
+    configLayout->addWidget(athleteBrowseButton, 7 + offset,2);
 
     connect(athleteBrowseButton, SIGNAL(clicked()), this, SLOT(browseAthleteDir()));
 
@@ -255,99 +189,83 @@ GeneralPage::GeneralPage(Context *context) : context(context)
     QVariant workoutDir = appsettings->value(this, GC_WORKOUTDIR, "");
     // fix old bug..
     if (workoutDir == "0") workoutDir = "";
-    workoutLabel = new QLabel(tr("Workout Library:"));
+    workoutLabel = new QLabel(tr("Workout and VideoSync Library:"));
     workoutDirectory = new QLineEdit;
     workoutDirectory->setText(workoutDir.toString());
     workoutBrowseButton = new QPushButton(tr("Browse"));
     workoutBrowseButton->setFixedWidth(120);
 
-    configLayout->addWidget(workoutLabel, 14,0, Qt::AlignRight);
-    configLayout->addWidget(workoutDirectory, 14,1);
-    configLayout->addWidget(workoutBrowseButton, 14,2);
+    configLayout->addWidget(workoutLabel, 8 + offset,0, Qt::AlignRight);
+    configLayout->addWidget(workoutDirectory, 8 + offset,1);
+    configLayout->addWidget(workoutBrowseButton, 8 + offset,2);
 
     connect(workoutBrowseButton, SIGNAL(clicked()), this, SLOT(browseWorkoutDir()));
 
     // save away initial values
-    b4.wheel = wheelSize;
-    b4.crank = crankLengthCombo->currentIndex();
+    b4.unit = unitCombo->currentIndex();
     b4.hyst = elevationHysteresis.toFloat();
     b4.wbal = wbalForm->currentIndex();
-    b4.lts = perfManLTSVal.toInt();
-    b4.sts = perfManSTSVal.toInt();
     b4.warn = warnOnExit->isChecked();
+#ifdef GC_WANT_HTTP
+    b4.starthttp = startHttp->isChecked();
+#endif
 }
 
-void
-GeneralPage::calcWheelSize()
-{
-   int diameter = WheelSize::calcPerimeter(rimSizeCombo->currentIndex(), tireSizeCombo->currentIndex());
-   if (diameter>0)
-        wheelSizeEdit->setText(QString("%1").arg(diameter));
-}
-
-void
-GeneralPage::resetWheelSize()
-{
-   rimSizeCombo->setCurrentIndex(0);
-   tireSizeCombo->setCurrentIndex(0);
-}
 
 qint32
 GeneralPage::saveClicked()
 {
     // Language
     static const QString langs[] = {
-        "en", "fr", "ja", "pt-br", "it", "de", "ru", "cs", "es", "pt"
+        "en", "fr", "ja", "pt-br", "it", "de", "ru", "cs", "es", "pt", "zh-tw"
     };
     appsettings->setValue(GC_LANG, langs[langCombo->currentIndex()]);
 
     // Garmin and cranks
     appsettings->setValue(GC_GARMIN_HWMARK, garminHWMarkedit->text().toInt());
     appsettings->setValue(GC_GARMIN_SMARTRECORD, garminSmartRecord->checkState());
-    appsettings->setValue(GC_CRANKLENGTH, crankLengthCombo->currentText());
 
     // save on exit
     appsettings->setValue(GC_WARNEXIT, warnOnExit->isChecked());
 
-    // save wheel size
-    appsettings->setValue(GC_WHEELSIZE, wheelSizeEdit->text().toInt());
-
-    // Bike score estimation
+    // Directories
     appsettings->setValue(GC_WORKOUTDIR, workoutDirectory->text());
     appsettings->setValue(GC_HOMEDIR, athleteDirectory->text());
+
+    // Elevation
     appsettings->setValue(GC_ELEVATION_HYSTERESIS, hystedit->text());
 
     // wbal formula
     appsettings->setValue(GC_WBALFORM, wbalForm->currentIndex() ? "int" : "diff");
 
-    // Performance Manager
-    appsettings->setCValue(context->athlete->cyclist, GC_STS_DAYS, perfManSTSavg->text());
-    appsettings->setCValue(context->athlete->cyclist, GC_LTS_DAYS, perfManLTSavg->text());
-    appsettings->setCValue(context->athlete->cyclist, GC_SB_TODAY, (int) showSBToday->isChecked());
+    if (unitCombo->currentIndex()==0)
+        appsettings->setValue(GC_UNIT, GC_UNIT_METRIC);
+    else if (unitCombo->currentIndex()==1)
+        appsettings->setValue(GC_UNIT, GC_UNIT_IMPERIAL);
 
-    // set default stress names if not set:
-    appsettings->setValue(GC_STS_NAME, appsettings->value(this, GC_STS_NAME,tr("Short Term Stress")));
-    appsettings->setValue(GC_STS_ACRONYM, appsettings->value(this, GC_STS_ACRONYM,tr("STS")));
-    appsettings->setValue(GC_LTS_NAME, appsettings->value(this, GC_LTS_NAME,tr("Long Term Stress")));
-    appsettings->setValue(GC_LTS_ACRONYM, appsettings->value(this, GC_LTS_ACRONYM,tr("LTS")));
-    appsettings->setValue(GC_SB_NAME, appsettings->value(this, GC_SB_NAME,tr("Stress Balance")));
-    appsettings->setValue(GC_SB_ACRONYM, appsettings->value(this, GC_SB_ACRONYM,tr("SB")));
+
+#ifdef GC_WANT_HTTP
+    // start http
+    appsettings->setValue(GC_START_HTTP, startHttp->isChecked());
+#endif
 
     qint32 state=0;
 
     // general stuff changed ?
-    if (b4.wheel != wheelSizeEdit->text().toInt() ||
-        b4.crank != crankLengthCombo->currentIndex() ||
-        b4.hyst != hystedit->text().toFloat())
+#ifdef GC_WANT_HTTP
+    if (b4.hyst != hystedit->text().toFloat() ||
+        b4.starthttp != startHttp->isChecked())
+#else
+    if (b4.hyst != hystedit->text().toFloat())
+#endif
         state += CONFIG_GENERAL;
 
     if (b4.wbal != wbalForm->currentIndex())
         state += CONFIG_WBAL;
 
-    // PMC constants changed ?
-    if(b4.lts != perfManLTSavg->text().toInt() ||
-        b4.sts != perfManSTSavg->text().toInt()) 
-        state += CONFIG_PMC;
+    // units prefs changed?
+    if (b4.unit != unitCombo->currentIndex())
+        state += CONFIG_UNITS;
 
     return state;
 }
@@ -355,16 +273,21 @@ GeneralPage::saveClicked()
 void
 GeneralPage::browseWorkoutDir()
 {
+    QString currentDir = workoutDirectory->text();
+    if (!QDir(currentDir).exists()) currentDir = "";
     QString dir = QFileDialog::getExistingDirectory(this, tr("Select Workout Library"),
-                            "", QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+                            currentDir, QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (dir != "") workoutDirectory->setText(dir);  //only overwrite current dir, if a new was selected
 }
+
 
 void
 GeneralPage::browseAthleteDir()
 {
+    QString currentDir = athleteDirectory->text();
+    if (!QDir(currentDir).exists()) currentDir = "";
     QString dir = QFileDialog::getExistingDirectory(this, tr("Select Athlete Library"),
-                            "", QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+                            currentDir, QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (dir != "") athleteDirectory->setText(dir);  //only overwrite current dir, if a new was selected
 }
 
@@ -390,13 +313,9 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
     QLabel *tp = new QLabel(tr("TrainingPeaks"));
     tp->setFont(current);
 
-    QLabel *urlLabel = new QLabel(tr("Website"));
     QLabel *userLabel = new QLabel(tr("Username"));
     QLabel *passLabel = new QLabel(tr("Password"));
     QLabel *typeLabel = new QLabel(tr("Account Type"));
-
-    tpURL = new QLineEdit(this);
-    tpURL->setText(appsettings->cvalue(context->athlete->cyclist, GC_TPURL, "http://www.trainingpeaks.com").toString());
 
     tpUser = new QLineEdit(this);
     tpUser->setText(appsettings->cvalue(context->athlete->cyclist, GC_TPUSER, "").toString());
@@ -417,9 +336,6 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
 
     grid->addWidget(tp, row, 0);
 
-    grid->addWidget(urlLabel, ++row, 0);
-    grid->addWidget(tpURL, row, 1, 0);
-
     grid->addWidget(userLabel, ++row, 0);
     grid->addWidget(tpUser, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
 
@@ -437,14 +353,9 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
     QLabel *twp = new QLabel(tr("Twitter"));
     twp->setFont(current);
 
-    QLabel *twurlLabel = new QLabel(tr("Website"));
     QLabel *twauthLabel = new QLabel(tr("Authorise"));
 
-
-    twitterURL = new QLineEdit(this);
-    twitterURL->setText(appsettings->cvalue(context->athlete->cyclist, GC_TWURL, "http://www.twitter.com").toString());
     twitterAuthorise = new QPushButton(tr("Authorise"), this);
-
     twitterAuthorised = new QPushButton(this);
     twitterAuthorised->setContentsMargins(0,0,0,0);
     twitterAuthorised->setIcon(passwords.scaled(16,16));
@@ -453,9 +364,6 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
     twitterAuthorised->setFixedWidth(16);
 
     grid->addWidget(twp, ++row, 0);
-
-    grid->addWidget(twurlLabel, ++row, 0);
-    grid->addWidget(twitterURL, row, 1, 0);
 
     grid->addWidget(twauthLabel, ++row, 0);
     grid->addWidget(twitterAuthorise, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
@@ -467,7 +375,69 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
     connect(twitterAuthorise, SIGNAL(clicked()), this, SLOT(authoriseTwitter()));
 #endif
 
+#if QT_VERSION >= 0x050000 // only in QT5 or higher
+    //
+    // Authorising Dropbox via an OAuthDialog...
+    QLabel *dwp = new QLabel(tr("Dropbox"));
+    dwp->setFont(current);
+
+    QLabel *dropauthLabel = new QLabel(tr("Authorise"));
+
+    dropboxAuthorise = new QPushButton(tr("Authorise"), this);
+
+    dropboxAuthorised = new QPushButton(this);
+    dropboxAuthorised->setContentsMargins(0,0,0,0);
+    dropboxAuthorised->setIcon(passwords.scaled(16,16));
+    dropboxAuthorised->setIconSize(QSize(16,16));
+    dropboxAuthorised->setFixedHeight(16);
+    dropboxAuthorised->setFixedWidth(16);
+
+    grid->addWidget(dwp, ++row, 0);
+
+    grid->addWidget(dropauthLabel, ++row, 0);
+    grid->addWidget(dropboxAuthorise, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
+    if (appsettings->cvalue(context->athlete->cyclist, GC_DROPBOX_TOKEN, "")!="")
+        grid->addWidget(dropboxAuthorised, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
+    else
+        dropboxAuthorised->hide(); // if no token no show
+
+    connect(dropboxAuthorise, SIGNAL(clicked()), this, SLOT(authoriseDropbox()));
+
+    //
+    // Selecting the athlete folder in dropbox
+    QLabel *dropfolderLabel = new QLabel(tr("Athlete Folder"));
+    dropboxFolder = new QLineEdit(this);
+    dropboxFolder->setText(appsettings->cvalue(context->athlete->cyclist, GC_DROPBOX_FOLDER, "").toString());
+    dropboxBrowse = new QPushButton(tr("Browse"));
+    connect(dropboxBrowse, SIGNAL(clicked()), this, SLOT(chooseDropboxFolder()));
+    QHBoxLayout *dfchoose = new QHBoxLayout;
+    dfchoose->addWidget(dropboxFolder);
+    dfchoose->addWidget(dropboxBrowse);
+    grid->addWidget(dropfolderLabel, ++row, 0);
+    grid->addLayout(dfchoose, row, 1);
     //grid->addWidget(twpinLabel, ++row, 0);
+#endif
+
+    //////////////////////////////////////////////////
+    // Local FileStore
+
+
+    QLabel *nfs = new QLabel(tr("Shared Local Folder"));
+    nfs->setFont(current);
+    grid->addWidget(nfs, ++row, 0);
+
+    // Selecting the storage folder folder of the Local File Store
+    QLabel *networkFileStoreFolderLabel = new QLabel(tr("Shared Local Athlete Folder"));
+    networkFileStoreFolder = new QLineEdit(this);
+    networkFileStoreFolder->setText(appsettings->cvalue(context->athlete->cyclist, GC_NETWORKFILESTORE_FOLDER, "").toString());
+    networkFileStoreFolderBrowse = new QPushButton(tr("Browse"));
+    connect(networkFileStoreFolderBrowse, SIGNAL(clicked()), this, SLOT(chooseLocalFileStoreFolder()));
+    QHBoxLayout *nwfsfchoose = new QHBoxLayout;
+    nwfsfchoose->addWidget(networkFileStoreFolder);
+    nwfsfchoose->addWidget(networkFileStoreFolderBrowse);
+    grid->addWidget(networkFileStoreFolderLabel, ++row, 0);
+    grid->addLayout(nwfsfchoose, row, 1);
+
 
     //////////////////////////////////////////////////
     // Strava
@@ -750,6 +720,30 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
 
 
     //////////////////////////////////////////////////
+    // SportPlusHealth
+
+    QLabel *sph = new QLabel(tr("SportPlusHealth"));
+    sph->setFont(current);
+
+    QLabel *sphUserLabel = new QLabel(tr("Username"));
+    QLabel *sphPassLabel = new QLabel(tr("Password"));
+
+    sphUser = new QLineEdit(this);
+    sphUser->setText(appsettings->cvalue(context->athlete->cyclist, GC_SPORTPLUSHEALTHUSER, "").toString());
+
+    sphPass = new QLineEdit(this);
+    sphPass->setEchoMode(QLineEdit::Password);
+    sphPass->setText(appsettings->cvalue(context->athlete->cyclist, GC_SPORTPLUSHEALTHPASS, "").toString());
+
+    grid->addWidget(sph, ++row, 0);
+
+    grid->addWidget(sphUserLabel, ++row, 0);
+    grid->addWidget(sphUser, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
+
+    grid->addWidget(sphPassLabel, ++row, 0);
+    grid->addWidget(sphPass, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
+
+    //////////////////////////////////////////////////
     // End of grid
 
     grid->setColumnStretch(0,0);
@@ -763,11 +757,64 @@ CredentialsPage::CredentialsPage(QWidget *parent, Context *context) : QScrollAre
 
 }
 
+#if QT_VERSION >= 0x050000 // only in QT5 or higher
+void CredentialsPage::chooseDropboxFolder()
+{
+    Dropbox dropbox(context);
+
+    // open the connection
+    QStringList errors;
+    if (dropbox.open(errors) == false) {
+        QMessageBox err;
+        err.setText(tr("Dropbox Connection Failed"));
+        err.setDetailedText(errors.join("\n\n"));
+        err.setIcon(QMessageBox::Warning);
+        err.exec();
+        return;
+    }
+
+    // did the user type something ?
+    QString path = dropboxFolder->text();
+    if (path == "") path = appsettings->cvalue(context->athlete->cyclist, GC_DROPBOX_FOLDER, "/").toString();
+
+    FileStoreDialog dialog(this, &dropbox, tr("Choose Athlete Directory"), path, true);
+    int ret = dialog.exec();
+
+    // did we actually select something?
+    if (ret == QDialog::Accepted) dropboxFolder->setText(dialog.pathnameSelected());
+}
+#endif
+
+
+void CredentialsPage::chooseLocalFileStoreFolder()
+{
+    // did the user type something ? if not, get it from the Settings
+    QString path = networkFileStoreFolder->text();
+    if (path == "") path = appsettings->cvalue(context->athlete->cyclist, GC_NETWORKFILESTORE_FOLDER, "").toString();
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Choose Shared Local Folder Athlete Directory"),
+                            path, QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (dir != "") networkFileStoreFolder->setText(dir);  //only overwrite current dir, if a new was selected
+
+}
+
 
 #ifdef GC_HAVE_KQOAUTH
 void CredentialsPage::authoriseTwitter()
 {
     OAuthDialog *oauthDialog = new OAuthDialog(context, OAuthDialog::TWITTER);
+    if (oauthDialog->sslLibMissing()) {
+        delete oauthDialog;
+    } else {
+        oauthDialog->setWindowModality(Qt::ApplicationModal);
+        oauthDialog->exec();
+    }
+}
+#endif
+
+#if QT_VERSION >= 0x050000 // only in QT5 or higher
+void CredentialsPage::authoriseDropbox()
+{
+    OAuthDialog *oauthDialog = new OAuthDialog(context, OAuthDialog::DROPBOX);
     if (oauthDialog->sslLibMissing()) {
         delete oauthDialog;
     } else {
@@ -838,7 +885,6 @@ void CredentialsPage::dvCALDAVTypeChanged(int type)
 qint32
 CredentialsPage::saveClicked()
 {
-    appsettings->setCValue(context->athlete->cyclist, GC_TPURL, tpURL->text());
     appsettings->setCValue(context->athlete->cyclist, GC_TPUSER, tpUser->text());
     appsettings->setCValue(context->athlete->cyclist, GC_TPPASS, tpPass->text());
     appsettings->setCValue(context->athlete->cyclist, GC_RWGPSUSER, rideWithGPSUser->text());
@@ -847,6 +893,8 @@ CredentialsPage::saveClicked()
     appsettings->setCValue(context->athlete->cyclist, GC_TTBPASS, ttbPass->text());
     appsettings->setCValue(context->athlete->cyclist, GC_VELOHEROUSER, veloHeroUser->text());
     appsettings->setCValue(context->athlete->cyclist, GC_VELOHEROPASS, veloHeroPass->text());
+    appsettings->setCValue(context->athlete->cyclist, GC_SPORTPLUSHEALTHUSER, sphUser->text());
+    appsettings->setCValue(context->athlete->cyclist, GC_SPORTPLUSHEALTHPASS, sphPass->text());
     appsettings->setCValue(context->athlete->cyclist, GC_SELUSER, selUser->text());
     appsettings->setCValue(context->athlete->cyclist, GC_SELPASS, selPass->text());
     appsettings->setCValue(context->athlete->cyclist, GC_TPTYPE, tpType->currentIndex());
@@ -855,6 +903,10 @@ CredentialsPage::saveClicked()
     appsettings->setCValue(context->athlete->cyclist, GC_WIKEY, wiPass->text());
     appsettings->setCValue(context->athlete->cyclist, GC_WEBCAL_URL, webcalURL->text());
     appsettings->setCValue(context->athlete->cyclist, GC_WEBCAL_URL, webcalURL->text());
+#if QT_VERSION >= 0x050000 // only in QT5 or higher
+    appsettings->setCValue(context->athlete->cyclist, GC_DROPBOX_FOLDER, dropboxFolder->text());
+#endif
+    appsettings->setCValue(context->athlete->cyclist, GC_NETWORKFILESTORE_FOLDER, networkFileStoreFolder->text());
 
     // escape the at character
     QString url = dvURL->text();
@@ -871,24 +923,19 @@ CredentialsPage::saveClicked()
 //
 // About me
 //
-RiderPage::RiderPage(QWidget *parent, Context *context) : QWidget(parent), context(context)
+AboutRiderPage::AboutRiderPage(QWidget *parent, Context *context) : QWidget(parent), context(context)
 {
     QVBoxLayout *all = new QVBoxLayout(this);
     QGridLayout *grid = new QGridLayout;
+#ifdef Q_OS_MAX
+    setContentsMargins(10,10,10,10);
+    grid->setSpacing(5);
+    all->setSpacing(5);
+#endif
 
     QLabel *nicklabel = new QLabel(tr("Nickname"));
     QLabel *doblabel = new QLabel(tr("Date of Birth"));
     QLabel *sexlabel = new QLabel(tr("Sex"));
-    QLabel *unitlabel = new QLabel(tr("Unit"));
-    QLabel *biolabel = new QLabel(tr("Bio"));
-
-    QString weighttext = QString(tr("Weight (%1)")).arg(context->athlete->useMetricUnits ? tr("kg") : tr("lb"));
-    weightlabel = new QLabel(weighttext);
-
-    QString heighttext = QString(tr("Height (%1)")).arg(context->athlete->useMetricUnits ? tr("cm") : tr("in"));
-    heightlabel = new QLabel(heighttext);
-
-    wbaltaulabel = new QLabel(tr("W'bal tau (s)"));
 
     nickname = new QLineEdit(this);
     nickname->setText(appsettings->cvalue(context->athlete->cyclist, GC_NICKNAME, "").toString());
@@ -906,36 +953,6 @@ RiderPage::RiderPage(QWidget *parent, Context *context) : QWidget(parent), conte
     // is language independent (and for once the code is easier!)
     sex->setCurrentIndex(appsettings->cvalue(context->athlete->cyclist, GC_SEX).toInt());
 
-    unitCombo = new QComboBox();
-    unitCombo->addItem(tr("Metric"));
-    unitCombo->addItem(tr("Imperial"));
-
-    if (context->athlete->useMetricUnits)
-        unitCombo->setCurrentIndex(0);
-    else
-        unitCombo->setCurrentIndex(1);
-
-    weight = new QDoubleSpinBox(this);
-    weight->setMaximum(999.9);
-    weight->setMinimum(0.0);
-    weight->setDecimals(1);
-    weight->setValue(appsettings->cvalue(context->athlete->cyclist, GC_WEIGHT).toDouble() * (context->athlete->useMetricUnits ? 1.0 : LB_PER_KG));
-
-    height = new QDoubleSpinBox(this);
-    height->setMaximum(999.9);
-    height->setMinimum(0.0);
-    height->setDecimals(1);
-    height->setValue(appsettings->cvalue(context->athlete->cyclist, GC_HEIGHT).toDouble() * (context->athlete->useMetricUnits ? 100.0 : 100.0/CM_PER_INCH));
-
-    wbaltau = new QSpinBox(this);
-    wbaltau->setMinimum(30);
-    wbaltau->setMaximum(1200);
-    wbaltau->setSingleStep(10);
-    wbaltau->setValue(appsettings->cvalue(context->athlete->cyclist, GC_WBALTAU, 300).toInt());
-
-    bio = new QTextEdit(this);
-    bio->setText(appsettings->cvalue(context->athlete->cyclist, GC_BIO).toString());
-
     if (QFileInfo(context->athlete->home->config().canonicalPath() + "/" + "avatar.png").exists())
         avatar = QPixmap(context->athlete->home->config().canonicalPath() + "/" + "avatar.png");
     else
@@ -949,28 +966,111 @@ RiderPage::RiderPage(QWidget *parent, Context *context) : QWidget(parent), conte
     avatarButton->setFixedHeight(140);
     avatarButton->setFixedWidth(140);
 
+    //
+    // Crank length - only used by PfPv chart (should move there!)
+    //
+    QLabel *crankLengthLabel = new QLabel(tr("Crank Length"));
+    QVariant crankLength = appsettings->cvalue(context->athlete->cyclist, GC_CRANKLENGTH);
+    crankLengthCombo = new QComboBox();
+    crankLengthCombo->addItem("150");
+    crankLengthCombo->addItem("155");
+    crankLengthCombo->addItem("160");
+    crankLengthCombo->addItem("162.5");
+    crankLengthCombo->addItem("165");
+    crankLengthCombo->addItem("167.5");
+    crankLengthCombo->addItem("170");
+    crankLengthCombo->addItem("172.5");
+    crankLengthCombo->addItem("175");
+    crankLengthCombo->addItem("177.5");
+    crankLengthCombo->addItem("180");
+    crankLengthCombo->addItem("182.5");
+    crankLengthCombo->addItem("185");
+    if(crankLength.toString() == "150") crankLengthCombo->setCurrentIndex(0);
+    if(crankLength.toString() == "155") crankLengthCombo->setCurrentIndex(1);
+    if(crankLength.toString() == "160") crankLengthCombo->setCurrentIndex(2);
+    if(crankLength.toString() == "162.5") crankLengthCombo->setCurrentIndex(3);
+    if(crankLength.toString() == "165") crankLengthCombo->setCurrentIndex(4);
+    if(crankLength.toString() == "167.5") crankLengthCombo->setCurrentIndex(5);
+    if(crankLength.toString() == "170") crankLengthCombo->setCurrentIndex(6);
+    if(crankLength.toString() == "172.5") crankLengthCombo->setCurrentIndex(7);
+    if(crankLength.toString() == "175") crankLengthCombo->setCurrentIndex(8);
+    if(crankLength.toString() == "177.5") crankLengthCombo->setCurrentIndex(9);
+    if(crankLength.toString() == "180") crankLengthCombo->setCurrentIndex(10);
+    if(crankLength.toString() == "182.5") crankLengthCombo->setCurrentIndex(11);
+    if(crankLength.toString() == "185") crankLengthCombo->setCurrentIndex(12);
+
+    //
+    // Wheel size
+    //
+    QLabel *wheelSizeLabel = new QLabel(tr("Wheelsize"), this);
+    int wheelSize = appsettings->cvalue(context->athlete->cyclist, GC_WHEELSIZE, 2100).toInt();
+
+    rimSizeCombo = new QComboBox();
+    rimSizeCombo->addItems(WheelSize::RIM_SIZES);
+
+    tireSizeCombo = new QComboBox();
+    tireSizeCombo->addItems(WheelSize::TIRE_SIZES);
+
+
+    wheelSizeEdit = new QLineEdit(QString("%1").arg(wheelSize),this);
+    wheelSizeEdit->setInputMask("0000");
+    wheelSizeEdit->setFixedWidth(40);
+
+    QLabel *wheelSizeUnitLabel = new QLabel(tr("mm"), this);
+
+    QHBoxLayout *wheelSizeLayout = new QHBoxLayout();
+    wheelSizeLayout->addWidget(rimSizeCombo);
+    wheelSizeLayout->addWidget(tireSizeCombo);
+    wheelSizeLayout->addWidget(wheelSizeEdit);
+    wheelSizeLayout->addWidget(wheelSizeUnitLabel);
+
+    connect(rimSizeCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(calcWheelSize()));
+    connect(tireSizeCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(calcWheelSize()));
+    connect(wheelSizeEdit, SIGNAL(textEdited(QString)), this, SLOT(resetWheelSize()));
+
+
+    //
+    // Auto Backup
+    //
+    // Selecting the storage folder folder of the Local File Store
+    QLabel *autoBackupFolderLabel = new QLabel(tr("Auto Backup Folder"));
+    autoBackupFolder = new QLineEdit(this);
+    autoBackupFolder->setText(appsettings->cvalue(context->athlete->cyclist, GC_AUTOBACKUP_FOLDER, "").toString());
+    autoBackupFolderBrowse = new QPushButton(tr("Browse"));
+    connect(autoBackupFolderBrowse, SIGNAL(clicked()), this, SLOT(chooseAutoBackupFolder()));
+    autoBackupPeriod = new QSpinBox(this);
+    autoBackupPeriod->setMinimum(0);
+    autoBackupPeriod->setMaximum(9999);
+    autoBackupPeriod->setSingleStep(1);
+    QLabel *autoBackupPeriodLabel = new QLabel(tr("Auto Backup execution every"));
+    autoBackupPeriod->setValue(appsettings->cvalue(context->athlete->cyclist, GC_AUTOBACKUP_PERIOD, 0).toInt());
+    QLabel *autoBackupUnitLabel = new QLabel(tr("times the athlete is closed - 0 means never"));
+    QHBoxLayout *backupInput = new QHBoxLayout();
+    backupInput->addWidget(autoBackupPeriod);
+    //backupInput->addStretch();
+    backupInput->addWidget(autoBackupUnitLabel);
+
     Qt::Alignment alignment = Qt::AlignLeft|Qt::AlignVCenter;
 
     grid->addWidget(nicklabel, 0, 0, alignment);
     grid->addWidget(doblabel, 1, 0, alignment);
     grid->addWidget(sexlabel, 2, 0, alignment);
-    grid->addWidget(unitlabel, 3, 0, alignment);
-    grid->addWidget(weightlabel, 4, 0, alignment);
-    grid->addWidget(heightlabel, 4, 2, alignment);
-    grid->addWidget(wbaltaulabel, 5, 0, alignment);
-    grid->addWidget(biolabel, 6, 0, alignment);
 
     grid->addWidget(nickname, 0, 1, alignment);
     grid->addWidget(dob, 1, 1, alignment);
     grid->addWidget(sex, 2, 1, alignment);
-    grid->addWidget(unitCombo, 3, 1, alignment);
-    grid->addWidget(weight, 4, 1, alignment);
-    grid->addWidget(height, 4, 3, alignment);
-    grid->addWidget(wbaltau, 5, 1, alignment);
-    grid->addWidget(bio, 7, 0, 1, 4);
 
-    grid->addWidget(avatarButton, 0, 2, 4, 2, Qt::AlignRight|Qt::AlignVCenter);
+    grid->addWidget(crankLengthLabel, 4, 0, alignment);
+    grid->addWidget(crankLengthCombo, 4, 1, alignment);
+    grid->addWidget(wheelSizeLabel, 5, 0, alignment);
+    grid->addLayout(wheelSizeLayout, 5, 1, 1, 2, alignment);
+    grid->addWidget(autoBackupFolderLabel, 7,0, alignment);
+    grid->addWidget(autoBackupFolder, 7, 1, alignment);
+    grid->addWidget(autoBackupFolderBrowse, 7, 2, alignment);
+    grid->addWidget(autoBackupPeriodLabel, 8, 0,alignment);
+    grid->addLayout(backupInput, 8, 1, alignment);
 
+    grid->addWidget(avatarButton, 0, 1, 4, 2, Qt::AlignRight|Qt::AlignVCenter);
     all->addLayout(grid);
     all->addStretch();
 
@@ -979,18 +1079,16 @@ RiderPage::RiderPage(QWidget *parent, Context *context) : QWidget(parent), conte
     // since they are not used, nor the W'bal tau used in
     // the realtime code. This is limited to stuff we
     // care about tracking as it is used by metrics
-    b4.unit = unitCombo->currentIndex();
 
     // height and weight as stored (always metric)
-    b4.height = appsettings->cvalue(context->athlete->cyclist, GC_HEIGHT).toDouble();
-    b4.weight = appsettings->cvalue(context->athlete->cyclist, GC_WEIGHT).toDouble();
+    b4.wheel = wheelSize;
+    b4.crank = crankLengthCombo->currentIndex();
 
     connect (avatarButton, SIGNAL(clicked()), this, SLOT(chooseAvatar()));
-    connect (unitCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(unitChanged(int)));
 }
 
 void
-RiderPage::chooseAvatar()
+AboutRiderPage::chooseAvatar()
 {
     QString filename = QFileDialog::getOpenFileName(this, tr("Choose Picture"),
                             "", tr("Images (*.png *.jpg *.bmp)"));
@@ -1002,8 +1100,19 @@ RiderPage::chooseAvatar()
     }
 }
 
+void AboutRiderPage::chooseAutoBackupFolder()
+{
+    // did the user type something ? if not, get it from the Settings
+    QString path = autoBackupFolder->text();
+    if (path == "") path = appsettings->cvalue(context->athlete->cyclist, GC_AUTOBACKUP_FOLDER, "").toString();
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Choose Backup Directory"),
+                            path, QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (dir != "") autoBackupFolder->setText(dir);  //only overwrite current dir, if a new was selected
+
+}
+
 void
-RiderPage::unitChanged(int currentIndex)
+RiderPhysPage::unitChanged(int currentIndex)
 {
     if (currentIndex == 0) {
         QString weighttext = QString(tr("Weight (%1)")).arg(tr("kg"));
@@ -1025,30 +1134,163 @@ RiderPage::unitChanged(int currentIndex)
     }
 }
 
+void
+AboutRiderPage::calcWheelSize()
+{
+   int diameter = WheelSize::calcPerimeter(rimSizeCombo->currentIndex(), tireSizeCombo->currentIndex());
+   if (diameter>0)
+        wheelSizeEdit->setText(QString("%1").arg(diameter));
+}
+
+void
+AboutRiderPage::resetWheelSize()
+{
+   rimSizeCombo->setCurrentIndex(0);
+   tireSizeCombo->setCurrentIndex(0);
+}
 
 qint32
-RiderPage::saveClicked()
+AboutRiderPage::saveClicked()
 {
     appsettings->setCValue(context->athlete->cyclist, GC_NICKNAME, nickname->text());
     appsettings->setCValue(context->athlete->cyclist, GC_DOB, dob->date());
-    appsettings->setCValue(context->athlete->cyclist, GC_WEIGHT, weight->value() * (unitCombo->currentIndex() ? KG_PER_LB : 1.0));
-    appsettings->setCValue(context->athlete->cyclist, GC_HEIGHT, height->value() * (unitCombo->currentIndex() ? CM_PER_INCH/100.0 : 1.0/100.0));
-    appsettings->setCValue(context->athlete->cyclist, GC_WBALTAU, wbaltau->value());
 
-    if (unitCombo->currentIndex()==0)
-        appsettings->setCValue(context->athlete->cyclist, GC_UNIT, GC_UNIT_METRIC);
-    else if (unitCombo->currentIndex()==1)
-        appsettings->setCValue(context->athlete->cyclist, GC_UNIT, GC_UNIT_IMPERIAL);
 
     appsettings->setCValue(context->athlete->cyclist, GC_SEX, sex->currentIndex());
-    appsettings->setCValue(context->athlete->cyclist, GC_BIO, bio->toPlainText());
     avatar.save(context->athlete->home->config().canonicalPath() + "/" + "avatar.png", "PNG");
+
+    appsettings->setCValue(context->athlete->cyclist, GC_CRANKLENGTH, crankLengthCombo->currentText());
+    appsettings->setCValue(context->athlete->cyclist, GC_WHEELSIZE, wheelSizeEdit->text().toInt());
+
+    // Auto Backup
+    appsettings->setCValue(context->athlete->cyclist, GC_AUTOBACKUP_FOLDER, autoBackupFolder->text());
+    appsettings->setCValue(context->athlete->cyclist, GC_AUTOBACKUP_PERIOD, autoBackupPeriod->value());
+
 
     qint32 state=0;
 
-    // units prefs changed?
-    if (b4.unit != unitCombo->currentIndex())
-        state += CONFIG_UNITS;
+    // general stuff changed ?
+    if (b4.wheel != wheelSizeEdit->text().toInt() ||
+        b4.crank != crankLengthCombo->currentIndex() )
+        state += CONFIG_GENERAL;
+
+    return state;
+}
+
+//
+// About me - physiology settings
+//
+RiderPhysPage::RiderPhysPage(QWidget *parent, Context *context) : QWidget(parent), context(context)
+{
+    QVBoxLayout *all = new QVBoxLayout(this);
+    QGridLayout *grid = new QGridLayout;
+#ifdef Q_OS_MAX
+    setContentsMargins(10,10,10,10);
+    grid->setSpacing(5);
+    all->setSpacing(5);
+#endif
+
+    QString weighttext = QString(tr("Weight (%1)")).arg(context->athlete->useMetricUnits ? tr("kg") : tr("lb"));
+    weightlabel = new QLabel(weighttext);
+
+    QString heighttext = QString(tr("Height (%1)")).arg(context->athlete->useMetricUnits ? tr("cm") : tr("in"));
+    heightlabel = new QLabel(heighttext);
+
+    wbaltaulabel = new QLabel(tr("W'bal tau (s)"));
+
+    weight = new QDoubleSpinBox(this);
+    weight->setMaximum(999.9);
+    weight->setMinimum(0.0);
+    weight->setDecimals(1);
+    weight->setValue(appsettings->cvalue(context->athlete->cyclist, GC_WEIGHT).toDouble() * (context->athlete->useMetricUnits ? 1.0 : LB_PER_KG));
+
+    height = new QDoubleSpinBox(this);
+    height->setMaximum(999.9);
+    height->setMinimum(0.0);
+    height->setDecimals(1);
+    height->setValue(appsettings->cvalue(context->athlete->cyclist, GC_HEIGHT).toDouble() * (context->athlete->useMetricUnits ? 100.0 : 100.0/CM_PER_INCH));
+
+    wbaltau = new QSpinBox(this);
+    wbaltau->setMinimum(30);
+    wbaltau->setMaximum(1200);
+    wbaltau->setSingleStep(10);
+    wbaltau->setValue(appsettings->cvalue(context->athlete->cyclist, GC_WBALTAU, 300).toInt());
+
+    //
+    // Performance manager
+    //
+
+    perfManSTSLabel = new QLabel(tr("STS average (days)"));
+    perfManLTSLabel = new QLabel(tr("LTS average (days)"));
+    perfManSTSavgValidator = new QIntValidator(1,21,this);
+    perfManLTSavgValidator = new QIntValidator(7,56,this);
+
+    // get config or set to defaults
+    QVariant perfManSTSVal = appsettings->cvalue(context->athlete->cyclist, GC_STS_DAYS);
+    if (perfManSTSVal.isNull() || perfManSTSVal.toInt() == 0) perfManSTSVal = 7;
+    QVariant perfManLTSVal = appsettings->cvalue(context->athlete->cyclist, GC_LTS_DAYS);
+    if (perfManLTSVal.isNull() || perfManLTSVal.toInt() == 0) perfManLTSVal = 42;
+
+    perfManSTSavg = new QLineEdit(perfManSTSVal.toString(),this);
+    perfManSTSavg->setValidator(perfManSTSavgValidator);
+    perfManLTSavg = new QLineEdit(perfManLTSVal.toString(),this);
+    perfManLTSavg->setValidator(perfManLTSavgValidator);
+
+    showSBToday = new QCheckBox(tr("PMC Stress Balance Today"), this);
+    showSBToday->setChecked(appsettings->cvalue(context->athlete->cyclist, GC_SB_TODAY).toInt());
+
+    Qt::Alignment alignment = Qt::AlignLeft|Qt::AlignVCenter;
+
+    grid->addWidget(weightlabel, 1, 0, alignment);
+    grid->addWidget(heightlabel, 2, 0, alignment);
+    grid->addWidget(wbaltaulabel, 3, 0, alignment);
+
+    grid->addWidget(weight, 1, 1, alignment);
+    grid->addWidget(height, 2, 1, alignment);
+    grid->addWidget(wbaltau, 3, 1, alignment);
+
+
+    grid->addWidget(perfManSTSLabel, 4, 0, alignment);
+    grid->addWidget(perfManSTSavg, 4, 1, alignment);
+    grid->addWidget(perfManLTSLabel, 5, 0, alignment);
+    grid->addWidget(perfManLTSavg, 5, 1, alignment);
+    grid->addWidget(showSBToday, 6, 1, alignment);
+
+    all->addLayout(grid);
+    all->addStretch();
+
+    // save initial values for things we care about
+    // note we don't worry about age or sex at this point
+    // since they are not used, nor the W'bal tau used in
+    // the realtime code. This is limited to stuff we
+    // care about tracking as it is used by metrics
+
+    // height and weight as stored (always metric)
+    b4.height = appsettings->cvalue(context->athlete->cyclist, GC_HEIGHT).toDouble();
+    b4.weight = appsettings->cvalue(context->athlete->cyclist, GC_WEIGHT).toDouble();
+    b4.lts = perfManLTSVal.toInt();
+    b4.sts = perfManSTSVal.toInt();
+}
+
+qint32
+RiderPhysPage::saveClicked()
+{
+    appsettings->setCValue(context->athlete->cyclist, GC_WEIGHT, weight->value() * (context->athlete->useMetricUnits ? 1.0 : KG_PER_LB));
+    appsettings->setCValue(context->athlete->cyclist, GC_HEIGHT, height->value() * (context->athlete->useMetricUnits ? 1.0/100.0 : CM_PER_INCH/100.0));
+    appsettings->setCValue(context->athlete->cyclist, GC_WBALTAU, wbaltau->value());
+
+
+    // Performance Manager
+    appsettings->setCValue(context->athlete->cyclist, GC_STS_DAYS, perfManSTSavg->text());
+    appsettings->setCValue(context->athlete->cyclist, GC_LTS_DAYS, perfManLTSavg->text());
+    appsettings->setCValue(context->athlete->cyclist, GC_SB_TODAY, (int) showSBToday->isChecked());
+
+    qint32 state=0;
+
+    // PMC constants changed ?
+    if(b4.lts != perfManLTSavg->text().toInt() ||
+        b4.sts != perfManSTSavg->text().toInt())
+        state += CONFIG_PMC;
 
     // default height or weight changed ?
     if (b4.height != appsettings->cvalue(context->athlete->cyclist, GC_HEIGHT).toDouble() ||
@@ -1891,6 +2133,7 @@ IntervalMetricsPage::leftClicked()
     selectedList->takeItem(selectedList->row(item));
     availList->addItem(item);
     changed = true;
+    selectedChanged();
 }
 
 void
@@ -2087,6 +2330,7 @@ BestsMetricsPage::leftClicked()
     selectedList->takeItem(selectedList->row(item));
     availList->addItem(item);
     changed = true;
+    selectedChanged();
 }
 
 void
@@ -2279,6 +2523,7 @@ SummaryMetricsPage::leftClicked()
     selectedList->takeItem(selectedList->row(item));
     availList->addItem(item);
     changed = true;
+    selectedChanged();
 }
 
 void
@@ -2866,7 +3111,8 @@ ProcessorPage::ProcessorPage(Context *context) : context(context)
     processorTree->headerItem()->setText(0, tr("Processor"));
     processorTree->headerItem()->setText(1, tr("Apply"));
     processorTree->headerItem()->setText(2, tr("Settings"));
-    processorTree->setColumnCount(3);
+    processorTree->headerItem()->setText(3, "Technical Name of Processor"); // add invisible Column with technical name
+    processorTree->setColumnCount(4);
     processorTree->setSelectionMode(QAbstractItemView::NoSelection);
     processorTree->setEditTriggers(QAbstractItemView::SelectedClicked); // allow edit
     processorTree->setUniformRowHeights(true);
@@ -2888,15 +3134,17 @@ ProcessorPage::ProcessorPage(Context *context) : context(context)
 
         // Processor Name: it shows the localized name
         add->setText(0, i.value()->name());
+        // Processer Key - for Settings
+        add->setText(3, i.key());
 
         // Auto or Manual run?
         QComboBox *comboButton = new QComboBox(this);
         comboButton->addItem(tr("Manual"));
-        comboButton->addItem(tr("Auto"));
+        comboButton->addItem(tr("Import"));
         processorTree->setItemWidget(add, 1, comboButton);
 
         QString configsetting = QString("dp/%1/apply").arg(i.key());
-        if (appsettings->value(this, configsetting, "Manual").toString() == "Manual")
+        if (appsettings->value(NULL, GC_QSETTINGS_GLOBAL_GENERAL+configsetting, "Manual").toString() == "Manual")
             comboButton->setCurrentIndex(0);
         else
             comboButton->setCurrentIndex(1);
@@ -2905,8 +3153,10 @@ ProcessorPage::ProcessorPage(Context *context) : context(context)
         DataProcessorConfig *config = i.value()->processorConfig(this);
         config->readConfig();
 
-        processorTree->setItemWidget(add, 2, config);
+        processorTree->setItemWidget(add, 2, config);       
+
     }
+    processorTree->setColumnHidden(3, true);
 
     mainLayout->addWidget(processorTree, 0,0);
 }
@@ -2917,11 +3167,11 @@ ProcessorPage::saveClicked()
     // call each processor config widget's saveConfig() to
     // write away separately
     for (int i=0; i<processorTree->invisibleRootItem()->childCount(); i++) {
-        // auto or manual?
-        QString configsetting = QString("dp/%1/apply").arg(processorTree->invisibleRootItem()->child(i)->text(0));
+        // auto (which means run on import) or manual?
+        QString configsetting = QString("dp/%1/apply").arg(processorTree->invisibleRootItem()->child(i)->text(3));
         QString apply = ((QComboBox*)(processorTree->itemWidget(processorTree->invisibleRootItem()->child(i), 1)))->currentIndex() ?
                         "Auto" : "Manual";
-        appsettings->setValue(configsetting, apply);
+        appsettings->setValue(GC_QSETTINGS_GLOBAL_GENERAL+configsetting, apply);
         ((DataProcessorConfig*)(processorTree->itemWidget(processorTree->invisibleRootItem()->child(i), 2)))->saveConfig();
     }
 
@@ -3120,9 +3370,16 @@ ZonePage::saveClicked()
     QFile zonesFile(context->athlete->home->config().canonicalPath() + "/power.zones");
     context->athlete->zones_->read(zonesFile);
 
+    // use CP for FTP?
+    appsettings->setCValue(context->athlete->cyclist, GC_USE_CP_FOR_FTP, cpPage->useCPForFTPCombo->currentIndex());
+
+
+    // did cp for ftp change ?
+    qint32 cppage = cpPage->saveClicked();
+
     // did we change ?
-    if (zones.getFingerprint() != b4Fingerprint) return CONFIG_ZONES;
-    else return 0;
+    if (zones.getFingerprint() != b4Fingerprint) return cppage | CONFIG_ZONES;
+    else return cppage;
 }
 
 SchemePage::SchemePage(ZonePage* zonePage) : zonePage(zonePage)
@@ -3300,7 +3557,6 @@ CPPage::CPPage(ZonePage* zonePage) : zonePage(zonePage)
     deleteButton = new QPushButton(tr("-"));
 #ifndef Q_OS_MAC
     addButton->setFixedSize(20,20);
-    updateButton->setFixedSize(60,20);
     deleteButton->setFixedSize(20,20);
 #else
     addButton->setText(tr("Add"));
@@ -3330,16 +3586,31 @@ CPPage::CPPage(ZonePage* zonePage) : zonePage(zonePage)
     QHBoxLayout *addLayout = new QHBoxLayout;
     QLabel *dateLabel = new QLabel(tr("From Date"));
     QLabel *cpLabel = new QLabel(tr("Critical Power"));
+    QLabel *ftpLabel = new QLabel(tr("FTP"));
     QLabel *wLabel = new QLabel(tr("W'"));
     QLabel *pmaxLabel = new QLabel(tr("Pmax"));
     dateEdit = new QDateEdit;
     dateEdit->setDate(QDate::currentDate());
+
+     // Use CP for FTP
+    useCPForFTPCombo = new QComboBox(this);
+    useCPForFTPCombo->addItem(tr("Use CP for all metrics"));
+    useCPForFTPCombo->addItem(tr("Use FTP for Coggan metrics"));
+
+    b4.cpforftp = appsettings->cvalue(zonePage->context->athlete->cyclist, GC_USE_CP_FOR_FTP, 0).toInt() ? 1 : 0;
+    useCPForFTPCombo->setCurrentIndex(b4.cpforftp);
 
     cpEdit = new QDoubleSpinBox;
     cpEdit->setMinimum(0);
     cpEdit->setMaximum(1000);
     cpEdit->setSingleStep(1.0);
     cpEdit->setDecimals(0);
+
+    ftpEdit = new QDoubleSpinBox;
+    ftpEdit->setMinimum(0);
+    ftpEdit->setMaximum(100000);
+    ftpEdit->setSingleStep(100);
+    ftpEdit->setDecimals(0);
 
     wEdit = new QDoubleSpinBox;
     wEdit->setMinimum(0);
@@ -3357,6 +3628,11 @@ CPPage::CPPage(ZonePage* zonePage) : zonePage(zonePage)
     actionButtons->setSpacing(2);
     actionButtons->addWidget(cpLabel);
     actionButtons->addWidget(cpEdit);
+
+
+    actionButtons->addWidget(ftpLabel);
+    actionButtons->addWidget(ftpEdit);
+
     actionButtons->addWidget(wLabel);
     actionButtons->addWidget(wEdit);
     actionButtons->addWidget(pmaxLabel);
@@ -3370,47 +3646,10 @@ CPPage::CPPage(ZonePage* zonePage) : zonePage(zonePage)
     addLayout->addWidget(dateLabel);
     addLayout->addWidget(dateEdit);
     addLayout->addStretch();
+    addLayout->addWidget(useCPForFTPCombo);
 
     ranges = new QTreeWidget;
-    ranges->headerItem()->setText(0, tr("From Date"));
-    ranges->headerItem()->setText(1, tr("Critical Power"));
-    ranges->headerItem()->setText(2, tr("W'"));
-    ranges->headerItem()->setText(3, tr("Pmax"));
-    ranges->setColumnCount(4);
-    ranges->setSelectionMode(QAbstractItemView::SingleSelection);
-    //ranges->setEditTriggers(QAbstractItemView::SelectedClicked); // allow edit
-    ranges->setUniformRowHeights(true);
-    ranges->setIndentation(0);
-    //ranges->header()->resizeSection(0,180);
-
-    // setup list of ranges
-    for (int i=0; i< zonePage->zones.getRangeSize(); i++) {
-
-        QTreeWidgetItem *add = new QTreeWidgetItem(ranges->invisibleRootItem());
-        add->setFlags(add->flags() & ~Qt::ItemIsEditable);
-
-        // Embolden ranges with manually configured zones
-        QFont font;
-        font.setWeight(zonePage->zones.getZoneRange(i).zonesSetFromCP ?
-                                        QFont::Normal : QFont::Black);
-
-        // date
-        add->setText(0, zonePage->zones.getStartDate(i).toString(tr("MMM d, yyyy")));
-        add->setFont(0, font);
-
-        // CP
-        add->setText(1, QString("%1").arg(zonePage->zones.getCP(i)));
-        add->setFont(1, font);
-
-        // W'
-        add->setText(2, QString("%1").arg(zonePage->zones.getWprime(i)));
-        add->setFont(2, font);
-
-        // Pmax
-        add->setText(3, QString("%1").arg(zonePage->zones.getPmax(i)));
-        add->setFont(3, font);
-
-    }
+    initializeRanges();
 
     zones = new QTreeWidget;
     zones->headerItem()->setText(0, tr("Short"));
@@ -3433,6 +3672,7 @@ CPPage::CPPage(ZonePage* zonePage) : zonePage(zonePage)
     // edit connect
     connect(dateEdit, SIGNAL(dateChanged(QDate)), this, SLOT(rangeEdited()));
     connect(cpEdit, SIGNAL(valueChanged(double)), this, SLOT(rangeEdited()));
+    connect(ftpEdit, SIGNAL(valueChanged(double)), this, SLOT(rangeEdited()));
     connect(wEdit, SIGNAL(valueChanged(double)), this, SLOT(rangeEdited()));
     connect(pmaxEdit, SIGNAL(valueChanged(double)), this, SLOT(rangeEdited()));
     // button connect
@@ -3442,9 +3682,90 @@ CPPage::CPPage(ZonePage* zonePage) : zonePage(zonePage)
     connect(defaultButton, SIGNAL(clicked()), this, SLOT(defaultClicked()));
     connect(addZoneButton, SIGNAL(clicked()), this, SLOT(addZoneClicked()));
     connect(deleteZoneButton, SIGNAL(clicked()), this, SLOT(deleteZoneClicked()));
+    connect(useCPForFTPCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(initializeRanges()));
     connect(ranges, SIGNAL(itemSelectionChanged()), this, SLOT(rangeSelectionChanged()));
     connect(zones, SIGNAL(itemChanged(QTreeWidgetItem*, int)), this, SLOT(zonesChanged()));
 }
+
+qint32
+CPPage::saveClicked()
+{
+    if (b4.cpforftp != useCPForFTPCombo->currentIndex())
+        return CONFIG_ZONES;
+    else
+        return 0;
+}
+
+void
+CPPage::initializeRanges() {
+    bool useCPForFTP = (useCPForFTPCombo->currentIndex() == 0? true : false);
+
+    int column = 0;
+
+    bool resize = (ranges->columnCount() == 4);
+
+    while( int nb = ranges->topLevelItemCount () )
+    {
+        delete ranges->takeTopLevelItem( nb - 1 );
+    }
+    ranges->headerItem()->setText(column++, tr("From Date"));
+
+    ranges->headerItem()->setText(column++, tr("Critical Power"));
+    if (!useCPForFTP) {
+        ranges->headerItem()->setText(column++, tr("FTP"));
+    }
+
+    ranges->headerItem()->setText(column++, tr("W'"));
+    ranges->headerItem()->setText(column++, tr("Pmax"));
+
+    if (resize)
+        ranges->setColumnWidth(3, ranges->columnWidth(3)/2);
+
+    ranges->setColumnCount(column);
+
+    ranges->setSelectionMode(QAbstractItemView::SingleSelection);
+    //ranges->setEditTriggers(QAbstractItemView::SelectedClicked); // allow edit
+    ranges->setUniformRowHeights(true);
+    ranges->setIndentation(0);
+
+    // setup list of ranges
+    for (int i=0; i< zonePage->zones.getRangeSize(); i++) {
+
+        QTreeWidgetItem *add = new QTreeWidgetItem(ranges->invisibleRootItem());
+        add->setFlags(add->flags() & ~Qt::ItemIsEditable);
+
+        // Embolden ranges with manually configured zones
+        QFont font;
+        font.setWeight(zonePage->zones.getZoneRange(i).zonesSetFromCP ?
+                                        QFont::Normal : QFont::Black);
+
+        int column = 0;
+        // date
+        add->setText(column, zonePage->zones.getStartDate(i).toString(tr("MMM d, yyyy")));
+        add->setFont(column++, font);
+
+        // CP
+        add->setText(column, QString("%1").arg(zonePage->zones.getCP(i)));
+        add->setFont(column++, font);
+
+        if (!useCPForFTP) {
+            // FTP
+            add->setText(column, QString("%1").arg(zonePage->zones.getFTP(i)));
+            add->setFont(column++, font);
+        }
+
+        // W'
+        add->setText(column, QString("%1").arg(zonePage->zones.getWprime(i)));
+        add->setFont(column++, font);
+
+        // Pmax
+        add->setText(column, QString("%1").arg(zonePage->zones.getPmax(i)));
+        add->setFont(column++, font);
+    }
+
+}
+
+
 
 void
 CPPage::addClicked()
@@ -3454,7 +3775,7 @@ CPPage::addClicked()
     zonePage->zones.setScheme(zonePage->schemePage->getScheme());
 
     int cp = cpEdit->value();
-    if( cp <= 0 ){
+    if( cp <= 0 ) {
         QMessageBox err;
         err.setText(tr("CP must be > 0"));
         err.setIcon(QMessageBox::Warning);
@@ -3468,24 +3789,31 @@ CPPage::addClicked()
 
     int pmax = pmaxEdit->value() ? pmaxEdit->value() : 1000;
 
-    int index = zonePage->zones.addZoneRange(dateEdit->date(), cpEdit->value(), wp, pmax);
+    int index = zonePage->zones.addZoneRange(dateEdit->date(), cpEdit->value(), ftpEdit->value(), wp, pmax);
 
     // new item
     QTreeWidgetItem *add = new QTreeWidgetItem;
     add->setFlags(add->flags() & ~Qt::ItemIsEditable);
     ranges->invisibleRootItem()->insertChild(index, add);
 
+    int column = 0;
+
     // date
-    add->setText(0, dateEdit->date().toString(tr("MMM d, yyyy")));
+    add->setText(column++, dateEdit->date().toString(tr("MMM d, yyyy")));
 
     // CP
-    add->setText(1, QString("%1").arg(cpEdit->value()));
+    add->setText(column++, QString("%1").arg(cpEdit->value()));
+
+    // FTP
+    if (useCPForFTPCombo->currentIndex() == 1) {
+        add->setText(column++, QString("%1").arg(ftpEdit->value()));
+    }
 
     // W'
-    add->setText(2, QString("%1").arg(wp));
+    add->setText(column++, QString("%1").arg(wp));
 
     // Pmax
-    add->setText(3, QString("%1").arg(pmax));
+    add->setText(column++, QString("%1").arg(pmax));
 
 }
 
@@ -3505,6 +3833,7 @@ CPPage::editClicked()
         return;
     }
 
+    int ftp = ftpEdit->value() ? ftpEdit->value() : cp;
     int wp = wEdit->value() ? wEdit->value() : 20000;
     if (wp < 1000) wp *= 1000; // entered in kJ we want joules
 
@@ -3514,21 +3843,29 @@ CPPage::editClicked()
     int index = ranges->indexOfTopLevelItem(edit);
 
 
+    int columns = 0;
+
     // date
     zonePage->zones.setStartDate(index, dateEdit->date());
-    edit->setText(0, dateEdit->date().toString(tr("MMM d, yyyy")));
+    edit->setText(columns++, dateEdit->date().toString(tr("MMM d, yyyy")));
 
     // CP
     zonePage->zones.setCP(index, cp);
-    edit->setText(1, QString("%1").arg(cp));
+    edit->setText(columns++, QString("%1").arg(cp));
+
+    // show FTP if we use FTP for Coggan Metrics
+    if (useCPForFTPCombo->currentIndex() == 1) {
+        zonePage->zones.setFTP(index, ftp);
+        edit->setText(columns++, QString("%1").arg(ftp));
+    }
 
     // W'
     zonePage->zones.setWprime(index, wp);
-    edit->setText(2, QString("%1").arg(wp));
+    edit->setText(columns++, QString("%1").arg(wp));
 
     // Pmax
     zonePage->zones.setPmax(index, pmax);
-    edit->setText(3, QString("%1").arg(pmax));
+    edit->setText(columns++, QString("%1").arg(pmax));
 
 }
 
@@ -3582,13 +3919,16 @@ CPPage::rangeEdited()
         int cp = cpEdit->value();
         int ocp = zonePage->zones.getCP(index);
 
+        int ftp = ftpEdit->value();
+        int oftp = zonePage->zones.getFTP(index);
+
         int wp = wEdit->value();
         int owp = zonePage->zones.getWprime(index);
 
         int pmax = pmaxEdit->value();
         int opmax = zonePage->zones.getPmax(index);
 
-        if (date != odate || cp != ocp || wp != owp || pmax != opmax)
+        if (date != odate || cp != ocp || ftp != oftp || wp != owp || pmax != opmax)
             updateButton->show();
         else
             updateButton->hide();
@@ -3615,6 +3955,7 @@ CPPage::rangeSelectionChanged()
 
         dateEdit->setDate(zonePage->zones.getStartDate(index));
         cpEdit->setValue(zonePage->zones.getCP(index));
+        ftpEdit->setValue(zonePage->zones.getFTP(index));
         wEdit->setValue(zonePage->zones.getWprime(index));
         pmaxEdit->setValue(zonePage->zones.getPmax(index));
 
@@ -4493,57 +4834,66 @@ PaceZonePage::PaceZonePage(Context *context) : context(context)
     hlayout->addWidget(sportCombo);
     hlayout->addStretch();
     layout->addLayout(hlayout);
-    connect(sportCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(changeSport()));
-    zones = NULL;
-    tabs = NULL;
+    connect(sportCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(changeSport(int)));
+    tabs = new QTabWidget(this);
+    layout->addWidget(tabs);
+
+    for (int i=0; i < nSports; i++) {
+        paceZones[i] = new PaceZones(i > 0);
+
+        // get current config by reading it in (leave mainwindow zones alone)
+        QFile zonesFile(context->athlete->home->config().canonicalPath() + "/" + paceZones[i]->fileName());
+        if (zonesFile.exists()) {
+            paceZones[i]->read(zonesFile);
+            zonesFile.close();
+            b4Fingerprint[i] = paceZones[i]->getFingerprint(); // remember original state
+        }
+
+        // setup maintenance pages using current config
+        schemePages[i] = new PaceSchemePage(paceZones[i]);
+        cvPages[i] = new CVPage(paceZones[i], schemePages[i]);
+    }
+
     // finish setup for the default sport
-    changeSport();
+    changeSport(sportCombo->currentIndex());
+}
+
+PaceZonePage::~PaceZonePage()
+{
+    for (int i=0; i<nSports; i++) delete paceZones[i];
 }
 
 void
-PaceZonePage::changeSport()
+PaceZonePage::changeSport(int i)
 {
-    delete zones;
-    zones = new PaceZones(sportCombo->currentIndex() > 0);
-
-    // get current config by reading it in (leave mainwindow zones alone)
-    QFile zonesFile(context->athlete->home->config().canonicalPath() + "/" + zones->fileName());
-    if (zonesFile.exists()) {
-        zones->read(zonesFile);
-        zonesFile.close();
-        b4Fingerprint = zones->getFingerprint(); // remember original state
-    }
-
-    // setup maintenance pages using current config
-    delete tabs; // schemePage & cvPage deleted by parent-child relationship
-    schemePage = new PaceSchemePage(this);
-    cvPage = new CVPage(this);
-
-    tabs = new QTabWidget(this);
-    tabs->addTab(cvPage, tr("Critical Velocity"));
-    tabs->addTab(schemePage, tr("Default"));
-
-    layout()->addWidget(tabs);
+    // change tabs according to the selected sport
+    tabs->clear();
+    tabs->addTab(cvPages[i], tr("Critical Velocity"));
+    tabs->addTab(schemePages[i], tr("Default"));
 }
 
 qint32
 PaceZonePage::saveClicked()
 {
+    qint32 changed = 0;
     // write it
-    appsettings->setValue(zones->paceSetting(), cvPage->metric->isChecked());
-    zones->setScheme(schemePage->getScheme());
-    zones->write(context->athlete->home->config());
+    for (int i=0; i < nSports; i++) {
+        appsettings->setValue(paceZones[i]->paceSetting(), cvPages[i]->metric->isChecked());
+        paceZones[i]->setScheme(schemePages[i]->getScheme());
+        paceZones[i]->write(context->athlete->home->config());
 
-    // reread Pace zones
-    QFile pacezonesFile(context->athlete->home->config().canonicalPath() + "/" + context->athlete->pacezones_[sportCombo->currentIndex()]->fileName());
-    context->athlete->pacezones_[sportCombo->currentIndex()]->read(pacezonesFile);
+        // reread Pace zones
+        QFile pacezonesFile(context->athlete->home->config().canonicalPath() + "/" + context->athlete->pacezones_[i]->fileName());
+        context->athlete->pacezones_[i]->read(pacezonesFile);
 
-    // did we change ?
-    if (zones->getFingerprint() != b4Fingerprint) return CONFIG_ZONES;
-    else return 0;
+        // did we change ?
+        if (paceZones[i]->getFingerprint() != b4Fingerprint[i])
+            changed = CONFIG_ZONES;
+    }
+    return changed;
 }
 
-PaceSchemePage::PaceSchemePage(PaceZonePage* zonePage) : zonePage(zonePage)
+PaceSchemePage::PaceSchemePage(PaceZones* paceZones) : paceZones(paceZones)
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
@@ -4576,15 +4926,15 @@ PaceSchemePage::PaceSchemePage(PaceZonePage* zonePage) : zonePage(zonePage)
     //scheme->header()->resizeSection(2,80);
 
     // setup list
-    for (int i=0; i< zonePage->zones->getScheme().nzones_default; i++) {
+    for (int i=0; i< paceZones->getScheme().nzones_default; i++) {
 
         QTreeWidgetItem *add = new QTreeWidgetItem(scheme->invisibleRootItem());
         add->setFlags(add->flags() | Qt::ItemIsEditable);
 
         // tab name
-        add->setText(0, zonePage->zones->getScheme().zone_default_name[i]);
+        add->setText(0, paceZones->getScheme().zone_default_name[i]);
         // field name
-        add->setText(1, zonePage->zones->getScheme().zone_default_desc[i]);
+        add->setText(1, paceZones->getScheme().zone_default_desc[i]);
 
         // low
         QDoubleSpinBox *loedit = new QDoubleSpinBox(this);
@@ -4592,7 +4942,7 @@ PaceSchemePage::PaceSchemePage(PaceZonePage* zonePage) : zonePage(zonePage)
         loedit->setMaximum(1000);
         loedit->setSingleStep(1.0);
         loedit->setDecimals(0);
-        loedit->setValue(zonePage->zones->getScheme().zone_default[i]);
+        loedit->setValue(paceZones->getScheme().zone_default[i]);
         scheme->setItemWidget(add, 2, loedit);
     }
 
@@ -4704,19 +5054,24 @@ PaceSchemePage::getScheme()
     return results;
 }
 
-CVPage::CVPage(PaceZonePage* zonePage) : zonePage(zonePage)
+CVPage::CVPage(PaceZones* paceZones, PaceSchemePage *schemePage) :
+               paceZones(paceZones), schemePage(schemePage)
 {
     active = false;
 
     QGridLayout *mainLayout = new QGridLayout(this);
     mainLayout->setSpacing(10);
 
+    updateButton = new QPushButton(tr("Update"));
+    updateButton->hide();
     addButton = new QPushButton(tr("+"));
     deleteButton = new QPushButton(tr("-"));
 #ifndef Q_OS_MAC
+    updateButton->setFixedSize(60,20);
     addButton->setFixedSize(20,20);
     deleteButton->setFixedSize(20,20);
 #else
+    updateButton->setText(tr("Update"));
     addButton->setText(tr("Add"));
     deleteButton->setText(tr("Delete"));
 #endif
@@ -4747,15 +5102,15 @@ CVPage::CVPage(PaceZonePage* zonePage) : zonePage(zonePage)
 
     // CV default is 4min/km for Running a round number inline with
     // CP default and 1:36min/100 for swimming (4:1 relation)
-    cvEdit = new QTimeEdit(QTime::fromString(zonePage->zones->isSwim() ? "01:36" : "04:00", "mm:ss"));
+    cvEdit = new QTimeEdit(QTime::fromString(paceZones->isSwim() ? "01:36" : "04:00", "mm:ss"));
     cvEdit->setMinimumTime(QTime::fromString("01:00", "mm:ss"));
     cvEdit->setMaximumTime(QTime::fromString("20:00", "mm:ss"));
     cvEdit->setDisplayFormat("mm:ss");
 
     per = new QLabel(this);
     metric = new QCheckBox(tr("Metric Pace"));
-    metric->setChecked(appsettings->value(this, zonePage->zones->paceSetting(), true).toBool());
-    per->setText(zonePage->zones->paceUnits(metric->isChecked()));
+    metric->setChecked(appsettings->value(this, paceZones->paceSetting(), true).toBool());
+    per->setText(paceZones->paceUnits(metric->isChecked()));
     if (!metric->isChecked()) metricChanged(); // default is metric
 
     QHBoxLayout *actionButtons = new QHBoxLayout;
@@ -4766,6 +5121,7 @@ CVPage::CVPage(PaceZonePage* zonePage) : zonePage(zonePage)
     actionButtons->addStretch();
     actionButtons->addWidget(metric);
     actionButtons->addStretch();
+    actionButtons->addWidget(updateButton);
     actionButtons->addWidget(addButton);
     actionButtons->addWidget(deleteButton);
     actionButtons->addWidget(defaultButton);
@@ -4785,28 +5141,28 @@ CVPage::CVPage(PaceZonePage* zonePage) : zonePage(zonePage)
     //ranges->header()->resizeSection(0,180);
 
     // setup list of ranges
-    for (int i=0; i< zonePage->zones->getRangeSize(); i++) {
+    for (int i=0; i< paceZones->getRangeSize(); i++) {
 
         QTreeWidgetItem *add = new QTreeWidgetItem(ranges->invisibleRootItem());
         add->setFlags(add->flags() & ~Qt::ItemIsEditable);
 
         // Embolden ranges with manually configured zones
         QFont font;
-        font.setWeight(zonePage->zones->getZoneRange(i).zonesSetFromCV ?
+        font.setWeight(paceZones->getZoneRange(i).zonesSetFromCV ?
                                         QFont::Normal : QFont::Black);
 
         // date
-        add->setText(0, zonePage->zones->getStartDate(i).toString(tr("MMM d, yyyy")));
+        add->setText(0, paceZones->getStartDate(i).toString(tr("MMM d, yyyy")));
         add->setFont(0, font);
 
         // CV
-        double kph = zonePage->zones->getCV(i);
+        double kph = paceZones->getCV(i);
 
         add->setText(1, QString("%1 %2 %3 %4")
-                    .arg(zonePage->zones->kphToPaceString(kph, true))
-                    .arg(zonePage->zones->paceUnits(true))
-                    .arg(zonePage->zones->kphToPaceString(kph, false))
-                    .arg(zonePage->zones->paceUnits(false)));
+                    .arg(paceZones->kphToPaceString(kph, true))
+                    .arg(paceZones->paceUnits(true))
+                    .arg(paceZones->kphToPaceString(kph, false))
+                    .arg(paceZones->paceUnits(false)));
         add->setFont(1, font);
 
     }
@@ -4829,7 +5185,12 @@ CVPage::CVPage(PaceZonePage* zonePage) : zonePage(zonePage)
     mainLayout->addLayout(zoneButtons, 3,0);
     mainLayout->addWidget(zones, 4,0);
 
+    // edit connect
+    connect(dateEdit, SIGNAL(dateChanged(QDate)), this, SLOT(rangeEdited()));
+    connect(cvEdit, SIGNAL(timeChanged(QTime)), this, SLOT(rangeEdited()));
+
     // button connect
+    connect(updateButton, SIGNAL(clicked()), this, SLOT(editClicked()));
     connect(addButton, SIGNAL(clicked()), this, SLOT(addClicked()));
     connect(deleteButton, SIGNAL(clicked()), this, SLOT(deleteClicked()));
     connect(defaultButton, SIGNAL(clicked()), this, SLOT(defaultClicked()));
@@ -4844,18 +5205,18 @@ void
 CVPage::metricChanged()
 {
     // Switch between metric and imperial!
-    per->setText(zonePage->zones->paceUnits(metric->isChecked()));
-    double kphCV = zonePage->zones->kphFromTime(cvEdit, !metric->isChecked());
-    cvEdit->setTime(QTime::fromString(zonePage->zones->kphToPaceString(kphCV, metric->isChecked()), "mm:ss"));
+    per->setText(paceZones->paceUnits(metric->isChecked()));
+    double kphCV = paceZones->kphFromTime(cvEdit, !metric->isChecked());
+    cvEdit->setTime(QTime::fromString(paceZones->kphToPaceString(kphCV, metric->isChecked()), "mm:ss"));
 }
 
 void
 CVPage::addClicked()
 {
     // get current scheme
-    zonePage->zones->setScheme(zonePage->schemePage->getScheme());
+    paceZones->setScheme(schemePage->getScheme());
 
-    int cp = zonePage->zones->kphFromTime(cvEdit, metric->isChecked());
+    int cp = paceZones->kphFromTime(cvEdit, metric->isChecked());
     if( cp <= 0 ){
         QMessageBox err;
         err.setText(tr("CV must be > 0"));
@@ -4864,7 +5225,7 @@ CVPage::addClicked()
         return;
     }
 
-    int index = zonePage->zones->addZoneRange(dateEdit->date(), zonePage->zones->kphFromTime(cvEdit, metric->isChecked()));
+    int index = paceZones->addZoneRange(dateEdit->date(), paceZones->kphFromTime(cvEdit, metric->isChecked()));
 
     // new item
     QTreeWidgetItem *add = new QTreeWidgetItem;
@@ -4875,14 +5236,36 @@ CVPage::addClicked()
     add->setText(0, dateEdit->date().toString(tr("MMM d, yyyy")));
 
     // CV
-    double kph = zonePage->zones->kphFromTime(cvEdit, metric->isChecked());
+    double kph = paceZones->kphFromTime(cvEdit, metric->isChecked());
 
     add->setText(1, QString("%1 %2 %3 %4")
-            .arg(zonePage->zones->kphToPaceString(kph, true))
-            .arg(zonePage->zones->paceUnits(true))
-            .arg(zonePage->zones->kphToPaceString(kph, false))
-            .arg(zonePage->zones->paceUnits(false)));
+            .arg(paceZones->kphToPaceString(kph, true))
+            .arg(paceZones->paceUnits(true))
+            .arg(paceZones->kphToPaceString(kph, false))
+            .arg(paceZones->paceUnits(false)));
 
+}
+
+void
+CVPage::editClicked()
+{
+    // get current scheme
+    paceZones->setScheme(schemePage->getScheme());
+
+    QTreeWidgetItem *edit = ranges->selectedItems().at(0);
+    int index = ranges->indexOfTopLevelItem(edit);
+
+    // date
+    edit->setText(0, dateEdit->date().toString(tr("MMM d, yyyy")));
+
+    // CV
+    double kph = paceZones->kphFromTime(cvEdit, metric->isChecked());
+    paceZones->setCV(index, kph);
+    edit->setText(1, QString("%1 %2 %3 %4")
+            .arg(paceZones->kphToPaceString(kph, true))
+            .arg(paceZones->paceUnits(true))
+            .arg(paceZones->kphToPaceString(kph, false))
+            .arg(paceZones->paceUnits(false)));
 }
 
 void
@@ -4891,7 +5274,7 @@ CVPage::deleteClicked()
     if (ranges->currentItem()) {
         int index = ranges->invisibleRootItem()->indexOfChild(ranges->currentItem());
         delete ranges->invisibleRootItem()->takeChild(index);
-        zonePage->zones->deleteRange(index);
+        paceZones->deleteRange(index);
     }
 }
 
@@ -4901,7 +5284,7 @@ CVPage::defaultClicked()
     if (ranges->currentItem()) {
 
         int index = ranges->invisibleRootItem()->indexOfChild(ranges->currentItem());
-        PaceZoneRange current = zonePage->zones->getZoneRange(index);
+        PaceZoneRange current = paceZones->getZoneRange(index);
 
         // unbold
         QFont font;
@@ -4912,14 +5295,32 @@ CVPage::defaultClicked()
 
 
         // set the range to use defaults on the scheme page
-        zonePage->zones->setScheme(zonePage->schemePage->getScheme());
-        zonePage->zones->setZonesFromCV(index);
+        paceZones->setScheme(schemePage->getScheme());
+        paceZones->setZonesFromCV(index);
 
         // hide the default button since we are now using defaults
         defaultButton->hide();
 
         // update the zones display
         rangeSelectionChanged();
+    }
+}
+
+void
+CVPage::rangeEdited()
+{
+    if (ranges->currentItem()) {
+        int index = ranges->invisibleRootItem()->indexOfChild(ranges->currentItem());
+
+        QDate date = dateEdit->date();
+        QDate odate = paceZones->getStartDate(index);
+        QTime cv = cvEdit->time();
+        QTime ocv = QTime::fromString(paceZones->kphToPaceString(paceZones->getCV(index), metric->isChecked()), "mm:ss");
+
+        if (date != odate || cv != ocv)
+            updateButton->show();
+        else
+            updateButton->hide();
     }
 }
 
@@ -4938,14 +5339,16 @@ CVPage::rangeSelectionChanged()
     if (ranges->currentItem()) {
 
         int index = ranges->invisibleRootItem()->indexOfChild(ranges->currentItem());
-        PaceZoneRange current = zonePage->zones->getZoneRange(index);
+        PaceZoneRange current = paceZones->getZoneRange(index);
+        dateEdit->setDate(paceZones->getStartDate(index));
+        cvEdit->setTime(QTime::fromString(paceZones->kphToPaceString(paceZones->getCV(index), metric->isChecked()), "mm:ss"));
 
         if (current.zonesSetFromCV) {
 
             // reapply the scheme in case it has been changed
-            zonePage->zones->setScheme(zonePage->schemePage->getScheme());
-            zonePage->zones->setZonesFromCV(index);
-            current = zonePage->zones->getZoneRange(index);
+            paceZones->setScheme(schemePage->getScheme());
+            paceZones->setZonesFromCV(index);
+            current = paceZones->getZoneRange(index);
 
             defaultButton->hide();
 
@@ -4962,7 +5365,7 @@ CVPage::rangeSelectionChanged()
             add->setText(1, current.zones[i].desc);
 
             // low
-            QTimeEdit *loedit = new QTimeEdit(QTime::fromString(zonePage->zones->kphToPaceString(current.zones[i].lo, metric->isChecked()), "mm:ss"), this);
+            QTimeEdit *loedit = new QTimeEdit(QTime::fromString(paceZones->kphToPaceString(current.zones[i].lo, metric->isChecked()), "mm:ss"), this);
             loedit->setMinimumTime(QTime::fromString("00:00", "mm:ss"));
             loedit->setMaximumTime(QTime::fromString("20:00", "mm:ss"));
             loedit->setDisplayFormat("mm:ss");
@@ -5051,7 +5454,7 @@ CVPage::zonesChanged()
         if (ranges->currentItem()) {
 
             int index = ranges->invisibleRootItem()->indexOfChild(ranges->currentItem());
-            PaceZoneRange current = zonePage->zones->getZoneRange(index);
+            PaceZoneRange current = paceZones->getZoneRange(index);
 
             // embolden that range on the list to show it has been edited
             QFont font;
@@ -5071,7 +5474,7 @@ CVPage::zonesChanged()
             for (int i=0; i< zones->invisibleRootItem()->childCount(); i++) {
                 QTreeWidgetItem *item = zones->invisibleRootItem()->child(i);
                 QTimeEdit *loTimeEdit = (QTimeEdit*)zones->itemWidget(item, 2);
-                double kph = loTimeEdit->time() == QTime(0,0,0) ? 0.0 : zonePage->zones->kphFromTime(loTimeEdit, metric->isChecked());
+                double kph = loTimeEdit->time() == QTime(0,0,0) ? 0.0 : paceZones->kphFromTime(loTimeEdit, metric->isChecked());
                 zoneinfos << PaceZoneInfo(item->text(0),
                                       item->text(1),
                                       kph,
@@ -5091,7 +5494,7 @@ CVPage::zonesChanged()
             current.zones = zoneinfos;
 
             // now replace the current range struct
-            zonePage->zones->setZoneRange(index, current);
+            paceZones->setZoneRange(index, current);
         }
     }
 }
@@ -5503,17 +5906,18 @@ AutoImportPage::saveClicked()
 
     // re-read
     context->athlete->autoImportConfig->readConfig();
-
     return 0;
 }
 
 void
 AutoImportPage::addRuleTypes(QComboBox *p) {
 
+    RideAutoImportRule* config = new RideAutoImportRule();
+    QList<QString> descriptions = config->getRuleDescriptions();
 
-    p->addItem(tr("No autoimport"));
-    p->addItem(tr("Autoimport with dialog"));
-
+    foreach(QString description, descriptions) {
+           p->addItem(description);
+    }
 }
 
 void

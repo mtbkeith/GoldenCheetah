@@ -46,6 +46,7 @@ public:
                       LeftPedalSmoothness, RightPedalSmoothness};
 
     typedef enum dataseries DataSeries;
+
     double value(DataSeries) const;
     static QString seriesName(DataSeries);
     static const QList<DataSeries> &listDataSeries();
@@ -56,6 +57,7 @@ public:
     void setName(char *name);
     void setWatts(double watts);
     void setAltWatts(double watts);
+    void setAltDistance(double distance);
     void setHr(double hr);
     void setTime(long time);
     void setSpeed(double speed);
@@ -90,6 +92,7 @@ public:
 
     double getWatts() const;
     double getAltWatts() const;
+    double getAltDistance() const;
     double getHr() const;
     long getTime() const;
     double getSpeed() const;
@@ -110,13 +113,26 @@ public:
     double getRPS() const;
 
 
+    void setTrainerStatusAvailable(bool status);
+    bool getTrainerStatusAvailable() const;
+    void setTrainerReady(bool status);
+    void setTrainerRunning(bool status);
+    void setTrainerCalibRequired(bool status);
+    void setTrainerConfigRequired(bool status);
+    void setTrainerBrakeFault(bool status);
+    bool getTrainerReady() const;
+    bool getTrainerRunning() const;
+    bool getTrainerCalibRequired() const;
+    bool getTrainerConfigRequired() const;
+    bool getTrainerBrakeFault() const;
+
     uint8_t spinScan[24];
 
 private:
     char name[64];
 
     // realtime telemetry
-    double hr, watts, altWatts, speed, wheelRpm, load, slope, lrbalance;
+    double hr, watts, altWatts, altDistance, speed, wheelRpm, load, slope, lrbalance;
     double cadence;      // in rpm
     double smo2, thb;
     double lte, rte, lps, rps; // torque efficiency and pedal smoothness
@@ -130,6 +146,13 @@ private:
     long msecs;
     long lapMsecs;
     long lapMsecsRemaining;
+
+    bool trainerStatusAvailable;
+    bool trainerReady;
+    bool trainerRunning;
+    bool trainerCalibRequired;
+    bool trainerConfigRequired;
+    bool trainerBrakeFault;
 };
 
 #endif

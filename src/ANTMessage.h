@@ -75,6 +75,14 @@ class ANTMessage {
         static ANTMessage tacxVortexSetCalibrationValue(const uint8_t channel, const uint16_t vortexId, const uint8_t calibrationValue);
         static ANTMessage tacxVortexSetPower(const uint8_t channel, const uint16_t vortexId, const uint16_t power);
 
+        // fitness equipment control messages
+        static ANTMessage fecSetResistance(const uint8_t channel, const uint8_t resistance);
+        static ANTMessage fecSetTargetPower(const uint8_t channel, const uint16_t targetPower);
+        static ANTMessage fecSetWindResistance(const uint8_t channel, const double windResistance, const uint8_t windSpeed, const uint8_t draftingFactor);
+        static ANTMessage fecSetTrackResistance(const uint8_t channel, const double grade, const double rollingResistance);
+        static ANTMessage fecRequestCapabilities(const uint8_t channel);
+        static ANTMessage fecRequestCommandStatus(const uint8_t channel, const uint8_t page);
+
         // kickr command channel messages all sent as broadcast data
         // over the command channel as type 0x4E
         static ANTMessage kickrErgMode(const unsigned char channel, ushort usDeviceId, ushort usWatts, bool bSimSpeed);
@@ -123,6 +131,9 @@ class ANTMessage {
         uint16_t slope, period, torque; // power
         uint16_t sumPower, instantPower; // power
         uint16_t wheelRevolutions, crankRevolutions; // speed and power and cadence
+        uint16_t wheelAccumulatedPeriod;
+        uint16_t accumulatedTorque;
+        uint8_t  elapsedTime;
         uint8_t instantCadence; // cadence
         uint8_t autoZeroStatus, autoZeroEnable;
         bool utcTimeRequired; // moxy
@@ -135,6 +146,29 @@ class ANTMessage {
         uint8_t vortexCalibration, vortexCalibrationState, vortexPage;
         uint8_t vortexUsingVirtualSpeed;
 
+        // fitness equipment data fields
+        uint16_t fecSpeed, fecInstantPower, fecAccumulatedPower;
+        uint8_t  fecRawDistance, fecCadence, fecPage0x19EventCount, fecPage0x20EventCount;
+        bool     fecPowerCalibRequired, fecResisCalibRequired, fecUserConfigRequired;
+        uint8_t  fecPowerOverLimits;
+        uint8_t  fecState;
+        uint8_t  fecHRSource;
+        bool     fecDistanceCapability;
+        bool     fecSpeedIsVirtual;
+
+        uint8_t  fecEqtType, fecCapabilities;
+        bool     fecResistModeCapability, fecPowerModeCapability, fecSimulModeCapability;
+        uint16_t fecMaxResistance;
+
+        // for details and equations see ANT+ Fitness Equipment Device Profile, Rev 4.1 p 66... "6.8  Control Data Pages"
+        uint8_t  fecLastCommandReceived, fecLastCommandSeq, fecLastCommandStatus;
+        double   fecSetResistanceAck;        //    0  /   +100 %
+        uint16_t fecSetTargetPowerAck;       //    0  /  +4000 W
+        double   fecSetGradeAck;             // -200  /   +200 %
+        double   fecSetRollResistanceAck;    //    0  / 0.0127
+        double   fecSetWindResistanceAck;    //    0  /   1.86 kg/m
+        int8_t   fecSetWindSpeedAck;         // -127  /   +127 km/h
+        uint8_t  fecSetDraftingFactorAck;    //    0  /    100 %
 
     private:
         void init();

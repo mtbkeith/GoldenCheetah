@@ -105,6 +105,7 @@ RideItem::setFrom(RideItem&here) // used when loading cache/rideDB.json
     isRun = here.isRun;
     isSwim = here.isSwim;
 	weight = here.weight;
+	overrides_ = here.overrides_;
     samples = here.samples;
 }
 
@@ -147,6 +148,13 @@ RideFile *RideItem::ride(bool open)
     QFile file(path + "/" + fileName);
     ride_ = RideFileFactory::instance().openRideFile(context, file, errors_);
     if (ride_ == NULL) return NULL; // failed to read ride
+
+    // update the overrides
+    overrides_.clear();
+    QMap<QString,QMap<QString, QString> >::const_iterator k;
+    for (k=ride_->metricOverrides.constBegin(); k != ride_->metricOverrides.constEnd(); k++) {
+        overrides_ << k.key();
+    }
 
     // link any USER intervals to the ride, bit fiddly but only used
     // when updating the physical model via the logical
@@ -298,6 +306,9 @@ RideItem::newInterval(QString name, double start, double stop, double startKM, d
     // refresh metrics
     add->refresh();
 
+    // still the item is dirty and needs to be saved
+    setDirty(true);
+
     // and return
     return add;
 }
@@ -307,6 +318,9 @@ RideItem::notifyRideDataChanged()
 {
     // refresh the metrics
     isstale=true;
+
+    // wipe user data
+    userCache.clear();
 
     // force a recompute of derived data series
     if (ride_) {
@@ -390,11 +404,18 @@ RideItem::isOpen()
 void
 RideItem::close()
 {
+    // ride data
     if (ride_) {
         // break link to ride file
         foreach(IntervalItem *x, intervals()) x->rideInterval = NULL;
         delete ride_;
         ride_ = NULL;
+    }
+
+    // and the cpx data
+    if (fileCache_) {
+    	delete fileCache_;
+	fileCache_=NULL;
     }
 }
 
@@ -442,6 +463,7 @@ RideItem::checkStale()
 
             // get the new zone configuration fingerprint that applies for the ride date
             unsigned long rfingerprint = static_cast<unsigned long>(context->athlete->zones()->getFingerprint(dateTime.date()))
+                        + (appsettings->cvalue(context->athlete->cyclist, GC_USE_CP_FOR_FTP, 0).toInt() ? 1 : 0)
                         + static_cast<unsigned long>(context->athlete->paceZones(false)->getFingerprint(dateTime.date()))
                         + static_cast<unsigned long>(context->athlete->paceZones(true)->getFingerprint(dateTime.date()))
                         + static_cast<unsigned long>(context->athlete->hrZones()->getFingerprint(dateTime.date()))
@@ -509,8 +531,15 @@ RideItem::refresh()
 
     if (f) {
 
-        // get the metadata & metric overrides
+        // get the metadata
         metadata_ = f->tags();
+
+        // overrides
+        overrides_.clear();
+        QMap<QString,QMap<QString, QString> >::const_iterator k;
+        for (k=ride_->metricOverrides.constBegin(); k != ride_->metricOverrides.constEnd(); k++) {
+            overrides_ << k.key();
+        }
 
         // get weight that applies to the date
         getWeight();
@@ -549,6 +578,7 @@ RideItem::refresh()
 
         // update fingerprints etc, crc done above
         fingerprint = static_cast<unsigned long>(context->athlete->zones()->getFingerprint(dateTime.date()))
+                    + (appsettings->cvalue(context->athlete->cyclist, GC_USE_CP_FOR_FTP, 0).toInt() ? 1 : 0)
                     + static_cast<unsigned long>(context->athlete->paceZones(false)->getFingerprint(dateTime.date()))
                     + static_cast<unsigned long>(context->athlete->paceZones(true)->getFingerprint(dateTime.date()))
                     + static_cast<unsigned long>(context->athlete->hrZones()->getFingerprint(dateTime.date()))
@@ -570,6 +600,7 @@ RideItem::refresh()
         } else {
 
             // if it is open then recompute
+            userCache.clear();
             ride_->wstale = true;
             ride_->recalculateDerivedSeries(true);
         }
@@ -1054,7 +1085,7 @@ RideItem::updateIntervals()
 
 
             // add the best one we found here
-            if (found) {
+            if (found && tte.zone >= 0) {
 
                 // if we overlap with the last one and
                 // we are better then replace otherwise skip

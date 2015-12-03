@@ -45,7 +45,7 @@
 // network key
 const unsigned char ANT::key[8] = { 0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45 };
 
-// !!! THE INITIALISATION OF ant_sensor_types BELOW MUST MATCH THE 
+// !!! THE INITIALISATION OF ant_sensor_types BELOW MUST MATCH THE
 // !!! ENUM FOR CHANNELTYPE IN ANTChannel.h (SORRY, ITS HORRIBLE)
 
 // supported sensor types
@@ -67,6 +67,8 @@ const ant_sensor_type_t ANT::ant_sensor_types[] = {
                 ANT_SPORT_FREQUENCY, ANT_SPORT_NETWORK_NUMBER, "Remote Control", 'r', ":images/IconCadence.png" },
   { true, ANTChannel::CHANNEL_TYPE_TACX_VORTEX, ANT_SPORT_TACX_VORTEX_PERIOD, ANT_SPORT_TACX_VORTEX_TYPE,
                 ANT_TACX_VORTEX_FREQUENCY, DEFAULT_NETWORK_NUMBER, "Tacx Vortex Smart", 'v', ":images/IconPower.png" },
+  { true, ANTChannel::CHANNEL_TYPE_FITNESS_EQUIPMENT, ANT_SPORT_FITNESS_EQUIPMENT_PERIOD, ANT_SPORT_FITNESS_EQUIPMENT_TYPE,
+                ANT_FITNESS_EQUIPMENT_FREQUENCY, ANT_SPORT_NETWORK_NUMBER, "Fitness Equipment Control (FE-C)", 'f', ":images/IconPower.png" },
   { false, ANTChannel::CHANNEL_TYPE_GUARD, 0, 0, 0, 0, "", '\0', "" }
 };
 
@@ -80,12 +82,15 @@ const ant_sensor_type_t ANT::ant_sensor_types[] = {
 // thread and is part of the GC architecture NOT related to the
 // hardware controller.
 //
-ANT::ANT(QObject *parent, DeviceConfiguration *devConf) : QThread(parent), devConf(devConf)
+ANT::ANT(QObject *parent, DeviceConfiguration *devConf, QString cyclist) : QThread(parent), devConf(devConf)
 {
     qRegisterMetaType<ANTMessage>("ANTMessage");
     qRegisterMetaType<uint16_t>("uint16_t");
     qRegisterMetaType<uint8_t>("uint8_t");
     qRegisterMetaType<struct timeval>("struct timeval");
+
+    //remember the cylist for wheelsize Settings
+    trainCyclist = cyclist;
 
     // device status and settings
     Status=0;
@@ -101,6 +106,8 @@ ANT::ANT(QObject *parent, DeviceConfiguration *devConf) : QThread(parent), devCo
     // vortex
     vortexID = vortexChannel = -1;
 
+    fecChannel = -1;
+
     // current and desired modes/load/gradients
     // set so first time through current != desired
     currentMode = 0;
@@ -108,6 +115,7 @@ ANT::ANT(QObject *parent, DeviceConfiguration *devConf) : QThread(parent), devCo
     currentLoad = 0;
     load = 100; // always set to something
     currentGradient = 0;
+    currentRollingResistance = rollingResistance = 0.004; // typical for road
     gradient = 0.1;
 
     // state machine
@@ -146,6 +154,7 @@ ANT::ANT(QObject *parent, DeviceConfiguration *devConf) : QThread(parent), devCo
     usb2 = new LibUsb(TYPE_ANT);
 #endif
     channels = 0;
+
 }
 
 ANT::~ANT()
@@ -165,6 +174,16 @@ void ANT::setBaud(int x)
     baud = x;
 }
 
+bool ANT::modeERGO(void) const
+{
+    return mode==RT_MODE_ERGO; 
+}
+
+bool ANT::modeSLOPE(void) const
+{
+    return mode==RT_MODE_SLOPE;
+}
+
 double ANT::channelValue2(int channel)
 {
     return antChannel[channel]->channelValue2();
@@ -180,7 +199,7 @@ void ANT::setWheelRpm(float x) {
     // devConf will be NULL if we are are running the add device wizard
     // we can default to the global setting
     if (devConf) telemetry.setSpeed(x * devConf->wheelSize / 1000 * 60 / 1000);
-    else telemetry.setSpeed(x * appsettings->value(NULL, GC_WHEELSIZE, 2100).toInt() / 1000 * 60 / 1000);
+    else telemetry.setSpeed(x * appsettings->cvalue(trainCyclist, GC_WHEELSIZE, 2100).toInt() / 1000 * 60 / 1000);
 }
 
 void ANT::setHb(double smo2, double thb)
@@ -262,9 +281,37 @@ ANT::setLoad(double load)
     // if we have a vortex trainer connected, relay the change in target power to the brake
     if (vortexChannel != -1)
     {
-        qDebug() << "setting vortex target power to " << load;
         sendMessage(ANTMessage::tacxVortexSetPower(vortexChannel, vortexID, (int)load));
     }
+
+    // if we have a FE-C trainer connected, relay the change in target power to the brake
+    if ((fecChannel != -1) && (antChannel[fecChannel]->capabilities() & FITNESS_EQUIPMENT_POWER_MODE_CAPABILITY))
+    {
+        sendMessage(ANTMessage::fecSetTargetPower(fecChannel, (int)load));
+    }
+}
+
+void ANT::refreshFecLoad()
+{
+    if (fecChannel == -1)
+        return;
+
+    if (antChannel[fecChannel]->capabilities() & FITNESS_EQUIPMENT_POWER_MODE_CAPABILITY)
+        sendMessage(ANTMessage::fecSetTargetPower(fecChannel, (int)load));
+}
+
+void ANT::refreshFecGradient()
+{
+    if (fecChannel == -1)
+        return;
+
+    if (antChannel[fecChannel]->capabilities() & FITNESS_EQUIPMENT_SIMUL_MODE_CAPABILITY)
+        sendMessage(ANTMessage::fecSetTrackResistance(fecChannel, gradient, currentRollingResistance));
+}
+
+void ANT::requestFecCapabilities()
+{
+    sendMessage(ANTMessage::fecRequestCapabilities(fecChannel));
 }
 
 void ANT::refreshVortexLoad()
@@ -278,11 +325,26 @@ void ANT::refreshVortexLoad()
 void
 ANT::setGradient(double gradient)
 {
+//    if (fecChannel != -1)
+//        qDebug() << "We have fec trainer connected, simulation capabilities=" << antChannel[fecChannel]->capabilities();
+
     if (this->gradient == gradient) return;
 
     // gradient changed
     this->gradient = gradient;
+
+    // if we have a FE-C trainer connected, relay the change in simulated slope of trainer electronic
+    if ((fecChannel != -1) && (antChannel[fecChannel]->capabilities() & FITNESS_EQUIPMENT_SIMUL_MODE_CAPABILITY))
+    {
+        //set fitness equipment target gradient
+        sendMessage(ANTMessage::fecSetTrackResistance(fecChannel, gradient, currentRollingResistance));
+        currentGradient = gradient;
+        // TODO : obtain acknowledge / confirm value using fecRequestCommandStatus
+        // TODO : if trainer does not have simulation capabilities, use power mode & let GC calculate
+        //        the desired load based on gradient, wind, rolling resistance...
+    }
 }
+
 void
 ANT::setMode(int mode)
 {
@@ -307,7 +369,7 @@ ANT::kickrCommand()
             }
            break;
 
-        case RT_MODE_SPIN : // need to setup for "sim" mode, so sending lots of 
+        case RT_MODE_SPIN : // need to setup for "sim" mode, so sending lots of
                             // config to overcome the default values
             {
             }
@@ -324,7 +386,7 @@ ANT::kickrCommand()
     }
 
     // load has changed ?
-    if (mode == RT_MODE_ERGO && load != currentLoad) { 
+    if (mode == RT_MODE_ERGO && load != currentLoad) {
         currentLoad = load;
     }
 
@@ -339,7 +401,7 @@ ANT::kickrCommand()
     switch (mode) {
 
     default:
-    case RT_MODE_ERGO: 
+    case RT_MODE_ERGO:
         toSend = ANTMessage::kickrErgMode(kickrChannel, kickrDeviceID, load, false);
         break;
 
@@ -365,10 +427,20 @@ ANT::setup()
     // fixme: better synchronisation?
     msleep(500);
 
-    sendMessage(ANTMessage::resetSystem());
+    uint8_t attempts = 0;
+    do
+    {
+        ANT_Reset_Acknowledge = false;
+        sendMessage(ANTMessage::resetSystem());
 
-    // specs say wait 500ms after reset before sending any more host commands
-    msleep(500);
+        // specs say wait 500ms after reset before sending any more host commands
+        msleep(500);
+
+        if (!ANT_Reset_Acknowledge)
+            qDebug() << "ANT device reset was not acknowledged !...try again";
+//        else
+//            qDebug() << "ANT device reset successful !";
+    } while (!ANT_Reset_Acknowledge && attempts++<3);
 
     sendMessage(ANTMessage::setNetworkKey(1, key));
 
@@ -398,6 +470,7 @@ ANT::setup()
             if (channels > 4) {
                 addDevice(0, ANTChannel::CHANNEL_TYPE_SandC, 4);
                 addDevice(0, ANTChannel::CHANNEL_TYPE_MOXY, 5);
+                addDevice(0, ANTChannel::CHANNEL_TYPE_FITNESS_EQUIPMENT, 6);
             }
         }
     }
@@ -539,11 +612,13 @@ ANT::addDevice(int device_number, int device_type, int channel_number)
             antChannel[i]->open(device_number, device_type);
 
             // this is an alternate channel for power
-            if (device_type == ANTChannel::CHANNEL_TYPE_POWER) {
+            if ((device_type == ANTChannel::CHANNEL_TYPE_POWER) ||
+                (device_type == ANTChannel::CHANNEL_TYPE_FITNESS_EQUIPMENT)) {
 
                 // if we are not the first power channel then set to update
                 // the alternate power channel
-                if (powerchannels) antChannel[i]->setAlt(true);
+                if (powerchannels)
+                    antChannel[i]->setAlt(true);
 
                 // increment the number of power channels
                 powerchannels++;
@@ -628,7 +703,6 @@ Q_UNUSED(name);
 #endif
 
 #ifdef Q_OS_LINUX
-
     // All we can do for USB1 sticks is see if the cp210x driver module
     // is loaded for this device, and if it is, we will use the device
     // they are getting rarer and rarer these days (no longer sold by
@@ -639,7 +713,8 @@ Q_UNUSED(name);
     int maj = major(s.st_rdev);
     int min = minor(s.st_rdev);
     QString sysFile = QString("/sys/dev/char/%1:%2/device/driver/module/drivers/usb:cp210x").arg(maj).arg(min);
-    if (QFileInfo(sysFile).exists()) return true;
+    QString sysFileSerial = QString("/sys/dev/char/%1:%2/device/driver/module/drivers/usb-serial:cp210x").arg(maj).arg(min);
+    if (QFileInfo(sysFile).exists() || QFileInfo(sysFileSerial).exists()) return true;
 #endif
 
 #ifdef Q_OS_MAC
@@ -669,6 +744,13 @@ ANT::channelInfo(int channel, int device_number, int device_id)
 
         // need to find a way to communicate back on error
         qDebug()<<"kickr found."<<kickrDeviceID<<"on channel"<<kickrChannel;
+    }
+
+    // ANT FE-C DEVICE DETECTED - ACT ACCORDINGLY !
+    // if we just got an ANT FE-C trainer, request the capabilities
+    if (!configuring && antChannel[channel]->is_fec) {
+        antChannel[channel]->capabilities();
+        qDebug()<<"ANT FE-C device found."<<device_number<<"on channel"<<channel;
     }
 
     //qDebug()<<"found device number"<<device_number<<"type"<<device_id<<"on channel"<<channel
@@ -813,6 +895,9 @@ ANT::processMessage(void) {
     emit receivedAntMessage(m, timestamp);
 
     switch (rxMessage[ANT_OFFSET_ID]) {
+        case ANT_NOTIF_STARTUP:
+            ANT_Reset_Acknowledge = true;
+            break;
         case ANT_ACK_DATA:
         case ANT_BROADCAST_DATA:
         case ANT_CHANNEL_STATUS:
@@ -1124,4 +1209,9 @@ void ANT::setVortexData(int channel, int id)
 {
     vortexChannel = channel;
     vortexID = id;
+}
+
+void ANT::setFecChannel(int channel)
+{
+    fecChannel = channel;
 }

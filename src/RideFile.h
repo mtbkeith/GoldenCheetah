@@ -169,7 +169,7 @@ class RideFile : public QObject // QObject to emit signals
         friend class PwxFileReader;
         friend class JsonFileReader;
         friend class ManualRideDialog;
-
+        friend class PolarFileReader;
         // split and mergers
         friend class MergeActivityWizard;
         friend class SplitActivityWizard;
@@ -203,6 +203,10 @@ class RideFile : public QObject // QObject to emit signals
         enum specialValues { NoTemp = -255 };
         typedef enum seriestype SeriesType;
         static SeriesType lastSeriesType() { return none; }
+
+        static QStringList symbols(); // get a list of symbols for each series to use in a formula
+        static SeriesType seriesForSymbol(QString symbol); // get series for symbol
+        static QString symbolForSeries(SeriesType);
 
         static QString seriesName(SeriesType);
         static QString unitName(SeriesType, Context *context);
@@ -301,6 +305,7 @@ class RideFile : public QObject // QObject to emit signals
         const QMap<QString,QString>& tags() const { return tags_; }
         QString getTag(QString name, QString fallback) const { return tags_.value(name, fallback); }
         void setTag(QString name, QString value) { tags_.insert(name, value); }
+        bool removeTag(QString name) { return tags_.remove(name); }
 
         Context *context;
         double getWeight(); // legacy - moved to Athlete::getWeight

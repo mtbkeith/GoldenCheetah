@@ -46,6 +46,9 @@
 #include <qwt_text.h>
 #include <qwt_legend.h>
 #include <qwt_series_data.h>
+
+#include "qwt_plot_gapped_curve.h"
+
 #include <QMultiMap>
 
 #include <string.h> // for memcpy
@@ -275,11 +278,14 @@ class TimeScaleDraw: public ScaleScaleDraw
 static inline double
 max(double a, double b) { if (a > b) return a; else return b; }
 
-AllPlotObject::AllPlotObject(AllPlot *plot) : plot(plot)
+AllPlotObject::AllPlotObject(AllPlot *plot, QList<UserData*> user) : plot(plot)
 {
     maxKM = maxSECS = 0;
 
-    wattsCurve = new QwtPlotCurve(tr("Power"));
+    // user data
+    setUserData(user);
+
+    wattsCurve = (QwtPlotCurve*)new QwtPlotGappedCurve(tr("Power"), 3); // > 3s is a power gap
     wattsCurve->setPaintAttribute(QwtPlotCurve::FilterPoints, true);
     wattsCurve->setYAxis(QwtAxisId(QwtAxis::yLeft, 0));
 
@@ -479,6 +485,92 @@ AllPlotObject::AllPlotObject(AllPlot *plot) : plot(plot)
 
 }
 
+void 
+AllPlotObject::setUserData(QList<UserData*>user)
+{
+    // wipe away current
+    // user objects
+    for(int k=0; k<U.count(); k++) {
+
+        // wipe any curves
+        U[k].curve->detach(); delete U[k].curve;
+    }
+    U.clear();
+
+    // setup the U array
+    int k=0;
+    bool antialias = appsettings->value(this, GC_ANTIALIAS, true).toBool();
+
+    foreach(UserData *userdata, user) {
+
+        UserObject add;
+
+        // create curve
+        add.name = userdata->name;
+        add.units = userdata->units;
+        add.curve = new QwtPlotGappedCurve(userdata->name, 3);
+        add.curve->setPaintAttribute(QwtPlotCurve::FilterPoints, true);
+        add.curve->setYAxis(QwtAxisId(QwtAxis::yRight, 4 + k)); // for now.
+        add.curve->attach(plot);
+
+        // default the color
+        add.color = userdata->color;
+        add.color.setAlpha(200);
+
+        QPen pen;
+        pen.setWidth(1.0);
+        pen.setColor(userdata->color);
+        add.curve->setPen(pen);
+
+        if (plot->fill) {
+            QColor p = add.color;
+            p.setAlpha(64);
+            add.curve->setBrush(QBrush(p));
+        } else {
+            add.curve->setBrush(Qt::NoBrush);
+        }
+
+        // antialias
+        if (antialias) add.curve->setRenderHint(QwtPlotItem::RenderAntialiased);
+
+        // register
+        U << add;
+
+        k++; // keep count
+    }
+
+    // reset the y axis to accomodate us
+    plot->setAxesCount(QwtAxis::yRight, 4 + U.count());
+    QPalette pal = plot->palette();
+    for(int k=0; k < U.count(); k++) {
+
+        // set axis
+        plot->setAxisMaxMinor(QwtAxisId(QwtAxis::yRight, 4 + k), 0);
+        plot->axisWidget(QwtAxisId(QwtAxis::yRight, 4 + k))->installEventFilter(plot);
+
+        // scale and color for axis
+        ScaleScaleDraw *sd = new ScaleScaleDraw;
+        sd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        sd->enableComponent(ScaleScaleDraw::Ticks, false);
+        sd->enableComponent(ScaleScaleDraw::Backbone, false);
+        plot->setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 4 + k), sd);
+        pal.setColor(QPalette::WindowText, U[k].color);
+        pal.setColor(QPalette::Text, U[k].color);
+        plot->axisWidget(QwtAxisId(QwtAxis::yRight, 4 + k))->setPalette(pal);
+
+        // title
+        plot->setAxisTitle(QwtAxisId(QwtAxis::yRight, 4 + k), U[k].units);
+
+        // and hide if plot is scoped for only one series, for now
+        if (plot->scope != RideFile::none) {
+            plot->axisWidget(QwtAxisId(QwtAxis::yRight, 4 + k))->setVisible(false);
+            U[k].curve->setVisible(false);
+            U[k].curve->detach();
+        }
+    }
+    plot->curveColors->saveState();
+}
+
 // we tend to only do this for the compare objects
 void
 AllPlotObject::setColor(QColor color)
@@ -575,6 +667,14 @@ AllPlotObject::~AllPlotObject()
     rppCurve->detach(); delete rppCurve;
     lpppCurve->detach(); delete lpppCurve;
     rpppCurve->detach(); delete rpppCurve;
+
+    // user objects
+    foreach(UserObject u, U) {
+
+        // wipe any curves
+        u.curve->detach(); delete u.curve;
+    }
+    U.clear();
 }
 
 void
@@ -582,6 +682,7 @@ AllPlotObject::setVisible(bool show)
 {
     if (show == false) {
 
+        foreach(UserObject u, U) u.curve->detach();
         grid->detach(); 
         mCurve->detach();
         wCurve->detach();
@@ -640,6 +741,7 @@ AllPlotObject::setVisible(bool show)
     } else {
 
 
+        foreach(UserObject u, U) u.curve->attach(plot);
         altCurve->attach(plot); // always do first as it hasa brush
         grid->attach(plot);
         mCurve->attach(plot);
@@ -807,6 +909,7 @@ AllPlot::AllPlot(QWidget *parent, AllPlotWindow *window, Context *context, RideF
         shade_zones = false;
 
     smooth = 1;
+    standard = NULL; // until its created
     wantxaxis = wantaxis = true;
     setAutoDelete(false); // no - we are managing it via the AllPlotObjects now
     referencePlot = NULL;
@@ -827,12 +930,12 @@ AllPlot::AllPlot(QWidget *parent, AllPlotWindow *window, Context *context, RideF
     // set the axes that we use.. yLeft 3 is ALWAYS the highlighter axes and never visible
     // yLeft 4 is balance stuff
     setAxesCount(QwtAxis::yLeft, 4);
-    setAxesCount(QwtAxis::yRight, 4);
+    setAxesCount(QwtAxis::yRight, 4 + (window ? window->userDataSeries.count() : 0));
     setAxesCount(QwtAxis::xBottom, 1);
 
     setXTitle();
 
-    standard = new AllPlotObject(this);
+    standard = new AllPlotObject(this, window ? window->userDataSeries : QList<UserData*>());
 
     standard->intervalHighlighterCurve->setSamples(new IntervalPlotData(this, context, window));
 
@@ -871,6 +974,11 @@ AllPlot::AllPlot(QWidget *parent, AllPlotWindow *window, Context *context, RideF
     axisWidget(QwtAxisId(QwtAxis::yRight, 2))->installEventFilter(this);
     axisWidget(QwtAxisId(QwtAxis::yRight, 3))->installEventFilter(this);
 
+    for(int k=0; k < standard->U.count(); k++) {
+        setAxisMaxMinor(QwtAxisId(QwtAxis::yRight, 4 + k), 0);
+        axisWidget(QwtAxisId(QwtAxis::yRight, 4 + k))->installEventFilter(this);
+    }
+
     configChanged(CONFIG_APPEARANCE); // set colors
 }
 
@@ -889,490 +997,504 @@ AllPlot::~AllPlot()
 }
 
 void
-AllPlot::configChanged(qint32)
+AllPlot::configChanged(qint32 what)
 {
-    double width = appsettings->value(this, GC_LINEWIDTH, 0.5).toDouble();
-    labelFont.fromString(appsettings->value(this, GC_FONT_CHARTLABELS, QFont().toString()).toString());
-    labelFont.setPointSize(appsettings->value(NULL, GC_FONT_CHARTLABELS_SIZE, 8).toInt());
 
-    if (appsettings->value(this, GC_ANTIALIAS, true).toBool() == true) {
-        standard->wattsCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->atissCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->antissCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->npCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rvCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rcadCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rgctCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->gearCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->smo2Curve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->thbCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->o2hbCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->hhbCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->xpCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->apCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->wCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->mCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->hrCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->tcoreCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->speedCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->accelCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->wattsDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->cadDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->nmDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->hrDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->cadCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->altCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->slopeCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->altSlopeCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->tempCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->windCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->torqueCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->lteCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rteCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->lpsCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rpsCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->lpcoCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rpcoCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->lppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->lpppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->rpppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->balanceLCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->balanceRCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->intervalHighlighterCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
-        standard->intervalHoverCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+    if (what & CONFIG_APPEARANCE) {
+
+        double width = appsettings->value(this, GC_LINEWIDTH, 0.5).toDouble();
+        labelFont.fromString(appsettings->value(this, GC_FONT_CHARTLABELS, QFont().toString()).toString());
+        labelFont.setPointSize(appsettings->value(NULL, GC_FONT_CHARTLABELS_SIZE, 8).toInt());
+
+        if (appsettings->value(this, GC_ANTIALIAS, true).toBool() == true) {
+            standard->wattsCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->atissCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->antissCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->npCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rvCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rcadCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rgctCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->gearCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->smo2Curve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->thbCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->o2hbCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->hhbCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->xpCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->apCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->wCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->mCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->hrCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->tcoreCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->speedCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->accelCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->wattsDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->cadDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->nmDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->hrDCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->cadCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->altCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->slopeCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->altSlopeCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->tempCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->windCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->torqueCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->lteCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rteCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->lpsCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rpsCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->lpcoCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rpcoCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->lppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->lpppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->rpppCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->balanceLCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->balanceRCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->intervalHighlighterCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+            standard->intervalHoverCurve->setRenderHint(QwtPlotItem::RenderAntialiased);
+        }
+
+        setAltSlopePlotStyle(standard->altSlopeCurve);
+
+        setCanvasBackground(GColor(CRIDEPLOTBACKGROUND));
+        QPen wattsPen = QPen(GColor(CPOWER));
+        wattsPen.setWidth(width);
+        standard->wattsCurve->setPen(wattsPen);
+        standard->wattsDCurve->setPen(wattsPen);
+        QPen npPen = QPen(GColor(CNPOWER));
+        npPen.setWidth(width);
+        standard->npCurve->setPen(npPen);
+        QPen rvPen = QPen(GColor(CRV));
+        rvPen.setWidth(width);
+        standard->rvCurve->setPen(rvPen);
+        QPen rcadPen = QPen(GColor(CRCAD));
+        rcadPen.setWidth(width);
+        standard->rcadCurve->setPen(rcadPen);
+        QPen rgctPen = QPen(GColor(CRGCT));
+        rgctPen.setWidth(width);
+        standard->rgctCurve->setPen(rgctPen);
+        QPen gearPen = QPen(GColor(CGEAR));
+        gearPen.setWidth(width);
+        standard->gearCurve->setPen(gearPen);
+        QPen smo2Pen = QPen(GColor(CSMO2));
+        smo2Pen.setWidth(width);
+        standard->smo2Curve->setPen(smo2Pen);
+        QPen thbPen = QPen(GColor(CTHB));
+        thbPen.setWidth(width);
+        standard->thbCurve->setPen(thbPen);
+        QPen o2hbPen = QPen(GColor(CO2HB));
+        o2hbPen.setWidth(width);
+        standard->o2hbCurve->setPen(o2hbPen);
+        QPen hhbPen = QPen(GColor(CHHB));
+        hhbPen.setWidth(width);
+        standard->hhbCurve->setPen(hhbPen);
+
+        QPen antissPen = QPen(GColor(CANTISS));
+        antissPen.setWidth(width);
+        standard->antissCurve->setPen(antissPen);
+        QPen atissPen = QPen(GColor(CATISS));
+        atissPen.setWidth(width);
+        standard->atissCurve->setPen(atissPen);
+        QPen xpPen = QPen(GColor(CXPOWER));
+        xpPen.setWidth(width);
+        standard->xpCurve->setPen(xpPen);
+        QPen apPen = QPen(GColor(CAPOWER));
+        apPen.setWidth(width);
+        standard->apCurve->setPen(apPen);
+        QPen hrPen = QPen(GColor(CHEARTRATE));
+        hrPen.setWidth(width);
+        standard->hrCurve->setPen(hrPen);
+        QPen tcorePen = QPen(GColor(CCORETEMP));
+        tcorePen.setWidth(width);
+        standard->tcoreCurve->setPen(tcorePen);
+        standard->hrDCurve->setPen(hrPen);
+        QPen speedPen = QPen(GColor(CSPEED));
+        speedPen.setWidth(width);
+        standard->speedCurve->setPen(speedPen);
+        QPen accelPen = QPen(GColor(CACCELERATION));
+        accelPen.setWidth(width);
+        standard->accelCurve->setPen(accelPen);
+        QPen cadPen = QPen(GColor(CCADENCE));
+        cadPen.setWidth(width);
+        standard->cadCurve->setPen(cadPen);
+        standard->cadDCurve->setPen(cadPen);
+        QPen slopePen(GColor(CSLOPE));
+        slopePen.setWidth(width);
+        standard->slopeCurve->setPen(slopePen);
+        QPen altPen(GColor(CALTITUDE));
+        altPen.setWidth(width);
+        standard->altCurve->setPen(altPen);
+        QColor brush_color = GColor(CALTITUDEBRUSH);
+        brush_color.setAlpha(200);
+        standard->altCurve->setBrush(brush_color);   // fill below the line
+        QPen altSlopePen(GCColor::invertColor(GColor(CPLOTBACKGROUND)));
+        altSlopePen.setWidth(width);
+        standard->altSlopeCurve->setPen(altSlopePen);
+        QPen tempPen = QPen(GColor(CTEMP));
+        tempPen.setWidth(width);
+        standard->tempCurve->setPen(tempPen);
+        //QPen windPen = QPen(GColor(CWINDSPEED));
+        //windPen.setWidth(width);
+        standard->windCurve->setPen(QPen(Qt::NoPen));
+        QColor wbrush_color = GColor(CWINDSPEED);
+        wbrush_color.setAlpha(200);
+        standard->windCurve->setBrush(wbrush_color);   // fill below the line
+        QPen torquePen = QPen(GColor(CTORQUE));
+        torquePen.setWidth(width);
+        standard->torqueCurve->setPen(torquePen);
+        standard->nmDCurve->setPen(torquePen);
+        QPen balanceLPen = QPen(GColor(CBALANCERIGHT));
+        balanceLPen.setWidth(width);
+        standard->balanceLCurve->setPen(balanceLPen);
+        QColor brbrush_color = GColor(CBALANCERIGHT);
+        brbrush_color.setAlpha(200);
+        standard->balanceLCurve->setBrush(brbrush_color);   // fill below the line
+        QPen balanceRPen = QPen(GColor(CBALANCELEFT));
+        balanceRPen.setWidth(width);
+        standard->balanceRCurve->setPen(balanceRPen);
+        QColor blbrush_color = GColor(CBALANCELEFT);
+        blbrush_color.setAlpha(200);
+        standard->balanceRCurve->setBrush(blbrush_color);   // fill below the line
+        QPen ltePen = QPen(GColor(CLTE));
+        ltePen.setWidth(width);
+        standard->lteCurve->setPen(ltePen);
+        QPen rtePen = QPen(GColor(CRTE));
+        rtePen.setWidth(width);
+        standard->rteCurve->setPen(rtePen);
+        QPen lpsPen = QPen(GColor(CLPS));
+        lpsPen.setWidth(width);
+        standard->lpsCurve->setPen(lpsPen);
+        QPen rpsPen = QPen(GColor(CRPS));
+        rpsPen.setWidth(width);
+        standard->rpsCurve->setPen(rpsPen);
+        QPen lpcoPen = QPen(GColor(CLPS));
+        lpcoPen.setWidth(width);
+        standard->lpcoCurve->setPen(lpcoPen);
+        QPen rpcoPen = QPen(GColor(CRPS));
+        rpcoPen.setWidth(width);
+        standard->rpcoCurve->setPen(rpcoPen);
+        QPen ldcPen = QPen(GColor(CLPS));
+        ldcPen.setWidth(width);
+        standard->lppCurve->setPen(ldcPen);
+        QPen rdcPen = QPen(GColor(CRPS));
+        rdcPen.setWidth(width);
+        standard->rppCurve->setPen(rdcPen);
+        QPen lpppPen = QPen(GColor(CLPS));
+        lpppPen.setWidth(width);
+        standard->lpppCurve->setPen(lpppPen);
+        QPen rpppPen = QPen(GColor(CRPS));
+        rpppPen.setWidth(width);
+        standard->rpppCurve->setPen(rpppPen);
+        QPen wPen = QPen(GColor(CWBAL)); 
+        wPen.setWidth(width); // don't thicken
+        standard->wCurve->setPen(wPen);
+        QwtSymbol *sym = new QwtSymbol;
+        sym->setStyle(QwtSymbol::Rect);
+        sym->setPen(QPen(QColor(255,127,0))); // orange like a match, will make configurable later
+        sym->setSize(4);
+        standard->mCurve->setSymbol(sym);
+        QPen ihlPen = QPen(GColor(CINTERVALHIGHLIGHTER));
+        ihlPen.setWidth(width);
+        standard->intervalHighlighterCurve->setPen(QPen(Qt::NoPen));
+        standard->intervalHoverCurve->setPen(QPen(Qt::NoPen));
+        QColor ihlbrush = QColor(GColor(CINTERVALHIGHLIGHTER));
+        ihlbrush.setAlpha(128);
+        standard->intervalHighlighterCurve->setBrush(ihlbrush);   // fill below the line
+        QColor hbrush = QColor(Qt::lightGray);
+        hbrush.setAlpha(64);
+        standard->intervalHoverCurve->setBrush(hbrush);   // fill below the line
+        //this->legend()->remove(intervalHighlighterCurve); // don't show in legend
+        QPen gridPen(GColor(CPLOTGRID));
+        //gridPen.setStyle(Qt::DotLine); // solid line is nicer
+        standard->grid->setPen(gridPen);
+
+        // curve brushes
+        if (fill) {
+
+            for(int k=0; k<standard->U.count(); k++) {
+                QColor p = standard->U[k].color;
+                p.setAlpha(64);
+                standard->U[k].curve->setBrush(QBrush(p));
+            }
+
+            QColor p;
+            p = standard->wattsCurve->pen().color();
+            p.setAlpha(64);
+            standard->wattsCurve->setBrush(QBrush(p));
+
+            p = standard->atissCurve->pen().color();
+            p.setAlpha(64);
+            standard->atissCurve->setBrush(QBrush(p));
+
+            p = standard->antissCurve->pen().color();
+            p.setAlpha(64);
+            standard->antissCurve->setBrush(QBrush(p));
+
+            p = standard->npCurve->pen().color();
+            p.setAlpha(64);
+            standard->npCurve->setBrush(QBrush(p));
+
+            p = standard->rvCurve->pen().color();
+            p.setAlpha(64);
+            standard->rvCurve->setBrush(QBrush(p));
+
+            p = standard->rcadCurve->pen().color();
+            p.setAlpha(64);
+            standard->rcadCurve->setBrush(QBrush(p));
+
+            p = standard->rgctCurve->pen().color();
+            p.setAlpha(64);
+            standard->rgctCurve->setBrush(QBrush(p));
+
+            p = standard->gearCurve->pen().color();
+            p.setAlpha(64);
+            standard->gearCurve->setBrush(QBrush(p));
+
+            p = standard->smo2Curve->pen().color();
+            p.setAlpha(64);
+            standard->smo2Curve->setBrush(QBrush(p));
+
+            p = standard->thbCurve->pen().color();
+            p.setAlpha(64);
+            standard->thbCurve->setBrush(QBrush(p));
+
+            p = standard->o2hbCurve->pen().color();
+            p.setAlpha(64);
+            standard->o2hbCurve->setBrush(QBrush(p));
+
+            p = standard->hhbCurve->pen().color();
+            p.setAlpha(64);
+            standard->hhbCurve->setBrush(QBrush(p));
+
+            p = standard->xpCurve->pen().color();
+            p.setAlpha(64);
+            standard->xpCurve->setBrush(QBrush(p));
+
+            p = standard->apCurve->pen().color();
+            p.setAlpha(64);
+            standard->apCurve->setBrush(QBrush(p));
+
+            p = standard->wCurve->pen().color();
+            p.setAlpha(64);
+            standard->wCurve->setBrush(QBrush(p));
+
+            p = standard->tcoreCurve->pen().color();
+            p.setAlpha(64);
+            standard->tcoreCurve->setBrush(QBrush(p));
+
+            p = standard->hrCurve->pen().color();
+            p.setAlpha(64);
+            standard->hrCurve->setBrush(QBrush(p));
+
+            p = standard->accelCurve->pen().color();
+            p.setAlpha(64);
+            standard->accelCurve->setBrush(QBrush(p));
+
+            p = standard->wattsDCurve->pen().color();
+            p.setAlpha(64);
+            standard->wattsDCurve->setBrush(QBrush(p));
+
+            p = standard->cadDCurve->pen().color();
+            p.setAlpha(64);
+            standard->cadDCurve->setBrush(QBrush(p));
+
+            p = standard->nmDCurve->pen().color();
+            p.setAlpha(64);
+            standard->nmDCurve->setBrush(QBrush(p));
+
+            p = standard->hrDCurve->pen().color();
+            p.setAlpha(64);
+            standard->hrDCurve->setBrush(QBrush(p));
+
+            p = standard->speedCurve->pen().color();
+            p.setAlpha(64);
+            standard->speedCurve->setBrush(QBrush(p));
+
+            p = standard->cadCurve->pen().color();
+            p.setAlpha(64);
+            standard->cadCurve->setBrush(QBrush(p));
+
+            p = standard->torqueCurve->pen().color();
+            p.setAlpha(64);
+            standard->torqueCurve->setBrush(QBrush(p));
+
+            p = standard->tempCurve->pen().color();
+            p.setAlpha(64);
+            standard->tempCurve->setBrush(QBrush(p));
+
+            p = standard->lteCurve->pen().color();
+            p.setAlpha(64);
+            standard->lteCurve->setBrush(QBrush(p));
+
+            p = standard->rteCurve->pen().color();
+            p.setAlpha(64);
+            standard->rteCurve->setBrush(QBrush(p));
+
+            p = standard->lpsCurve->pen().color();
+            p.setAlpha(64);
+            standard->lpsCurve->setBrush(QBrush(p));
+
+            p = standard->rpsCurve->pen().color();
+            p.setAlpha(64);
+            standard->rpsCurve->setBrush(QBrush(p));
+
+            p = standard->lpcoCurve->pen().color();
+            p.setAlpha(64);
+            standard->lpcoCurve->setBrush(QBrush(p));
+
+            p = standard->rpcoCurve->pen().color();
+            p.setAlpha(64);
+            standard->rpcoCurve->setBrush(QBrush(p));
+
+            p = standard->lppCurve->pen().color();
+            p.setAlpha(64);
+            standard->lppCurve->setBrush(QBrush(p));
+
+            p = standard->rppCurve->pen().color();
+            p.setAlpha(64);
+            standard->rppCurve->setBrush(QBrush(p));
+
+            p = standard->lpppCurve->pen().color();
+            p.setAlpha(64);
+            standard->lpppCurve->setBrush(QBrush(p));
+
+            p = standard->rpppCurve->pen().color();
+            p.setAlpha(64);
+            standard->rpppCurve->setBrush(QBrush(p));
+
+            p = standard->slopeCurve->pen().color();
+            p.setAlpha(64);
+            standard->slopeCurve->setBrush(QBrush(p));
+
+            /*p = standard->altSlopeCurve->pen().color();
+            p.setAlpha(64);
+            standard->altSlopeCurve->setBrush(QBrush(p));
+
+            p = standard->balanceLCurve->pen().color();
+            p.setAlpha(64);
+            standard->balanceLCurve->setBrush(QBrush(p));
+
+            p = standard->balanceRCurve->pen().color();
+            p.setAlpha(64);
+            standard->balanceRCurve->setBrush(QBrush(p));*/
+        } else {
+            for(int k=0; k<standard->U.count(); k++) {
+                standard->U[k].curve->setBrush(Qt::NoBrush);
+            }
+            standard->wattsCurve->setBrush(Qt::NoBrush);
+            standard->atissCurve->setBrush(Qt::NoBrush);
+            standard->antissCurve->setBrush(Qt::NoBrush);
+            standard->rvCurve->setBrush(Qt::NoBrush);
+            standard->rcadCurve->setBrush(Qt::NoBrush);
+            standard->rgctCurve->setBrush(Qt::NoBrush);
+            standard->gearCurve->setBrush(Qt::NoBrush);
+            standard->smo2Curve->setBrush(Qt::NoBrush);
+            standard->thbCurve->setBrush(Qt::NoBrush);
+            standard->o2hbCurve->setBrush(Qt::NoBrush);
+            standard->hhbCurve->setBrush(Qt::NoBrush);
+            standard->npCurve->setBrush(Qt::NoBrush);
+            standard->xpCurve->setBrush(Qt::NoBrush);
+            standard->apCurve->setBrush(Qt::NoBrush);
+            standard->wCurve->setBrush(Qt::NoBrush);
+            standard->hrCurve->setBrush(Qt::NoBrush);
+            standard->tcoreCurve->setBrush(Qt::NoBrush);
+            standard->speedCurve->setBrush(Qt::NoBrush);
+            standard->accelCurve->setBrush(Qt::NoBrush);
+            standard->wattsDCurve->setBrush(Qt::NoBrush);
+            standard->cadDCurve->setBrush(Qt::NoBrush);
+            standard->nmDCurve->setBrush(Qt::NoBrush);
+            standard->hrDCurve->setBrush(Qt::NoBrush);
+            standard->cadCurve->setBrush(Qt::NoBrush);
+            standard->torqueCurve->setBrush(Qt::NoBrush);
+            standard->tempCurve->setBrush(Qt::NoBrush);
+            standard->lteCurve->setBrush(Qt::NoBrush);
+            standard->rteCurve->setBrush(Qt::NoBrush);
+            standard->lpsCurve->setBrush(Qt::NoBrush);
+            standard->rpsCurve->setBrush(Qt::NoBrush);
+            standard->lpcoCurve->setBrush(Qt::NoBrush);
+            standard->rpcoCurve->setBrush(Qt::NoBrush);
+            standard->lppCurve->setBrush(Qt::NoBrush);
+            standard->rppCurve->setBrush(Qt::NoBrush);
+            standard->lpppCurve->setBrush(Qt::NoBrush);
+            standard->rpppCurve->setBrush(Qt::NoBrush);
+            standard->slopeCurve->setBrush(Qt::NoBrush);
+            //standard->altSlopeCurve->setBrush((Qt::NoBrush));
+            //standard->balanceLCurve->setBrush(Qt::NoBrush);
+            //standard->balanceRCurve->setBrush(Qt::NoBrush);
+        }
+
+        QPalette pal = palette();
+        pal.setBrush(QPalette::Background, QBrush(GColor(CRIDEPLOTBACKGROUND)));
+        setPalette(pal);
+
+        // tick draw
+        TimeScaleDraw *tsd = new TimeScaleDraw(&this->bydist) ;
+        tsd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        setAxisScaleDraw(QwtPlot::xBottom, tsd);
+        pal.setColor(QPalette::WindowText, GColor(CPLOTMARKER));
+        pal.setColor(QPalette::Text, GColor(CPLOTMARKER));
+        axisWidget(QwtPlot::xBottom)->setPalette(pal);
+        enableAxis(xBottom, true);
+        setAxisVisible(xBottom, true);
+
+        ScaleScaleDraw *sd = new ScaleScaleDraw;
+        sd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        sd->enableComponent(ScaleScaleDraw::Ticks, false);
+        sd->enableComponent(ScaleScaleDraw::Backbone, false);
+        setAxisScaleDraw(QwtPlot::yLeft, sd);
+        pal.setColor(QPalette::WindowText, GColor(CPOWER));
+        pal.setColor(QPalette::Text, GColor(CPOWER));
+        axisWidget(QwtPlot::yLeft)->setPalette(pal);
+
+        // some axis show multiple things so color them 
+        // to match up if only one curve is selected; 
+        // e.g. left, 1 typically has HR, Cadence
+        // on the same curve but can also have SmO2 and Temp
+        // since it gets set a few places we do it with
+        // a special method
+        setLeftOnePalette();
+        setRightPalette(); 
+
+        sd = new ScaleScaleDraw;
+        sd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        sd->enableComponent(ScaleScaleDraw::Ticks, false);
+        sd->enableComponent(ScaleScaleDraw::Backbone, false);
+        setAxisScaleDraw(QwtAxisId(QwtAxis::yLeft, 3), sd);
+        pal.setColor(QPalette::WindowText, GColor(CPLOTMARKER));
+        pal.setColor(QPalette::Text, GColor(CPLOTMARKER));
+        axisWidget(QwtAxisId(QwtAxis::yLeft, 3))->setPalette(pal);
+
+        sd = new ScaleScaleDraw;
+        sd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        sd->enableComponent(ScaleScaleDraw::Ticks, false);
+        sd->enableComponent(ScaleScaleDraw::Backbone, false);
+        setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 1), sd);
+        pal.setColor(QPalette::WindowText, GColor(CALTITUDE));
+        pal.setColor(QPalette::Text, GColor(CALTITUDE));
+        axisWidget(QwtAxisId(QwtAxis::yRight, 1))->setPalette(pal);
+
+        sd = new ScaleScaleDraw;
+        sd->enableComponent(ScaleScaleDraw::Ticks, false);
+        sd->enableComponent(ScaleScaleDraw::Backbone, false);
+        sd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        sd->setFactor(0.001f); // in kJ
+        setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 2), sd);
+        pal.setColor(QPalette::WindowText, GColor(CWBAL));
+        pal.setColor(QPalette::Text, GColor(CWBAL));
+        axisWidget(QwtAxisId(QwtAxis::yRight, 2))->setPalette(pal);
+
+        sd = new ScaleScaleDraw;
+        sd->enableComponent(ScaleScaleDraw::Ticks, false);
+        sd->enableComponent(ScaleScaleDraw::Backbone, false);
+        sd->setTickLength(QwtScaleDiv::MajorTick, 3);
+        setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 3), sd);
+        pal.setColor(QPalette::WindowText, GColor(CATISS));
+        pal.setColor(QPalette::Text, GColor(CATISS));
+        axisWidget(QwtAxisId(QwtAxis::yRight, 3))->setPalette(pal);
+
+        curveColors->saveState();
+
     }
-
-    setAltSlopePlotStyle(standard->altSlopeCurve);
-
-    setCanvasBackground(GColor(CRIDEPLOTBACKGROUND));
-    QPen wattsPen = QPen(GColor(CPOWER));
-    wattsPen.setWidth(width);
-    standard->wattsCurve->setPen(wattsPen);
-    standard->wattsDCurve->setPen(wattsPen);
-    QPen npPen = QPen(GColor(CNPOWER));
-    npPen.setWidth(width);
-    standard->npCurve->setPen(npPen);
-    QPen rvPen = QPen(GColor(CRV));
-    rvPen.setWidth(width);
-    standard->rvCurve->setPen(rvPen);
-    QPen rcadPen = QPen(GColor(CRCAD));
-    rcadPen.setWidth(width);
-    standard->rcadCurve->setPen(rcadPen);
-    QPen rgctPen = QPen(GColor(CRGCT));
-    rgctPen.setWidth(width);
-    standard->rgctCurve->setPen(rgctPen);
-    QPen gearPen = QPen(GColor(CGEAR));
-    gearPen.setWidth(width);
-    standard->gearCurve->setPen(gearPen);
-    QPen smo2Pen = QPen(GColor(CSMO2));
-    smo2Pen.setWidth(width);
-    standard->smo2Curve->setPen(smo2Pen);
-    QPen thbPen = QPen(GColor(CTHB));
-    thbPen.setWidth(width);
-    standard->thbCurve->setPen(thbPen);
-    QPen o2hbPen = QPen(GColor(CO2HB));
-    o2hbPen.setWidth(width);
-    standard->o2hbCurve->setPen(o2hbPen);
-    QPen hhbPen = QPen(GColor(CHHB));
-    hhbPen.setWidth(width);
-    standard->hhbCurve->setPen(hhbPen);
-
-    QPen antissPen = QPen(GColor(CANTISS));
-    antissPen.setWidth(width);
-    standard->antissCurve->setPen(antissPen);
-    QPen atissPen = QPen(GColor(CATISS));
-    atissPen.setWidth(width);
-    standard->atissCurve->setPen(atissPen);
-    QPen xpPen = QPen(GColor(CXPOWER));
-    xpPen.setWidth(width);
-    standard->xpCurve->setPen(xpPen);
-    QPen apPen = QPen(GColor(CAPOWER));
-    apPen.setWidth(width);
-    standard->apCurve->setPen(apPen);
-    QPen hrPen = QPen(GColor(CHEARTRATE));
-    hrPen.setWidth(width);
-    standard->hrCurve->setPen(hrPen);
-    QPen tcorePen = QPen(GColor(CCORETEMP));
-    tcorePen.setWidth(width);
-    standard->tcoreCurve->setPen(tcorePen);
-    standard->hrDCurve->setPen(hrPen);
-    QPen speedPen = QPen(GColor(CSPEED));
-    speedPen.setWidth(width);
-    standard->speedCurve->setPen(speedPen);
-    QPen accelPen = QPen(GColor(CACCELERATION));
-    accelPen.setWidth(width);
-    standard->accelCurve->setPen(accelPen);
-    QPen cadPen = QPen(GColor(CCADENCE));
-    cadPen.setWidth(width);
-    standard->cadCurve->setPen(cadPen);
-    standard->cadDCurve->setPen(cadPen);
-    QPen slopePen(GColor(CSLOPE));
-    slopePen.setWidth(width);
-    standard->slopeCurve->setPen(slopePen);
-    QPen altPen(GColor(CALTITUDE));
-    altPen.setWidth(width);
-    standard->altCurve->setPen(altPen);
-    QColor brush_color = GColor(CALTITUDEBRUSH);
-    brush_color.setAlpha(200);
-    standard->altCurve->setBrush(brush_color);   // fill below the line
-    QPen altSlopePen(GCColor::invertColor(GColor(CPLOTBACKGROUND)));
-    altSlopePen.setWidth(width);
-    standard->altSlopeCurve->setPen(altSlopePen);
-    QPen tempPen = QPen(GColor(CTEMP));
-    tempPen.setWidth(width);
-    standard->tempCurve->setPen(tempPen);
-    //QPen windPen = QPen(GColor(CWINDSPEED));
-    //windPen.setWidth(width);
-    standard->windCurve->setPen(QPen(Qt::NoPen));
-    QColor wbrush_color = GColor(CWINDSPEED);
-    wbrush_color.setAlpha(200);
-    standard->windCurve->setBrush(wbrush_color);   // fill below the line
-    QPen torquePen = QPen(GColor(CTORQUE));
-    torquePen.setWidth(width);
-    standard->torqueCurve->setPen(torquePen);
-    standard->nmDCurve->setPen(torquePen);
-    QPen balanceLPen = QPen(GColor(CBALANCERIGHT));
-    balanceLPen.setWidth(width);
-    standard->balanceLCurve->setPen(balanceLPen);
-    QColor brbrush_color = GColor(CBALANCERIGHT);
-    brbrush_color.setAlpha(200);
-    standard->balanceLCurve->setBrush(brbrush_color);   // fill below the line
-    QPen balanceRPen = QPen(GColor(CBALANCELEFT));
-    balanceRPen.setWidth(width);
-    standard->balanceRCurve->setPen(balanceRPen);
-    QColor blbrush_color = GColor(CBALANCELEFT);
-    blbrush_color.setAlpha(200);
-    standard->balanceRCurve->setBrush(blbrush_color);   // fill below the line
-    QPen ltePen = QPen(GColor(CLTE));
-    ltePen.setWidth(width);
-    standard->lteCurve->setPen(ltePen);
-    QPen rtePen = QPen(GColor(CRTE));
-    rtePen.setWidth(width);
-    standard->rteCurve->setPen(rtePen);
-    QPen lpsPen = QPen(GColor(CLPS));
-    lpsPen.setWidth(width);
-    standard->lpsCurve->setPen(lpsPen);
-    QPen rpsPen = QPen(GColor(CRPS));
-    rpsPen.setWidth(width);
-    standard->rpsCurve->setPen(rpsPen);
-    QPen lpcoPen = QPen(GColor(CLPS));
-    lpcoPen.setWidth(width);
-    standard->lpcoCurve->setPen(lpcoPen);
-    QPen rpcoPen = QPen(GColor(CRPS));
-    rpcoPen.setWidth(width);
-    standard->rpcoCurve->setPen(rpcoPen);
-    QPen ldcPen = QPen(GColor(CLPS));
-    ldcPen.setWidth(width);
-    standard->lppCurve->setPen(ldcPen);
-    QPen rdcPen = QPen(GColor(CRPS));
-    rdcPen.setWidth(width);
-    standard->rppCurve->setPen(rdcPen);
-    QPen lpppPen = QPen(GColor(CLPS));
-    lpppPen.setWidth(width);
-    standard->lpppCurve->setPen(lpppPen);
-    QPen rpppPen = QPen(GColor(CRPS));
-    rpppPen.setWidth(width);
-    standard->rpppCurve->setPen(rpppPen);
-    QPen wPen = QPen(GColor(CWBAL)); 
-    wPen.setWidth(width); // don't thicken
-    standard->wCurve->setPen(wPen);
-    QwtSymbol *sym = new QwtSymbol;
-    sym->setStyle(QwtSymbol::Rect);
-    sym->setPen(QPen(QColor(255,127,0))); // orange like a match, will make configurable later
-    sym->setSize(4);
-    standard->mCurve->setSymbol(sym);
-    QPen ihlPen = QPen(GColor(CINTERVALHIGHLIGHTER));
-    ihlPen.setWidth(width);
-    standard->intervalHighlighterCurve->setPen(QPen(Qt::NoPen));
-    standard->intervalHoverCurve->setPen(QPen(Qt::NoPen));
-    QColor ihlbrush = QColor(GColor(CINTERVALHIGHLIGHTER));
-    ihlbrush.setAlpha(128);
-    standard->intervalHighlighterCurve->setBrush(ihlbrush);   // fill below the line
-    QColor hbrush = QColor(Qt::lightGray);
-    hbrush.setAlpha(64);
-    standard->intervalHoverCurve->setBrush(hbrush);   // fill below the line
-    //this->legend()->remove(intervalHighlighterCurve); // don't show in legend
-    QPen gridPen(GColor(CPLOTGRID));
-    //gridPen.setStyle(Qt::DotLine); // solid line is nicer
-    standard->grid->setPen(gridPen);
-
-    // curve brushes
-    if (fill) {
-        QColor p;
-        p = standard->wattsCurve->pen().color();
-        p.setAlpha(64);
-        standard->wattsCurve->setBrush(QBrush(p));
-
-        p = standard->atissCurve->pen().color();
-        p.setAlpha(64);
-        standard->atissCurve->setBrush(QBrush(p));
-
-        p = standard->antissCurve->pen().color();
-        p.setAlpha(64);
-        standard->antissCurve->setBrush(QBrush(p));
-
-        p = standard->npCurve->pen().color();
-        p.setAlpha(64);
-        standard->npCurve->setBrush(QBrush(p));
-
-        p = standard->rvCurve->pen().color();
-        p.setAlpha(64);
-        standard->rvCurve->setBrush(QBrush(p));
-
-        p = standard->rcadCurve->pen().color();
-        p.setAlpha(64);
-        standard->rcadCurve->setBrush(QBrush(p));
-
-        p = standard->rgctCurve->pen().color();
-        p.setAlpha(64);
-        standard->rgctCurve->setBrush(QBrush(p));
-
-        p = standard->gearCurve->pen().color();
-        p.setAlpha(64);
-        standard->gearCurve->setBrush(QBrush(p));
-
-        p = standard->smo2Curve->pen().color();
-        p.setAlpha(64);
-        standard->smo2Curve->setBrush(QBrush(p));
-
-        p = standard->thbCurve->pen().color();
-        p.setAlpha(64);
-        standard->thbCurve->setBrush(QBrush(p));
-
-        p = standard->o2hbCurve->pen().color();
-        p.setAlpha(64);
-        standard->o2hbCurve->setBrush(QBrush(p));
-
-        p = standard->hhbCurve->pen().color();
-        p.setAlpha(64);
-        standard->hhbCurve->setBrush(QBrush(p));
-
-        p = standard->xpCurve->pen().color();
-        p.setAlpha(64);
-        standard->xpCurve->setBrush(QBrush(p));
-
-        p = standard->apCurve->pen().color();
-        p.setAlpha(64);
-        standard->apCurve->setBrush(QBrush(p));
-
-        p = standard->wCurve->pen().color();
-        p.setAlpha(64);
-        standard->wCurve->setBrush(QBrush(p));
-
-        p = standard->tcoreCurve->pen().color();
-        p.setAlpha(64);
-        standard->tcoreCurve->setBrush(QBrush(p));
-
-        p = standard->hrCurve->pen().color();
-        p.setAlpha(64);
-        standard->hrCurve->setBrush(QBrush(p));
-
-        p = standard->accelCurve->pen().color();
-        p.setAlpha(64);
-        standard->accelCurve->setBrush(QBrush(p));
-
-        p = standard->wattsDCurve->pen().color();
-        p.setAlpha(64);
-        standard->wattsDCurve->setBrush(QBrush(p));
-
-        p = standard->cadDCurve->pen().color();
-        p.setAlpha(64);
-        standard->cadDCurve->setBrush(QBrush(p));
-
-        p = standard->nmDCurve->pen().color();
-        p.setAlpha(64);
-        standard->nmDCurve->setBrush(QBrush(p));
-
-        p = standard->hrDCurve->pen().color();
-        p.setAlpha(64);
-        standard->hrDCurve->setBrush(QBrush(p));
-
-        p = standard->speedCurve->pen().color();
-        p.setAlpha(64);
-        standard->speedCurve->setBrush(QBrush(p));
-
-        p = standard->cadCurve->pen().color();
-        p.setAlpha(64);
-        standard->cadCurve->setBrush(QBrush(p));
-
-        p = standard->torqueCurve->pen().color();
-        p.setAlpha(64);
-        standard->torqueCurve->setBrush(QBrush(p));
-
-        p = standard->tempCurve->pen().color();
-        p.setAlpha(64);
-        standard->tempCurve->setBrush(QBrush(p));
-
-        p = standard->lteCurve->pen().color();
-        p.setAlpha(64);
-        standard->lteCurve->setBrush(QBrush(p));
-
-        p = standard->rteCurve->pen().color();
-        p.setAlpha(64);
-        standard->rteCurve->setBrush(QBrush(p));
-
-        p = standard->lpsCurve->pen().color();
-        p.setAlpha(64);
-        standard->lpsCurve->setBrush(QBrush(p));
-
-        p = standard->rpsCurve->pen().color();
-        p.setAlpha(64);
-        standard->rpsCurve->setBrush(QBrush(p));
-
-        p = standard->lpcoCurve->pen().color();
-        p.setAlpha(64);
-        standard->lpcoCurve->setBrush(QBrush(p));
-
-        p = standard->rpcoCurve->pen().color();
-        p.setAlpha(64);
-        standard->rpcoCurve->setBrush(QBrush(p));
-
-        p = standard->lppCurve->pen().color();
-        p.setAlpha(64);
-        standard->lppCurve->setBrush(QBrush(p));
-
-        p = standard->rppCurve->pen().color();
-        p.setAlpha(64);
-        standard->rppCurve->setBrush(QBrush(p));
-
-        p = standard->lpppCurve->pen().color();
-        p.setAlpha(64);
-        standard->lpppCurve->setBrush(QBrush(p));
-
-        p = standard->rpppCurve->pen().color();
-        p.setAlpha(64);
-        standard->rpppCurve->setBrush(QBrush(p));
-
-        p = standard->slopeCurve->pen().color();
-        p.setAlpha(64);
-        standard->slopeCurve->setBrush(QBrush(p));
-
-        /*p = standard->altSlopeCurve->pen().color();
-        p.setAlpha(64);
-        standard->altSlopeCurve->setBrush(QBrush(p));
-
-        p = standard->balanceLCurve->pen().color();
-        p.setAlpha(64);
-        standard->balanceLCurve->setBrush(QBrush(p));
-
-        p = standard->balanceRCurve->pen().color();
-        p.setAlpha(64);
-        standard->balanceRCurve->setBrush(QBrush(p));*/
-    } else {
-        standard->wattsCurve->setBrush(Qt::NoBrush);
-        standard->atissCurve->setBrush(Qt::NoBrush);
-        standard->antissCurve->setBrush(Qt::NoBrush);
-        standard->rvCurve->setBrush(Qt::NoBrush);
-        standard->rcadCurve->setBrush(Qt::NoBrush);
-        standard->rgctCurve->setBrush(Qt::NoBrush);
-        standard->gearCurve->setBrush(Qt::NoBrush);
-        standard->smo2Curve->setBrush(Qt::NoBrush);
-        standard->thbCurve->setBrush(Qt::NoBrush);
-        standard->o2hbCurve->setBrush(Qt::NoBrush);
-        standard->hhbCurve->setBrush(Qt::NoBrush);
-        standard->npCurve->setBrush(Qt::NoBrush);
-        standard->xpCurve->setBrush(Qt::NoBrush);
-        standard->apCurve->setBrush(Qt::NoBrush);
-        standard->wCurve->setBrush(Qt::NoBrush);
-        standard->hrCurve->setBrush(Qt::NoBrush);
-        standard->tcoreCurve->setBrush(Qt::NoBrush);
-        standard->speedCurve->setBrush(Qt::NoBrush);
-        standard->accelCurve->setBrush(Qt::NoBrush);
-        standard->wattsDCurve->setBrush(Qt::NoBrush);
-        standard->cadDCurve->setBrush(Qt::NoBrush);
-        standard->nmDCurve->setBrush(Qt::NoBrush);
-        standard->hrDCurve->setBrush(Qt::NoBrush);
-        standard->cadCurve->setBrush(Qt::NoBrush);
-        standard->torqueCurve->setBrush(Qt::NoBrush);
-        standard->tempCurve->setBrush(Qt::NoBrush);
-        standard->lteCurve->setBrush(Qt::NoBrush);
-        standard->rteCurve->setBrush(Qt::NoBrush);
-        standard->lpsCurve->setBrush(Qt::NoBrush);
-        standard->rpsCurve->setBrush(Qt::NoBrush);
-        standard->lpcoCurve->setBrush(Qt::NoBrush);
-        standard->rpcoCurve->setBrush(Qt::NoBrush);
-        standard->lppCurve->setBrush(Qt::NoBrush);
-        standard->rppCurve->setBrush(Qt::NoBrush);
-        standard->lpppCurve->setBrush(Qt::NoBrush);
-        standard->rpppCurve->setBrush(Qt::NoBrush);
-        standard->slopeCurve->setBrush(Qt::NoBrush);
-        //standard->altSlopeCurve->setBrush((Qt::NoBrush));
-        //standard->balanceLCurve->setBrush(Qt::NoBrush);
-        //standard->balanceRCurve->setBrush(Qt::NoBrush);
-    }
-
-    QPalette pal = palette();
-    pal.setBrush(QPalette::Background, QBrush(GColor(CRIDEPLOTBACKGROUND)));
-    setPalette(pal);
-
-    // tick draw
-    TimeScaleDraw *tsd = new TimeScaleDraw(&this->bydist) ;
-    tsd->setTickLength(QwtScaleDiv::MajorTick, 3);
-    setAxisScaleDraw(QwtPlot::xBottom, tsd);
-    pal.setColor(QPalette::WindowText, GColor(CPLOTMARKER));
-    pal.setColor(QPalette::Text, GColor(CPLOTMARKER));
-    axisWidget(QwtPlot::xBottom)->setPalette(pal);
-    enableAxis(xBottom, true);
-    setAxisVisible(xBottom, true);
-
-    ScaleScaleDraw *sd = new ScaleScaleDraw;
-    sd->setTickLength(QwtScaleDiv::MajorTick, 3);
-    sd->enableComponent(ScaleScaleDraw::Ticks, false);
-    sd->enableComponent(ScaleScaleDraw::Backbone, false);
-    setAxisScaleDraw(QwtPlot::yLeft, sd);
-    pal.setColor(QPalette::WindowText, GColor(CPOWER));
-    pal.setColor(QPalette::Text, GColor(CPOWER));
-    axisWidget(QwtPlot::yLeft)->setPalette(pal);
-
-    // some axis show multiple things so color them 
-    // to match up if only one curve is selected; 
-    // e.g. left, 1 typically has HR, Cadence
-    // on the same curve but can also have SmO2 and Temp
-    // since it gets set a few places we do it with
-    // a special method
-    setLeftOnePalette();
-    setRightPalette(); 
-
-    sd = new ScaleScaleDraw;
-    sd->setTickLength(QwtScaleDiv::MajorTick, 3);
-    sd->enableComponent(ScaleScaleDraw::Ticks, false);
-    sd->enableComponent(ScaleScaleDraw::Backbone, false);
-    setAxisScaleDraw(QwtAxisId(QwtAxis::yLeft, 3), sd);
-    pal.setColor(QPalette::WindowText, GColor(CPLOTMARKER));
-    pal.setColor(QPalette::Text, GColor(CPLOTMARKER));
-    axisWidget(QwtAxisId(QwtAxis::yLeft, 3))->setPalette(pal);
-
-
-    sd = new ScaleScaleDraw;
-    sd->setTickLength(QwtScaleDiv::MajorTick, 3);
-    sd->enableComponent(ScaleScaleDraw::Ticks, false);
-    sd->enableComponent(ScaleScaleDraw::Backbone, false);
-    setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 1), sd);
-    pal.setColor(QPalette::WindowText, GColor(CALTITUDE));
-    pal.setColor(QPalette::Text, GColor(CALTITUDE));
-    axisWidget(QwtAxisId(QwtAxis::yRight, 1))->setPalette(pal);
-
-    sd = new ScaleScaleDraw;
-    sd->enableComponent(ScaleScaleDraw::Ticks, false);
-    sd->enableComponent(ScaleScaleDraw::Backbone, false);
-    sd->setTickLength(QwtScaleDiv::MajorTick, 3);
-    sd->setFactor(0.001f); // in kJ
-    setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 2), sd);
-    pal.setColor(QPalette::WindowText, GColor(CWBAL));
-    pal.setColor(QPalette::Text, GColor(CWBAL));
-    axisWidget(QwtAxisId(QwtAxis::yRight, 2))->setPalette(pal);
-
-    sd = new ScaleScaleDraw;
-    sd->enableComponent(ScaleScaleDraw::Ticks, false);
-    sd->enableComponent(ScaleScaleDraw::Backbone, false);
-    sd->setTickLength(QwtScaleDiv::MajorTick, 3);
-    setAxisScaleDraw(QwtAxisId(QwtAxis::yRight, 3), sd);
-    pal.setColor(QPalette::WindowText, GColor(CATISS));
-    pal.setColor(QPalette::Text, GColor(CATISS));
-    axisWidget(QwtAxisId(QwtAxis::yRight, 3))->setPalette(pal);
-
-    curveColors->saveState();
 }
 
 void
@@ -1476,17 +1598,20 @@ struct DataPoint {
            lpco, rpco, lppb, rppb, lppe, rppe, lpppb, rpppb, lpppe, rpppe,
            kphd, wattsd, cadd, nmd, hrd, slope, tcore;
 
+    // user values
+    QList<double>user;
+
     DataPoint(double t, double h, double w, double at, double an, double n, double rv, double rcad, double rgct,
               double smo2, double thb, double o2hb, double hhb, double l, double x, double s, double c,
               double a, double te, double wi, double tq, double lrb, double lte, double rte, double lps, double rps,
               double lpco, double rpco, double lppb, double rppb, double lppe, double rppe, double lpppb, double rpppb, double lpppe, double rpppe,
-              double kphd, double wattsd, double cadd, double nmd, double hrd, double sl, double tcore) :
+              double kphd, double wattsd, double cadd, double nmd, double hrd, double sl, double tcore, QList<double>user) :
 
               time(t), hr(h), watts(w), atiss(at), antiss(an), np(n), rv(rv), rcad(rcad), rgct(rgct),
               smo2(smo2), thb(thb), o2hb(o2hb), hhb(hhb), ap(l), xp(x), speed(s), cad(c),
               alt(a), temp(te), wind(wi), torque(tq), lrbalance(lrb), lte(lte), rte(rte), lps(lps), rps(rps),
               lpco(lpco), rpco(rpco), lppb(lppb), rppb(rppb), lppe(lppe), rppe(rppe), lpppb(lpppb), rpppb(rpppb), lpppe(lpppe), rpppe(rpppe),
-              kphd(kphd), wattsd(wattsd), cadd(cadd), nmd(nmd), hrd(hrd), slope(sl), tcore(tcore) {}
+              kphd(kphd), wattsd(wattsd), cadd(cadd), nmd(nmd), hrd(hrd), slope(sl), tcore(tcore), user(user) {}
 };
 
 bool AllPlot::shadeZones() const
@@ -1617,6 +1742,11 @@ AllPlot::recalc(AllPlotObject *objects)
         if (!objects->tcoreArray.empty()) objects->tcoreCurve->setSamples(data, data);
         if (!objects->speedArray.empty()) objects->speedCurve->setSamples(data, data);
 
+        // user data
+        foreach(UserObject obj, objects->U) {
+            if (!obj.array.empty()) obj.curve->setSamples(data,data);
+        }
+
         // deltas
         if (!objects->accelArray.empty()) objects->accelCurve->setSamples(data, data);
         if (!objects->wattsDArray.empty()) objects->wattsDCurve->setSamples(data, data);
@@ -1660,6 +1790,12 @@ AllPlot::recalc(AllPlotObject *objects)
     if (context->isCompareIntervals && applysmooth == 0) applysmooth = 1;
     
     // we should only smooth the curves if objects->smoothed rate is greater than sample rate
+
+    // user data totals
+    QVector<double> utotals;
+    utotals.resize(objects->U.count());
+    utotals.fill(0);
+
     if (applysmooth > 0) {
 
         double totalWatts = 0.0;
@@ -1705,6 +1841,7 @@ AllPlot::recalc(AllPlotObject *objects)
         double totalRPPPB = 0.0;
         double totalLPPPE = 0.0;
         double totalRPPPE = 0.0;
+        double currentGearRatio = 0.0;
 
 
         QList<DataPoint> list;
@@ -1752,6 +1889,9 @@ AllPlot::recalc(AllPlotObject *objects)
         objects->smoothRPP.resize(rideTimeSecs + 1);
         objects->smoothLPPP.resize(rideTimeSecs + 1);
         objects->smoothRPPP.resize(rideTimeSecs + 1);
+        for(int k=0; k<objects->U.count(); k++) {
+            objects->U[k].smooth.resize(rideTimeSecs + 1);
+        }
 
         // do the smoothing by calculating the average of the "applysmooth" values left
         // of the current data point - for points in time smaller than "applysmooth"
@@ -1759,6 +1899,12 @@ AllPlot::recalc(AllPlotObject *objects)
         int i = 0;
         for (int secs = 0; secs <= rideTimeSecs; ++secs) {
             while ((i < objects->timeArray.count()) && (objects->timeArray[i] <= secs)) {
+
+                // collect user data if its there
+                QList<double> udata;
+                for (int k=0; k<objects->U.count(); k++) udata << (objects->U[k].array.size() > i ? objects->U[k].array[i] : 0);
+
+                // add to list
                 DataPoint dp(objects->timeArray[i],
                              (!objects->hrArray.empty() ? objects->hrArray[i] : 0),
                              (!objects->wattsArray.empty() ? objects->wattsArray[i] : 0),
@@ -1801,8 +1947,13 @@ AllPlot::recalc(AllPlotObject *objects)
                              (!objects->nmDArray.empty() ? objects->nmDArray[i] : 0),
                              (!objects->hrDArray.empty() ? objects->hrDArray[i] : 0),
                              (!objects->slopeArray.empty() ? objects->slopeArray[i] : 0),
-                             (!objects->tcoreArray.empty() ? objects->tcoreArray[i] : 0));
+                             (!objects->tcoreArray.empty() ? objects->tcoreArray[i] : 0),
+                            udata);
 
+                // apend to list
+                list.append(dp);
+
+                // maintain totals
                 if (!objects->wattsArray.empty()) totalWatts += objects->wattsArray[i];
                 if (!objects->npArray.empty()) totalNP += objects->npArray[i];
                 if (!objects->rvArray.empty()) totalRV += objects->rvArray[i];
@@ -1838,43 +1989,33 @@ AllPlot::recalc(AllPlotObject *objects)
                         totalTemp   += objects->tempArray[i];
                     }
                 }
+                if (!objects->balanceArray.empty()) totalBalance   += (objects->balanceArray[i]>0?objects->balanceArray[i]:50);
+                if (!objects->lteArray.empty()) totalLTE   += (objects->lteArray[i]>0?objects->lteArray[i]:0);
+                if (!objects->rteArray.empty()) totalRTE   += (objects->rteArray[i]>0?objects->rteArray[i]:0);
+                if (!objects->lpsArray.empty()) totalLPS   += (objects->lpsArray[i]>0?objects->lpsArray[i]:0);
+                if (!objects->rpsArray.empty()) totalRPS   += (objects->rpsArray[i]>0?objects->rpsArray[i]:0);
+                if (!objects->lpcoArray.empty()) totalLPCO   += objects->lpcoArray[i];
+                if (!objects->rpcoArray.empty()) totalRPCO   += objects->rpcoArray[i];
+                if (!objects->lppbArray.empty()) totalLPPB   += (objects->lppbArray[i]>0?objects->lppbArray[i]:0);
+                if (!objects->rppbArray.empty()) totalRPPB   += (objects->rppbArray[i]>0?objects->rppbArray[i]:0);
+                if (!objects->lppeArray.empty()) totalLPPE   += (objects->lppeArray[i]>0?objects->lppeArray[i]:0);
+                if (!objects->rppeArray.empty()) totalRPPE   += (objects->rppeArray[i]>0?objects->rppeArray[i]:0);
+                if (!objects->lpppbArray.empty()) totalLPPPB   += (objects->lpppbArray[i]>0?objects->lpppbArray[i]:0);
+                if (!objects->rpppbArray.empty()) totalRPPPB   += (objects->rpppbArray[i]>0?objects->rpppbArray[i]:0);
+                if (!objects->lpppeArray.empty()) totalLPPPE   += (objects->lpppeArray[i]>0?objects->lpppeArray[i]:0);
+                if (!objects->rpppeArray.empty()) totalRPPPE   += (objects->rpppeArray[i]>0?objects->rpppeArray[i]:0);
 
-                // left/right pedal data
-                if (!objects->balanceArray.empty())
-                    totalBalance   += (objects->balanceArray[i]>0?objects->balanceArray[i]:50);
-                if (!objects->lteArray.empty())
-                    totalLTE   += (objects->lteArray[i]>0?objects->lteArray[i]:0);
-                if (!objects->rteArray.empty())
-                    totalRTE   += (objects->rteArray[i]>0?objects->rteArray[i]:0);
-                if (!objects->lpsArray.empty())
-                    totalLPS   += (objects->lpsArray[i]>0?objects->lpsArray[i]:0);
-                if (!objects->rpsArray.empty())
-                    totalRPS   += (objects->rpsArray[i]>0?objects->rpsArray[i]:0);
-                if (!objects->lpcoArray.empty())
-                    totalLPCO   += objects->lpcoArray[i];
-                if (!objects->rpcoArray.empty())
-                    totalRPCO   += objects->rpcoArray[i];
-                if (!objects->lppbArray.empty())
-                    totalLPPB   += (objects->lppbArray[i]>0?objects->lppbArray[i]:0);
-                if (!objects->rppbArray.empty())
-                    totalRPPB   += (objects->rppbArray[i]>0?objects->rppbArray[i]:0);
-                if (!objects->lppeArray.empty())
-                    totalLPPE   += (objects->lppeArray[i]>0?objects->lppeArray[i]:0);
-                if (!objects->rppeArray.empty())
-                    totalRPPE   += (objects->rppeArray[i]>0?objects->rppeArray[i]:0);
-                if (!objects->lpppbArray.empty())
-                    totalLPPPB   += (objects->lpppbArray[i]>0?objects->lpppbArray[i]:0);
-                if (!objects->rpppbArray.empty())
-                    totalRPPPB   += (objects->rpppbArray[i]>0?objects->rpppbArray[i]:0);
-                if (!objects->lpppeArray.empty())
-                    totalLPPPE   += (objects->lpppeArray[i]>0?objects->lpppeArray[i]:0);
-                if (!objects->rpppeArray.empty())
-                    totalRPPPE   += (objects->rpppeArray[i]>0?objects->rpppeArray[i]:0);
-
+                // set values which must not be smoothed
+                if (!objects->gearArray.empty()) currentGearRatio = (objects->gearArray[i]>0?objects->gearArray[i]:0);
                 totalDist   = objects->distanceArray[i];
-                list.append(dp);
+
+                // totalise user data
+                for(int k=0; k<utotals.count(); k++) utotals[k] += udata[k];
+
                 ++i;
             }
+
+            // remove data from before smoothing duration (er, really?)
             while (!list.empty() && (list.front().time < secs - applysmooth)) {
                 DataPoint &dp = list.front();
                 totalWatts -= dp.watts;
@@ -1919,11 +2060,16 @@ AllPlot::recalc(AllPlotObject *objects)
                 totalLPPPE  -= dp.lpppe;
                 totalRPPPE  -= dp.rpppe;
                 totalBalance   -= (dp.lrbalance>0?dp.lrbalance:50);
+                for(int k=0; k<utotals.count(); k++) utotals[k] -= dp.user[k];
+
                 list.removeFirst();
             }
+
             // TODO: this is wrong.  We should do a weighted average over the
             // seconds represented by each point...
             if (list.empty()) {
+
+                for (int k=0; k<objects->U.count(); k++) objects->U[k].smooth[secs] = 0.0;
                 objects->smoothWatts[secs] = 0.0;
                 objects->smoothNP[secs] = 0.0;
                 objects->smoothRV[secs] = 0.0;
@@ -1964,8 +2110,10 @@ AllPlot::recalc(AllPlotObject *objects)
                 objects->smoothRPPP[secs] = QwtIntervalSample();
                 objects->smoothBalanceL[secs] = 50;
                 objects->smoothBalanceR[secs] = 50;
-            }
-            else {
+
+            } else {
+
+                for(int k=0; k<utotals.count(); k++) objects->U[k].smooth[secs] = utotals[k] / list.size();
                 objects->smoothWatts[secs]    = totalWatts / list.size();
                 objects->smoothNP[secs]    = totalNP / list.size();
                 objects->smoothRV[secs]    = totalRV / list.size();
@@ -1992,9 +2140,12 @@ AllPlot::recalc(AllPlotObject *objects)
                 objects->smoothSlope[secs]      = totalSlope / double(list.size());
                 objects->smoothTemp[secs]      = totalTemp / list.size();
                 objects->smoothWind[secs]    = totalWind / list.size();
-                objects->smoothRelSpeed[secs] =  QwtIntervalSample( bydist ? totalDist : secs / 60.0, QwtInterval(qMin(totalWind / list.size(), totalSpeed / list.size()), qMax(totalWind / list.size(), totalSpeed / list.size()) ) );
                 objects->smoothTorque[secs]    = totalTorque / list.size();
-
+                objects->smoothRelSpeed[secs] =  QwtIntervalSample(bydist ? totalDist : secs / 60.0, 
+                                                                   QwtInterval(qMin(totalWind / list.size(),
+                                                                   totalSpeed / list.size()), 
+                                                                   qMax(totalWind / list.size(), 
+                                                                   totalSpeed / list.size())));
 
                 // left /right pedal data
                 double balance = totalBalance / list.size();
@@ -2020,20 +2171,16 @@ AllPlot::recalc(AllPlotObject *objects)
                 objects->smoothLPPP[secs]   = QwtIntervalSample( bydist ? totalDist : secs / 60.0, QwtInterval(totalLPPPB / list.size(), totalLPPPE / list.size() ) );
                 objects->smoothRPPP[secs]   = QwtIntervalSample( bydist ? totalDist : secs / 60.0, QwtInterval(totalRPPPB / list.size(), totalRPPPE / list.size() ) );
             }
+            objects->smoothGear[secs] = currentGearRatio;
             objects->smoothDistance[secs] = totalDist;
             objects->smoothTime[secs]  = secs / 60.0;
 
-            // set data series (gearRatio) which are not smoothed at all
-            if (objects->gearArray.empty() || secs >= objects->gearArray.count()) {
-                objects->smoothGear[secs] = 0.0f;
-            } else {
-                objects->smoothGear[secs] = objects->gearArray[secs];
-            }
         }
 
     } else {
 
         // no standard->smoothing .. just raw data
+        for (int k=0; k<objects->U.count(); k++) objects->U[k].smooth.resize(0);
         objects->smoothWatts.resize(0);
         objects->smoothNP.resize(0);
         objects->smoothGear.resize(0);
@@ -2078,6 +2225,8 @@ AllPlot::recalc(AllPlotObject *objects)
         objects->smoothBalanceL.resize(0);
         objects->smoothBalanceR.resize(0);
 
+        // fill with raw data
+        for (int k=0; k<objects->U.count(); k++) objects->U[k].smooth = objects->U[k].array;
         foreach (RideFilePoint *dp, rideItem->ride()->dataPoints()) {
             objects->smoothWatts.append(dp->watts);
             objects->smoothNP.append(dp->np);
@@ -2156,6 +2305,13 @@ AllPlot::recalc(AllPlotObject *objects)
         objects->mCurve->setSamples(bydist ? objects->matchDist.data() : objects->matchTime.data(), 
                                     objects->match.data(), objects->match.count());
         setMatchLabels(objects);
+    }
+
+    // set curve.
+    for(int k=0; k<objects->U.count(); k++) {
+        if (!objects->U[k].array.empty()) {
+            objects->U[k].curve->setSamples(xaxis.data() + startingIndex, objects->U[k].smooth.data() + startingIndex, totalPoints);
+        }
     }
 
     if (!objects->wattsArray.empty()) {
@@ -2509,6 +2665,11 @@ AllPlot::setYMax()
     // etc are ignored because the axis is not visible
     if (wantaxis) {
 
+        // hide user data axis
+        for(int k=0; k<standard->U.count(); k++) {
+            setAxisVisible(QwtAxisId(QwtAxis::yRight, 4+k), standard->U[k].curve->isVisible());
+        }
+
         setAxisVisible(yLeft, standard->wattsCurve->isVisible() || 
                               standard->atissCurve->isVisible() || 
                               standard->antissCurve->isVisible() || 
@@ -2545,7 +2706,10 @@ AllPlot::setYMax()
         setAxisVisible(QwtAxisId(QwtPlot::yRight,1), false);
         setAxisVisible(QwtAxisId(QwtAxis::yRight,2), false);
         setAxisVisible(QwtAxisId(QwtAxis::yRight,3), false);
-
+        // hide user data axis
+        for(int k=0; k<standard->U.count(); k++) {
+            setAxisVisible(QwtAxisId(QwtAxis::yRight, 4+k), false);
+        }
     }
 
     // might want xaxis
@@ -2876,7 +3040,6 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
     isolation = false;
     curveColors->saveState();
 
-
     // You got to give me some data first!
     if (!plot->standard->distanceArray.count() || !plot->standard->timeArray.count()) return;
 
@@ -2900,6 +3063,11 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
 
     // make sure indexes are still valid
     if (startidx > stopidx || startidx < 0 || stopidx < 0) return;
+
+    // user data smoothing
+    QList<double*> smoothU;
+    for(int k=0; k<plot->standard->U.count(); k++)
+        smoothU << &plot->standard->U[k].smooth[startidx];
 
     double *smoothW = &plot->standard->smoothWatts[startidx];
     double *smoothN = &plot->standard->smoothNP[startidx];
@@ -2996,6 +3164,7 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
         standard->curveTitle.setLabel(QwtText(""));
     }
 
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->detach();
     standard->wCurve->detach();
     standard->mCurve->detach();
     standard->wattsCurve->detach();
@@ -3040,6 +3209,7 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
     standard->lpppCurve->detach();
     standard->rpppCurve->detach();
 
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->setVisible(true);
     standard->wattsCurve->setVisible(rideItem->ride()->areDataPresent()->watts && showPowerState < 2);
     standard->atissCurve->setVisible(rideItem->ride()->areDataPresent()->watts && showATISS);
     standard->antissCurve->setVisible(rideItem->ride()->areDataPresent()->watts && showANTISS);
@@ -3092,6 +3262,7 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
         setMatchLabels(standard);
     }
     int points = stopidx - startidx + 1; // e.g. 10 to 12 is 3 points 10,11,12, so not 12-10 !
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->setSamples(xaxis,smoothU[k], points);
     standard->wattsCurve->setSamples(xaxis,smoothW,points);
     standard->atissCurve->setSamples(xaxis,smoothAT,points);
     standard->antissCurve->setSamples(xaxis,smoothANT,points);
@@ -3155,6 +3326,7 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
         tmpWND.append(inter); // plot->standard->smoothRelSpeed.at(i)
     }*/
 
+    for(int k=0; k<standard->U.count(); k++) setSymbol(standard->U[k].curve, points);
     setSymbol(standard->wCurve, points);
     setSymbol(standard->wattsCurve, points);
     setSymbol(standard->antissCurve, points);
@@ -3192,6 +3364,13 @@ AllPlot::setDataFromPlot(AllPlot *plot, int startidx, int stopidx)
     setSymbol(standard->rpsCurve, points);
     setSymbol(standard->lpcoCurve, points);
     setSymbol(standard->rpcoCurve, points);
+
+    // show if got data
+    for(int k=0; k<standard->U.count(); k++) {
+        if (!plot->standard->U[k].smooth.empty()) {
+            standard->U[k].curve->attach(this);
+        }
+    }
 
     if (!plot->standard->smoothAltitude.empty()) {
         standard->altCurve->attach(this);
@@ -3347,6 +3526,7 @@ AllPlot::setDataFromPlot(AllPlot *plot)
     bydist = plot->bydist;
 
     // remove all curves from the plot
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->detach();
     standard->wCurve->detach();
     standard->mCurve->detach();
     standard->wattsCurve->detach();
@@ -3391,6 +3571,7 @@ AllPlot::setDataFromPlot(AllPlot *plot)
     standard->lpppCurve->detach();
     standard->rpppCurve->detach();
 
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->setVisible(false);
     standard->wCurve->setVisible(false);
     standard->mCurve->setVisible(false);
     standard->wattsCurve->setVisible(false);
@@ -3774,6 +3955,14 @@ AllPlot::setDataFromPlot(AllPlot *plot)
         break;
 
     default:
+        if (scope > RideFile::none) {
+
+            // user defined series
+            int index = scope - (RideFile::none+1);
+            ourCurve = standard->U[index].curve;
+            thereCurve = referencePlot->standard->U[index].curve;
+            title = referencePlot->standard->U[index].name;
+        }
     case RideFile::interval:
     case RideFile::vam:
     case RideFile::wattsKg:
@@ -3963,6 +4152,10 @@ AllPlot::setDataFromPlot(AllPlot *plot)
         setAxisVisible(QwtAxisId(QwtAxis::yRight, 2), false);
         setAxisVisible(QwtAxisId(QwtAxis::yRight, 3), false);
 
+        // hide user axes
+        for(int k=0; k<standard->U.count(); k++)
+            setAxisVisible(QwtAxisId(QwtAxis::yRight, 4 + k), false);
+
         // plot standard->grid
         standard->grid->setVisible(referencePlot->standard->grid->isVisible());
 
@@ -3988,6 +4181,7 @@ AllPlot::setDataFromPlots(QList<AllPlot *> plots)
     curveColors->saveState();
 
     // remove all curves from the plot
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->detach();
     standard->wCurve->detach();
     standard->mCurve->detach();
     standard->wattsCurve->detach();
@@ -4032,6 +4226,7 @@ AllPlot::setDataFromPlots(QList<AllPlot *> plots)
     standard->lpppCurve->detach();
     standard->rpppCurve->detach();
 
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->setVisible(false);
     standard->wCurve->setVisible(false);
     standard->mCurve->setVisible(false);
     standard->wattsCurve->setVisible(false);
@@ -4202,7 +4397,7 @@ AllPlot::setDataFromPlots(QList<AllPlot *> plots)
 
             case RideFile::watts:
                 {
-                ourCurve = new QwtPlotCurve(tr("Power"));
+                ourCurve = (QwtPlotCurve*)(new QwtPlotGappedCurve(tr("Power"), 3));
                 ourCurve->setPaintAttribute(QwtPlotCurve::FilterPoints, true);
                 thereCurve = referencePlot->standard->wattsCurve;
                 title = tr("Power");
@@ -4483,6 +4678,14 @@ AllPlot::setDataFromPlots(QList<AllPlot *> plots)
                 break;
 
             default:
+                if (scope > RideFile::none) {
+
+                    // user defined series
+                    int index = scope - (RideFile::none+1);
+                    ourCurve = static_cast<QwtPlotCurve*>(new QwtPlotGappedCurve(referencePlot->standard->U[index].name, 3));
+                    thereCurve = referencePlot->standard->U[index].curve;
+                    title = referencePlot->standard->U[index].name;
+                }
             case RideFile::interval:
             case RideFile::vam:
             case RideFile::wattsKg:
@@ -4512,10 +4715,13 @@ AllPlot::setDataFromPlots(QList<AllPlot *> plots)
                     ourCurve->attach(this);
 
                     // lets clone the data
-                    QVector<QPointF> array;
-                    for (size_t i=0; i<thereCurve->data()->size(); i++) array << thereCurve->data()->sample(i);
+                    QVector<double> x,y;
+                    for (size_t i=0; i<thereCurve->data()->size(); i++) {
+                        x << thereCurve->data()->sample(i).x();
+                        y << thereCurve->data()->sample(i).y();
+                    }
 
-                    ourCurve->setSamples(array);
+                    ourCurve->setSamples(x,y);
                     ourCurve->setYAxis(yLeft);
                     ourCurve->setBaseline(thereCurve->baseline());
 
@@ -4523,7 +4729,7 @@ AllPlot::setDataFromPlots(QList<AllPlot *> plots)
                     if (ourCurve->minYValue() < MINY) MINY = ourCurve->minYValue();
 
                     // symbol when zoomed in super close
-                    if (array.size() < 150) {
+                    if (x.size() < 150) {
                         QwtSymbol *sym = new QwtSymbol;
                         sym->setPen(QPen(GColor(CPLOTMARKER)));
                         sym->setStyle(QwtSymbol::Ellipse);
@@ -4697,6 +4903,7 @@ AllPlot::setDataFromObject(AllPlotObject *object, AllPlot *reference)
     bydist = reference->bydist;
 
     // remove all curves from the plot
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->detach();
     standard->wCurve->detach();
     standard->mCurve->detach();
     standard->wattsCurve->detach();
@@ -4737,6 +4944,7 @@ AllPlot::setDataFromObject(AllPlotObject *object, AllPlot *reference)
     standard->intervalHighlighterCurve->detach();
     standard->intervalHoverCurve->detach();
 
+    for(int k=0; k<standard->U.count(); k++) standard->U[k].curve->setVisible(false);
     standard->wCurve->setVisible(false);
     standard->mCurve->setVisible(false);
     standard->wattsCurve->setVisible(false);
@@ -4788,6 +4996,17 @@ AllPlot::setDataFromObject(AllPlotObject *object, AllPlot *reference)
         standard->mCurve->setSamples(bydist ? object->matchDist.data() : object->matchTime.data(), 
                                     object->match.data(), object->match.count());
         setMatchLabels(standard);
+    }
+
+    // show user data curves
+    for(int k=0; k< standard->U.count() && k<object->U.count(); k++) {
+
+        if (!object->U[k].smooth.empty()) {
+
+            standard->U[k].curve->setSamples(xaxis.data(), object->U[k].smooth.data(), totalPoints);
+            standard->U[k].curve->attach(this);
+            standard->U[k].curve->setVisible(true);
+        }
     }
 
     if (!object->wattsArray.empty()) {
@@ -5096,7 +5315,7 @@ AllPlot::setDataFromObject(AllPlotObject *object, AllPlot *reference)
 }
 
 void
-AllPlot::setDataFromRide(RideItem *_rideItem)
+AllPlot::setDataFromRide(RideItem *_rideItem, QList<UserData*>user)
 {
     rideItem = _rideItem;
     if (_rideItem == NULL) return;
@@ -5108,7 +5327,7 @@ AllPlot::setDataFromRide(RideItem *_rideItem)
     //standard->wattsArray.clear();
     //standard->curveTitle.setLabel(QwtText(QString(""), QwtText::PlainText)); // default to no title
 
-    setDataFromRideFile(rideItem->ride(), standard);
+    setDataFromRideFile(rideItem->ride(), standard, user);
 
     // remember the curves and colors
     isolation = false;
@@ -5116,7 +5335,7 @@ AllPlot::setDataFromRide(RideItem *_rideItem)
 }
 
 void
-AllPlot::setDataFromRideFile(RideFile *ride, AllPlotObject *here)
+AllPlot::setDataFromRideFile(RideFile *ride, AllPlotObject *here, QList<UserData*>user)
 {
     if (ride && ride->dataPoints().size()) {
         const RideFileDataPresent *dataPresent = ride->areDataPresent();
@@ -5175,6 +5394,7 @@ AllPlot::setDataFromRideFile(RideFile *ride, AllPlotObject *here)
         here->rpppeArray.resize(dataPresent->rpppe ? npoints : 0);
         here->timeArray.resize(npoints);
         here->distanceArray.resize(npoints);
+        for(int k=0; k<user.count(); k++) here->U[k].array.resize(npoints);
 
         // attach appropriate curves
         here->wCurve->detach();
@@ -5347,6 +5567,8 @@ AllPlot::setDataFromRideFile(RideFile *ride, AllPlotObject *here)
             double msecs = round((point->secs - secs) * 100) * 10;
 
             here->timeArray[arrayLength]  = secs + msecs/1000;
+
+            for(int k=0; k<user.count(); k++) here->U[k].array[arrayLength] = user[k]->vector[arrayLength];
             if (!here->wattsArray.empty()) here->wattsArray[arrayLength] = max(0, point->watts);
             if (!here->atissArray.empty()) here->atissArray[arrayLength] = max(0, point->atiss);
             if (!here->antissArray.empty()) here->antissArray[arrayLength] = max(0, point->antiss);
@@ -5424,6 +5646,7 @@ AllPlot::setDataFromRideFile(RideFile *ride, AllPlotObject *here)
             ++arrayLength;
         }
         recalc(here);
+
     }
     else {
         //setTitle("no data");
@@ -6198,6 +6421,12 @@ AllPlot::setPaintBrush(int state)
     fill = state;
     if (state) {
 
+        for(int k=0; k<standard->U.count(); k++) {
+            QColor p = standard->U[k].color;
+            p.setAlpha(64);
+            standard->U[k].curve->setBrush(QBrush(p));
+        }
+
         QColor p;
         p = standard->wCurve->pen().color();
         p.setAlpha(64);
@@ -6340,6 +6569,10 @@ AllPlot::setPaintBrush(int state)
         p.setAlpha(64);
         standard->balanceRCurve->setBrush(QBrush(p));*/
     } else {
+        for(int k=0; k<standard->U.count(); k++) {
+            standard->U[k].curve->setBrush(Qt::NoBrush);
+        }
+
         standard->wCurve->setBrush(Qt::NoBrush);
         standard->wattsCurve->setBrush(Qt::NoBrush);
         standard->npCurve->setBrush(Qt::NoBrush);
@@ -6858,6 +7091,14 @@ AllPlot::eventFilter(QObject *obj, QEvent *event)
 
     axes << axisWidget(QwtAxisId(QwtAxis::yRight, 3));
     axesId << QwtAxisId(QwtAxis::yRight, 3);
+
+    // user axis
+    if (standard) {
+        for(int k=0; k<standard->U.count(); k++) {
+            axes << axisWidget(QwtAxisId(QwtAxis::yRight, 4 + k));
+            axesId << QwtAxisId(QwtAxis::yRight, 4 + k);
+        }
+    }
 
     if (axes.contains(obj)) {
 

@@ -165,6 +165,7 @@ struct setChannelAtom {
 #define ANT_VERSION            0x3E
 #define ANT_CAPABILITIES       0x54
 #define ANT_SERIAL_NUMBER      0x61
+#define ANT_NOTIF_STARTUP      0x6F
 #define ANT_CW_INIT            0x53
 #define ANT_CW_TEST            0x48
 
@@ -217,6 +218,7 @@ struct setChannelAtom {
 #define ANT_SPORT_KICKR_PERIOD 2048
 #define ANT_SPORT_MOXY_PERIOD 8192
 #define ANT_SPORT_TACX_VORTEX_PERIOD 8192
+#define ANT_SPORT_FITNESS_EQUIPMENT_PERIOD 8192
 #define ANT_FAST_QUARQ_PERIOD (8182/16)
 #define ANT_QUARQ_PERIOD (8182*4)
 
@@ -228,6 +230,7 @@ struct setChannelAtom {
 #define ANT_SPORT_MOXY_TYPE 0x1F
 #define ANT_SPORT_CONTROL_TYPE 0x10
 #define ANT_SPORT_TACX_VORTEX_TYPE 61
+#define ANT_SPORT_FITNESS_EQUIPMENT_TYPE 0x11
 #define ANT_FAST_QUARQ_TYPE_WAS 11 // before release 1.8
 #define ANT_FAST_QUARQ_TYPE 0x60
 #define ANT_QUARQ_TYPE 0x60
@@ -238,6 +241,7 @@ struct setChannelAtom {
 #define ANT_KICKR_FREQUENCY 52
 #define ANT_MOXY_FREQUENCY 57
 #define ANT_TACX_VORTEX_FREQUENCY 66
+#define ANT_FITNESS_EQUIPMENT_FREQUENCY 57
 
 #define ANT_SPORT_CALIBRATION_MESSAGE                 0x01
 
@@ -279,6 +283,47 @@ struct setChannelAtom {
 #define TACX_VORTEX_DATA_VERSION       2
 #define TACX_VORTEX_DATA_CALIBRATION   3
 
+// ant+ fitness equipment profile data pages
+#define FITNESS_EQUIPMENT_GENERAL_PAGE              0x10
+#define FITNESS_EQUIPMENT_TRAINER_SPECIFIC_PAGE     0x19
+#define FITNESS_EQUIPMENT_TRAINER_TORQUE_PAGE       0x20
+#define FITNESS_EQUIPMENT_TRAINER_CAPABILITIES_PAGE 0x36
+#define FITNESS_EQUIPMENT_COMMAND_STATUS_PAGE       0x47
+
+#define FITNESS_EQUIPMENT_TYPE_GENERAL              0x10
+#define FITNESS_EQUIPMENT_TYPE_TREADMILL            0x13
+#define FITNESS_EQUIPMENT_TYPE_ELLIPTICAL           0x14
+#define FITNESS_EQUIPMENT_TYPE_STAT_BIKE            0x15
+#define FITNESS_EQUIPMENT_TYPE_ROWER                0x16
+#define FITNESS_EQUIPMENT_TYPE_CLIMBER              0x17
+#define FITNESS_EQUIPMENT_TYPE_NORDIC_SKI           0x18
+#define FITNESS_EQUIPMENT_TYPE_TRAINER              0x19
+
+#define FITNESS_EQUIPMENT_BASIC_RESISTANCE_ID       0x30
+#define FITNESS_EQUIPMENT_TARGET_POWER_ID           0x31
+#define FITNESS_EQUIPMENT_WIND_RESISTANCE_ID        0x32
+#define FITNESS_EQUIPMENT_TRACK_RESISTANCE_ID       0x33
+
+#define FITNESS_EQUIPMENT_RESIST_MODE_CAPABILITY    0x01
+#define FITNESS_EQUIPMENT_POWER_MODE_CAPABILITY     0x02
+#define FITNESS_EQUIPMENT_SIMUL_MODE_CAPABILITY     0x04
+
+#define FITNESS_EQUIPMENT_POWERCALIB_REQU           0x01
+#define FITNESS_EQUIPMENT_RESISCALIB_REQU           0x02
+#define FITNESS_EQUIPMENT_USERCONFIG_REQU           0x04
+
+#define FITNESS_EQUIPMENT_ASLEEP                    0x01
+#define FITNESS_EQUIPMENT_READY                     0x02
+#define FITNESS_EQUIPMENT_IN_USE                    0x03
+#define FITNESS_EQUIPMENT_FINISHED                  0x04
+
+#define FITNESS_EQUIPMENT_POWER_OK                  0x00
+#define FITNESS_EQUIPMENT_POWER_NOK_LOWSPEED        0x01 // trainer unable to brake as per request due to low speed
+#define FITNESS_EQUIPMENT_POWER_NOK_HIGHSPEED       0x02 // trainer unable to brake as per request due to high speed
+#define FITNESS_EQUIPMENT_POWER_NOK                 0x03 // trainer unable to brake as per request (no details available)
+
+#define ANT_MANUFACTURER_ID_PAGE                    0x50
+#define ANT_PRODUCT_INFO_PAGE                       0x51
 
 //======================================================================
 // Worker thread
@@ -291,7 +336,7 @@ class ANT : public QThread
 
 
 public:
-    ANT(QObject *parent = 0, DeviceConfiguration *dc=0);
+    ANT(QObject *parent = 0, DeviceConfiguration *dc=0, QString cyclist="");
     ~ANT();
 
 signals:
@@ -382,6 +427,9 @@ public:
     int rawRead(uint8_t bytes[], int size);
     int rawWrite(uint8_t *bytes, int size);
 
+    bool modeERGO(void) const;
+    bool modeSLOPE(void) const;
+
     // channels update our telemetry
     double channelValue(int channel);
     double channelValue2(int channel);
@@ -392,13 +440,26 @@ public:
         lastCadenceMessage = QDateTime(QDateTime::currentDateTime());
         telemetry.setCadence(x);
     }
+    float getCadence(void) { return telemetry.getCadence(); }
     void setSecondaryCadence(float x) {
         if (lastCadenceMessage.toTime_t() == 0 || (QDateTime::currentDateTime().toTime_t() - lastCadenceMessage.toTime_t())>10)  {
             telemetry.setCadence(x);
         }
     }
 
+    void setSpeed(double x)
+    {
+        telemetry.setSpeed(x);
+    }
+
+    void incAltDistance(double x)
+    {
+        telemetry.setAltDistance(telemetry.getAltDistance() + x);
+    }
+
     void setWheelRpm(float x);
+    float getWheelRpm(void) { return telemetry.getWheelRpm(); }
+
     void setWatts(float x) {
         telemetry.setWatts(x);
     }
@@ -421,8 +482,20 @@ public:
         telemetry.setRPS(rps);
     }
 
+    void setFecChannel(int channel);
+    void refreshFecLoad();
+    void refreshFecGradient();
+    void requestFecCapabilities();
+
     void setVortexData(int channel, int id);
     void refreshVortexLoad();
+
+    void setTrainerStatusAvailable(bool status) { telemetry.setTrainerStatusAvailable(status); }
+    void setTrainerCalibRequired(bool status) { telemetry.setTrainerCalibRequired(status); }
+    void setTrainerConfigRequired(bool status) { telemetry.setTrainerConfigRequired(status); }
+    void setTrainerBrakeFault(bool status) { telemetry.setTrainerBrakeFault(status); }
+    void setTrainerReady(bool status) { telemetry.setTrainerReady(status); }
+    void setTrainerRunning(bool status) { telemetry.setTrainerRunning(status); }
 
 private:
 
@@ -458,6 +531,7 @@ private:
     QTime elapsedTime;
 #endif
 
+    bool ANT_Reset_Acknowledge;
     unsigned char rxMessage[ANT_MAX_MESSAGE_SIZE];
 
     // state machine whilst receiving bytes
@@ -474,15 +548,22 @@ private:
     // generic trainer settings
     double currentLoad, load;
     double currentGradient, gradient;
+    double currentRollingResistance, rollingResistance;
     int currentMode, mode;
 
     // now kickr specific
     int kickrDeviceID;
     int kickrChannel;
 
+    // fitness equipment data
+    int fecChannel;
+
     // tacx vortex (we'll probably want to abstract this out cf. kickr)
     int vortexID;
     int vortexChannel;
+
+    // cylist for wheelsize settings
+    QString trainCyclist;
 };
 
 #include "ANTMessage.h"

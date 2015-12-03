@@ -136,6 +136,7 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Dean Junk");
     contributors.append("Eric Brandt");
     contributors.append("Eric Murray");
+    contributors.append("Erik Boto");
     contributors.append("Frank Zschockelt");
     contributors.append("Gareth Coco");
     contributors.append("Greg Lonnon");
@@ -155,6 +156,7 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Keisuke Yamaguchi");
     contributors.append("Keith Reynolds");
     contributors.append("Ken Sallot");
+    contributors.append("Leif Warland");
     contributors.append("Luke NRG");
     contributors.append("Magnus Gille");
     contributors.append("Marc Boudreau");
@@ -163,9 +165,11 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Mark Rages");
     contributors.append("Michael Puchowicz");
     contributors.append("Mitsukuni Sato");
-    contributors.append("Omar Torres");
     contributors.append("Ned Harding");
+    contributors.append("Nicholas Feng");
+    contributors.append("Nick Burrett");
     contributors.append("Okano Takayoshi");
+    contributors.append("Omar Torres");
     contributors.append("Patrick McNerthney");
     contributors.append("Dr Phil Skiba");
     contributors.append("Philip Willoughby");
@@ -183,6 +187,7 @@ ContributorsPage::ContributorsPage(Context *context) : context(context)
     contributors.append("Steven Gribble");
     contributors.append("Thomas Weichmann");
     contributors.append("Tilman Schmiedeberg");
+    contributors.append("Vianney Boyer");
     contributors.append("Walter B&#252;rki");
     contributors.append("Yves Arrouye");
 

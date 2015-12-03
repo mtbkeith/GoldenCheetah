@@ -954,7 +954,7 @@ MergeAdjust::initializePage()
     offset2 = wizard->offset2;
 
     // setup plot
-    fullPlot->setDataFromRide(wizard->combinedItem);
+    fullPlot->setDataFromRide(wizard->combinedItem, QList<UserData*>());
     spanSlider->setMinimum(0);
     spanSlider->setMaximum(wizard->combined->dataPoints().last()->secs);
     spanSlider->setLowerValue(spanSlider->minimum());
@@ -996,7 +996,7 @@ MergeAdjust::offsetChanged()
     }
     wizard->combine();
 
-    fullPlot->setDataFromRide(wizard->combinedItem);
+    fullPlot->setDataFromRide(wizard->combinedItem, QList<UserData*>());
 
     bool rescale = (spanSlider->minimum() == spanSlider->lowerValue() &&
                     spanSlider->maximum() == spanSlider->upperValue());
@@ -1183,6 +1183,7 @@ bool
 MergeConfirm::validatePage()
 {
     // We are done -- recalculate derived series, save and mark done
+    wizard->current->notifyRideDataChanged();
     wizard->combined->recalculateDerivedSeries(true);
     wizard->current->setRide(wizard->combined);
     wizard->context->mainWindow->saveSilent(wizard->context, wizard->current);

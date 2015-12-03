@@ -141,6 +141,7 @@ AddType::clicked(QString p)
         case DEV_ANTLOCAL : next = 50; break; // pair 
         default:
         case DEV_CT : next = 60; break; // confirm and add 
+        case DEV_MONARK : next = 60; break; // confirm and add
         case DEV_FORTIUS : next = 30; break; // confirm and add 
         }
     }
@@ -201,6 +202,9 @@ DeviceScanner::quickScan(bool deep) // scan quickly or if true scan forever, as 
 
     // we will need a factory for this soon..
     case DEV_CT : wizard->controller = new ComputrainerController(NULL, NULL); break;
+#if QT_VERSION >= 0x050000
+    case DEV_MONARK : wizard->controller = new MonarkController(NULL, NULL); break;
+#endif
 #ifdef GC_HAVE_LIBUSB
     case DEV_FORTIUS : wizard->controller = new FortiusController(NULL, NULL); break;
 #endif
@@ -453,6 +457,7 @@ AddSearch::nextId() const
         default:
         case DEV_KICKR :
         case DEV_CT : return 60; break; // confirm and add 
+        case DEV_MONARK : return 60; break; // confirm and add
         case DEV_FORTIUS : return 30; break; // confirm and add 
         }
     }
@@ -588,6 +593,9 @@ AddPair::AddPair(AddDeviceWizard *parent) : QWizardPage(parent), wizard(parent)
 
     channelWidget = new QTreeWidget(this);
     layout->addWidget(channelWidget);
+
+    cyclist = parent->context->athlete->cyclist;
+
 }
 
 static void
@@ -678,7 +686,7 @@ AddPair::initializePage()
 
     // defaults
     static const int index4[4] = { 1,2,3,5 };
-    static const int index8[8] = { 1,2,3,4,5,6,0,0 };
+    static const int index8[8] = { 1,2,3,4,5,6,9,0 };
     const int *index = channels == 4 ? index4 : index8;
 
     // how many devices we got then?
@@ -791,7 +799,7 @@ AddPair::getChannelValues()
 
                 dynamic_cast<QLabel *>(channelWidget->itemWidget(item,2))->setText(QString("%1 %2")
                 .arg((int)dynamic_cast<ANTlocalController*>(wizard->controller)->myANTlocal->channelValue2(i) //speed
-                          * (appsettings->value(NULL, GC_WHEELSIZE, 2100).toInt()/1000) * 60 / 1000)
+                          * (appsettings->cvalue(cyclist, GC_WHEELSIZE, 2100).toInt()/1000) * 60 / 1000)
                 .arg((int)dynamic_cast<ANTlocalController*>(wizard->controller)->myANTlocal->channelValue(i))); // cad
 
             } else if (p->itemData(p->currentIndex()) == ANTChannel::CHANNEL_TYPE_MOXY) {
@@ -849,6 +857,9 @@ AddPairBTLE::AddPairBTLE(AddDeviceWizard *parent) : QWizardPage(parent), wizard(
 
     channelWidget = new QTreeWidget(this);
     layout->addWidget(channelWidget);
+
+    cyclist = parent->context->athlete->cyclist;
+
 }
 
 void
@@ -1026,7 +1037,7 @@ AddPairBTLE::getChannelValues()
             if (p->itemData(p->currentIndex()) == ANTChannel::CHANNEL_TYPE_SandC) {
             dynamic_cast<QLabel *>(channelWidget->itemWidget(item,2))->setText(QString("%1 %2")
                 .arg((int)dynamic_cast<ANTlocalController*>(wizard->controller)->myANTlocal->channelValue2(i) //speed
-                          * (appsettings->value(NULL, GC_WHEELSIZE, 2100).toInt()/1000) * 60 / 1000)
+                          * (appsettings->cvalue(cyclist, GC_WHEELSIZE, 2100).toInt()/1000) * 60 / 1000)
                 .arg((int)dynamic_cast<ANTlocalController*>(wizard->controller)->myANTlocal->channelValue(i))); // cad
             } else {
             dynamic_cast<QLabel *>(channelWidget->itemWidget(item,2))->setText(QString("%1")
@@ -1158,7 +1169,7 @@ AddFinal::AddFinal(AddDeviceWizard *parent) : QWizardPage(parent), wizard(parent
     //
     // Wheel size
     //
-    int wheelSize = appsettings->value(this, GC_WHEELSIZE, 2100).toInt();
+    int wheelSize = appsettings->cvalue(parent->context->athlete->cyclist, GC_WHEELSIZE, 2100).toInt();
 
     rimSizeCombo = new QComboBox();
     rimSizeCombo->addItems(WheelSize::RIM_SIZES);

@@ -36,8 +36,41 @@
 // 1.1      12 Dec 14  Mark Liversedge         added color, isRun and present
 // 1.2      03 May 15  Mark Liversedge         added intervals, samples bool and metric <> 0
 // 1.3      27 Jun 15  Mark Liversedge         rationalised all the discovery intervals
+// 1.4       5 Sep 15  Mark Liversedge         overrides_ in RideItem
 
-#define RIDEDB_VERSION "1.3"
+#define RIDEDB_VERSION "1.4"
+
+class APIWebService;
+class HttpResponse;
+class HttpRequest;
+
+// using context (we are reentrant)
+struct RideDBContext {
+
+    // either reading a cache or providing an api ...
+    RideCache *cache;
+
+    // api parms
+    APIWebService *api;
+    HttpRequest *request;
+    HttpResponse *response;
+
+    // the scanner
+    void *scanner;
+
+    // Set during parser processing, using same
+    // naming conventions as yacc/lex -p
+    RideItem item;
+    IntervalItem interval;
+
+    // term state data is held in these variables
+    QString JsonString;
+    QString key, value;
+    QStringList errors;
+
+    // is cache/rideDB.json an older version ?
+    bool old;
+};
 
 #endif
 

@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2015 Mark Liversedge (liversedge@gmail.com)
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc., 51
+ * Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
 #ifndef PAGES_H
 #define PAGES_H
 #include "GoldenCheetah.h"
@@ -46,7 +64,7 @@ class MetadataPage;
 class KeywordsPage;
 class FieldsPage;
 class Colors;
-class RiderPage;
+class AboutRiderPage;
 class SeasonsPage;
 
 class GeneralPage : public QWidget
@@ -59,6 +77,7 @@ class GeneralPage : public QWidget
         qint32 saveClicked();
 
         QString athleteWAS; // remember what we started with !
+        QComboBox *unitCombo;
 
     public slots:
         void browseWorkoutDir();
@@ -68,13 +87,12 @@ class GeneralPage : public QWidget
         Context *context;
 
         QComboBox *langCombo;
-        QComboBox *crankLengthCombo;
-        QComboBox *rimSizeCombo;
-        QComboBox *tireSizeCombo;
         QComboBox *wbalForm;
         QCheckBox *garminSmartRecord;
         QCheckBox *warnOnExit;
-        QLineEdit *wheelSizeEdit;
+#ifdef GC_WANT_HTTP
+        QCheckBox *startHttp;
+#endif
         QLineEdit *garminHWMarkedit;
         QLineEdit *hystedit;
         QLineEdit *athleteDirectory;
@@ -87,41 +105,70 @@ class GeneralPage : public QWidget
         QLabel *workoutLabel;
         QLabel *athleteLabel;
 
-        QLabel *perfManSTSLabel;
-        QLabel *perfManLTSLabel;
-        QLineEdit *perfManSTSavg;
-        QLineEdit *perfManLTSavg;
-        QCheckBox *showSBToday;
-        QIntValidator *perfManSTSavgValidator;
-        QIntValidator *perfManLTSavgValidator;
-
         struct {
-            int wheel;
-            int crank;
+            int unit;
             float hyst;
             int wbal;
-            int lts,sts;
             bool warn;
+#ifdef GC_WANT_HTTP
+            bool starthttp;
+#endif
         } b4;
 
-    private slots:
-        void calcWheelSize();
-        void resetWheelSize();
+
 };
 
-class RiderPage : public QWidget
+class RiderPhysPage : public QWidget
 {
     Q_OBJECT
     G_OBJECT
 
 
     public:
-        RiderPage(QWidget *parent, Context *context);
+        RiderPhysPage(QWidget *parent, Context *context);
+        qint32 saveClicked();
+
+    public slots:
+        void unitChanged(int currentIndex);
+
+    private:
+        Context *context;
+
+        QLabel *wbaltaulabel;
+        QLabel *weightlabel;
+        QLabel *heightlabel;
+        QDoubleSpinBox *weight;
+        QDoubleSpinBox *height;
+        QSpinBox *wbaltau;
+        QLabel *perfManSTSLabel;
+        QLabel *perfManLTSLabel;
+        QLineEdit *perfManSTSavg;
+        QLineEdit *perfManLTSavg;
+        QIntValidator *perfManSTSavgValidator;
+        QIntValidator *perfManLTSavgValidator;
+        QCheckBox *showSBToday;
+
+    struct {
+        double weight;
+        double height;
+        int lts,sts;
+    } b4;
+
+    private slots:
+};
+
+class AboutRiderPage : public QWidget
+{
+    Q_OBJECT
+    G_OBJECT
+
+
+    public:
+        AboutRiderPage(QWidget *parent, Context *context);
         qint32 saveClicked();
 
     public slots:
         void chooseAvatar();
-        void unitChanged(int currentIndex);
 
     private:
         Context *context;
@@ -129,23 +176,26 @@ class RiderPage : public QWidget
         QLineEdit *nickname;
         QDateEdit *dob;
         QComboBox *sex;
-        QLabel *weightlabel;
-        QLabel *heightlabel;
-        QLabel *wbaltaulabel;
-        QComboBox *unitCombo;
-        QDoubleSpinBox *weight;
-        QDoubleSpinBox *height;
-        QSpinBox *wbaltau;
-        QTextEdit  *bio;
         QPushButton *avatarButton;
         QPixmap     avatar;
+        QComboBox *crankLengthCombo;
+        QComboBox *rimSizeCombo;
+        QComboBox *tireSizeCombo;
+        QLineEdit *wheelSizeEdit;
+        QSpinBox *autoBackupPeriod;
+        QLineEdit *autoBackupFolder;
+        QPushButton *autoBackupFolderBrowse;
+
 
     struct {
-        int unit;
-        double weight;
-        double height;
+        int wheel;
+        int crank;
     } b4;
 
+    private slots:
+        void calcWheelSize();
+        void resetWheelSize();
+        void chooseAutoBackupFolder();
 };
 
 class CredentialsPage : public QScrollArea
@@ -162,27 +212,37 @@ class CredentialsPage : public QScrollArea
 #ifdef GC_HAVE_KQOAUTH
         void authoriseTwitter();
 #endif
+#if QT_VERSION >= 0x050000
+        void authoriseDropbox();
+        void chooseDropboxFolder();
+#endif
         void authoriseStrava();
         void authoriseCyclingAnalytics();
         void authoriseGoogleCalendar();
         void dvCALDAVTypeChanged(int);
+        void chooseLocalFileStoreFolder();
 
     private:
         Context *context;
 
-        QLineEdit *tpURL; // url for training peaks.com ... http://www.trainingpeaks.com
         QLineEdit *tpUser;
         QLineEdit *tpPass;
         QComboBox *tpType;
         QPushButton *tpTest;
 
 #ifdef GC_HAVE_KQOAUTH
-        QLineEdit *twitterURL; // url for twitter.com
         QPushButton *twitterAuthorise;
+#endif
+#if QT_VERSION >= 0x050000
+        QPushButton *dropboxAuthorise;
+        QPushButton *dropboxAuthorised, *dropboxBrowse;
+        QLineEdit *dropboxFolder;
 #endif
 
         QComboBox *dvCALDAVType;
         QPushButton *stravaAuthorise, *stravaAuthorised, *twitterAuthorised;
+        QPushButton *networkFileStoreFolderBrowse;
+        QLineEdit *networkFileStoreFolder;
         QPushButton *cyclingAnalyticsAuthorise, *cyclingAnalyticsAuthorised;
         QPushButton *googleCalendarAuthorise, *googleCalendarAuthorised;
 
@@ -194,6 +254,9 @@ class CredentialsPage : public QScrollArea
 
         QLineEdit *veloHeroUser;
         QLineEdit *veloHeroPass;
+
+        QLineEdit *sphUser;
+        QLineEdit *sphPass;
 
         QLineEdit *selUser;
         QLineEdit *selPass;
@@ -645,6 +708,12 @@ class CPPage : public QWidget
 
     public:
         CPPage(ZonePage *parent);
+        QComboBox *useCPForFTPCombo;
+        qint32 saveClicked();
+
+    struct {
+        int cpforftp;
+    } b4;
 
     public slots:
         void addClicked();
@@ -656,12 +725,14 @@ class CPPage : public QWidget
         void addZoneClicked();
         void deleteZoneClicked();
         void zonesChanged();
+        void initializeRanges();
 
     private:
         bool active;
 
         QDateEdit *dateEdit;
         QDoubleSpinBox *cpEdit;
+        QDoubleSpinBox *ftpEdit;
         QDoubleSpinBox *wEdit;
         QDoubleSpinBox *pmaxEdit;
 
@@ -681,6 +752,8 @@ class ZonePage : public QWidget
     public:
 
         ZonePage(Context *);
+        Context *context;
+
         qint32 saveClicked();
 
         //ZoneScheme scheme;
@@ -696,7 +769,6 @@ class ZonePage : public QWidget
 
     protected:
 
-        Context *context;
         bool changed;
 
         QTabWidget *tabs;
@@ -807,7 +879,7 @@ class PaceSchemePage : public QWidget
 
 
     public:
-        PaceSchemePage(PaceZonePage *parent);
+        PaceSchemePage(PaceZones* paceZones);
         PaceZoneScheme getScheme();
         qint32 saveClicked();
 
@@ -817,7 +889,7 @@ class PaceSchemePage : public QWidget
         void renameClicked();
 
     private:
-        PaceZonePage *zonePage;
+        PaceZones* paceZones;
         QTreeWidget *scheme;
         QPushButton *addButton, *renameButton, *deleteButton;
 };
@@ -829,13 +901,15 @@ class CVPage : public QWidget
 
 
     public:
-        CVPage(PaceZonePage *parent);
+        CVPage(PaceZones* paceZones, PaceSchemePage *schemePage);
         QCheckBox *metric;
 
     public slots:
         void addClicked();
+        void editClicked();
         void deleteClicked();
         void defaultClicked();
+        void rangeEdited();
         void rangeSelectionChanged();
         void addZoneClicked();
         void deleteZoneClicked();
@@ -849,11 +923,12 @@ class CVPage : public QWidget
         QDateEdit *dateEdit;
         QTimeEdit *cvEdit;
 
-        PaceZonePage *zonePage;
+        PaceZones* paceZones;
+        PaceSchemePage *schemePage;
         QTreeWidget *ranges;
         QTreeWidget *zones;
-        QPushButton *addButton, *deleteButton, *defaultButton;
-        QPushButton *addZoneButton, *deleteZoneButton;
+        QPushButton *addButton, *updateButton, *deleteButton;
+        QPushButton *addZoneButton, *deleteZoneButton, *defaultButton;
         QLabel *per;
 };
 
@@ -866,15 +941,8 @@ class PaceZonePage : public QWidget
     public:
 
         PaceZonePage(Context *);
-        ~PaceZonePage() { delete zones; }
+        ~PaceZonePage();
         qint32 saveClicked();
-
-        PaceZones* zones;
-        quint16 b4Fingerprint; // how did it start ?
-
-        // Children talk to each other
-        PaceSchemePage *schemePage;
-        CVPage *cvPage;
 
     public slots:
 
@@ -882,17 +950,23 @@ class PaceZonePage : public QWidget
     protected:
 
         Context *context;
-        bool changed;
 
         QTabWidget *tabs;
 
     private:
 
+        static const int nSports = 2;
+
         QLabel *sportLabel;
         QComboBox *sportCombo;
 
+        PaceZones* paceZones[nSports];
+        quint16 b4Fingerprint[nSports]; // how did it start ?
+        PaceSchemePage* schemePages[nSports];
+        CVPage* cvPages[nSports];
+
     private slots:
-        void changeSport();
+        void changeSport(int i);
 
 };
 

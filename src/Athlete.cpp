@@ -46,6 +46,7 @@
 #include "LTMSettings.h"
 #include "RideImportWizard.h"
 #include "RideAutoImportConfig.h"
+#include "AthleteBackup.h"
 
 #include "Route.h"
 
@@ -59,6 +60,10 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     this->context = context;
     context->athlete = this;
     cyclist = this->home->root().dirName();
+
+    // get id and set id all at one
+    id = QUuid(appsettings->cvalue(cyclist, GC_ATHLETE_ID, QUuid::createUuid().toString()).toString());
+    appsettings->setCValue(cyclist, GC_ATHLETE_ID, id.toString());
 
     // Recovering from a crash?
     if(!appsettings->cvalue(cyclist, GC_SAFEEXIT, true).toBool()) {
@@ -79,12 +84,11 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
     if (returnCode != 0) return;
 
     // metric / non-metric
-    QVariant unit = appsettings->cvalue(cyclist, GC_UNIT);
+    QVariant unit = appsettings->value(NULL, GC_UNIT, GC_UNIT_METRIC);
     if (unit == 0) {
         // Default to system locale
-        unit = appsettings->value(this, GC_UNIT,
-             QLocale::system().measurementSystem() == QLocale::MetricSystem ? GC_UNIT_METRIC : GC_UNIT_IMPERIAL);
-        appsettings->setCValue(cyclist, GC_UNIT, unit);
+        unit = QLocale::system().measurementSystem() == QLocale::MetricSystem ? GC_UNIT_METRIC : GC_UNIT_IMPERIAL;
+        appsettings->setValue(GC_UNIT, unit);
     }
     useMetricUnits = (unit.toString() == GC_UNIT_METRIC);
 
@@ -121,8 +125,9 @@ Athlete::Athlete(Context *context, const QDir &homeDir)
         }
     }
 
-    // read athlete's autoimport configuration
+    // read athlete's autoimport configuration and initialize the autoimport process
     autoImportConfig = new RideAutoImportConfig(home->config());
+    autoImport = NULL;
 
     // read athlete's charts.xml and translate etc
     loadCharts();
@@ -186,6 +191,12 @@ Athlete::close()
     // set to latest so we don't repeat
     appsettings->setCValue(context->athlete->home->root().dirName(), GC_VERSION_USED, VERSION_LATEST);
     appsettings->setCValue(context->athlete->home->root().dirName(), GC_SAFEEXIT, true);
+
+    // run autobackup on close (if configured)
+    AthleteBackup *backup = new AthleteBackup(context->athlete->home->root());
+    backup->backupOnClose();
+    delete backup;
+
 }
 void
 Athlete::loadCharts()
@@ -224,6 +235,9 @@ Athlete::~Athlete()
     delete zones_;
     delete hrzones_;
     for (int i=0; i<2; i++) delete pacezones_[i];
+    delete autoImportConfig;
+    delete autoImport;
+
 }
 
 void Athlete::selectRideFile(QString fileName)
@@ -319,7 +333,7 @@ Athlete::configChanged(qint32 state)
 {
     // change units
     if (state & CONFIG_UNITS) {
-        QVariant unit = appsettings->cvalue(cyclist, GC_UNIT);
+        QVariant unit = appsettings->value(NULL, GC_UNIT, GC_UNIT_METRIC);
         useMetricUnits = (unit.toString() == GC_UNIT_METRIC);
     }
 
@@ -337,16 +351,15 @@ Athlete::configChanged(qint32 state)
 void
 Athlete::importFilesWhenOpeningAthlete() {
 
+    autoImport = NULL;
     // just do it if something is configured
     if (autoImportConfig->hasRules()) {
 
-        RideImportWizard *import = new RideImportWizard(autoImportConfig, context);
+        autoImport = new RideImportWizard(autoImportConfig, context);
 
         // only process the popup if we have any files available at all
-        if ( import->getNumberOfFiles() > 0) {
-           import->process();
-        } else {
-           delete import;
+        if ( autoImport->getNumberOfFiles() > 0) {
+           autoImport->process();
         }
     }
 }
@@ -423,8 +436,7 @@ bool
 AthleteDirectoryStructure::upgradedDirectoriesHaveData() {
 
    if ( activities().exists() && config().exists()) {
-       QStringList activityFiles = activities().entryList(QDir::Files);
-       if (!activityFiles.isEmpty()) { return true; }
+       // just check for config files (activities are empty in case of a new athlete)
        QStringList configFiles = config().entryList(QDir::Files);
        if (!configFiles.isEmpty()) { return true; }
    }
@@ -541,3 +553,34 @@ Athlete::getPMCFor(QString metricName, int stsdays, int ltsdays)
 
     return returning;
 }
+
+PMCData *
+Athlete::getPMCFor(Leaf *expr, DataFilter *df, int stsdays, int ltsdays)
+{
+    PMCData *returning = NULL;
+
+    // if we don't already have one, create it
+    returning = pmcData.value(expr->signature(), NULL);
+    if (!returning) {
+
+        // specification is blank and passes for all
+        returning = new PMCData(context, Specification(), expr, df, stsdays, ltsdays);
+
+        // add to our collection
+        pmcData.insert(expr->signature(), returning);
+    }
+
+    return returning;
+}
+
+PDEstimate
+Athlete::getPDEstimateFor(QDate date, QString model, bool wpk)
+{
+    // whats the estimate for this date
+    foreach(PDEstimate est, PDEstimates) {
+        if (est.model == model && est.wpk == wpk && est.from <= date && est.to >= date)
+            return est;
+    }
+    return PDEstimate();
+}
+

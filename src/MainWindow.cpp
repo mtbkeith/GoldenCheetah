@@ -33,6 +33,7 @@
 #include "MainWindow.h"
 #include "Context.h"
 #include "Athlete.h"
+#include "AthleteBackup.h"
 
 #include "Colors.h"
 #include "RideCache.h"
@@ -77,6 +78,11 @@
 #include "CalDAV.h"
 #endif
 #include "CalendarDownload.h"
+#if QT_VERSION > 0x050000
+#include "Dropbox.h"
+#endif
+#include "LocalFileStore.h"
+#include "FileStore.h"
 
 // GUI Widgets
 #include "Tab.h"
@@ -578,6 +584,12 @@ MainWindow::MainWindow(const QDir &home)
     connect(tabMapper, SIGNAL(mapped(const QString &)), this, SLOT(openTab(const QString &)));
 
     fileMenu->addSeparator();
+    backupAthleteMenu = fileMenu->addMenu(tr("Backup Athlete Data"));
+    connect(backupAthleteMenu, SIGNAL(aboutToShow()), this, SLOT(setBackupAthleteMenu()));
+    backupMapper = new QSignalMapper(this); // maps each option
+    connect(backupMapper, SIGNAL(mapped(const QString &)), this, SLOT(backupAthlete(const QString &)));
+
+    fileMenu->addSeparator();
     fileMenu->addAction(tr("Close Window"), this, SLOT(closeWindow()));
     fileMenu->addAction(tr("&Close Tab"), this, SLOT(closeTab()));
     fileMenu->addAction(tr("&Quit All Windows"), this, SLOT(closeAll()), tr("Ctrl+Q"));
@@ -591,23 +603,8 @@ MainWindow::MainWindow(const QDir &home)
     rideMenu->addAction(tr("&Import from file..."), this, SLOT (importFile()), tr ("Ctrl+I"));
     rideMenu->addAction(tr("&Manual entry..."), this, SLOT(manualRide()), tr("Ctrl+M"));
     rideMenu->addSeparator ();
-    shareAction = new QAction(tr("Share Online..."), this);
-    shareAction->setShortcut(tr("Ctrl+U"));
-    connect(shareAction, SIGNAL(triggered(bool)), this, SLOT(share()));
-    rideMenu->addAction(shareAction);
     rideMenu->addAction(tr("&Export..."), this, SLOT(exportRide()), tr("Ctrl+E"));
     rideMenu->addAction(tr("&Batch export..."), this, SLOT(exportBatch()), tr("Ctrl+B"));
-#ifdef GC_HAVE_SOAP
-    rideMenu->addSeparator ();
-    rideMenu->addAction(tr("&Upload to TrainingPeaks"), this, SLOT(uploadTP()), tr("Ctrl+T"));
-    rideMenu->addAction(tr("Synchronise TrainingPeaks..."), this, SLOT(downloadTP()), tr("Ctrl+L"));
-#endif
-
-#ifdef GC_HAVE_KQOAUTH
-    tweetAction = new QAction(tr("Tweet activity"), this);
-    connect(tweetAction, SIGNAL(triggered(bool)), this, SLOT(tweetRide()));
-    rideMenu->addAction(tweetAction);
-#endif
 
     rideMenu->addSeparator ();
     rideMenu->addAction(tr("&Save activity"), this, SLOT(saveRide()), tr("Ctrl+S"));
@@ -618,6 +615,41 @@ MainWindow::MainWindow(const QDir &home)
 
     HelpWhatsThis *helpRideMenu = new HelpWhatsThis(rideMenu);
     rideMenu->setWhatsThis(helpRideMenu->getWhatsThisText(HelpWhatsThis::MenuBar_Activity));
+
+    // SHARE MENU
+    QMenu *shareMenu = menuBar()->addMenu(tr("Sha&re"));
+    shareAction = new QAction(tr("Share Online..."), this);
+    shareAction->setShortcut(tr("Ctrl+U"));
+    connect(shareAction, SIGNAL(triggered(bool)), this, SLOT(share()));
+    shareMenu->addAction(shareAction);
+#ifdef GC_HAVE_KQOAUTH
+    tweetAction = new QAction(tr("Tweet activity"), this);
+    connect(tweetAction, SIGNAL(triggered(bool)), this, SLOT(tweetRide()));
+    shareMenu->addAction(tweetAction);
+#endif
+#ifdef GC_HAVE_ICAL
+    shareMenu->addSeparator();
+    shareMenu->addAction(tr("Upload Activity to Calendar"), this, SLOT(uploadCalendar()), tr (""));
+    //optionsMenu->addAction(tr("Import Calendar..."), this, SLOT(importCalendar()), tr ("")); // planned for v3.1
+    //optionsMenu->addAction(tr("Export Calendar..."), this, SLOT(exportCalendar()), tr ("")); // planned for v3.1
+    shareMenu->addAction(tr("Refresh Calendar"), this, SLOT(refreshCalendar()), tr (""));
+#endif
+    shareMenu->addSeparator ();
+    shareMenu->addAction(tr("Write to Local Store"), this, SLOT(uploadLocalFileStore()));
+    shareMenu->addAction(tr("Synchronise Local Store..."), this, SLOT(syncLocalFileStore()));
+#if QT_VERSION > 0x050000
+    shareMenu->addSeparator ();
+    shareMenu->addAction(tr("Upload to &Dropbox"), this, SLOT(uploadDropbox()), tr("Ctrl+R"));
+    shareMenu->addAction(tr("Synchronise Dropbox..."), this, SLOT(syncDropbox()), tr("Ctrl+O"));
+#endif
+#ifdef GC_HAVE_SOAP
+    shareMenu->addSeparator ();
+    shareMenu->addAction(tr("&Upload to TrainingPeaks"), this, SLOT(uploadTP()), tr("Ctrl+T"));
+    shareMenu->addAction(tr("Synchronise TrainingPeaks..."), this, SLOT(downloadTP()), tr("Ctrl+L"));
+#endif
+
+    HelpWhatsThis *helpShare = new HelpWhatsThis(rideMenu);
+    shareMenu->setWhatsThis(helpShare->getWhatsThisText(HelpWhatsThis::MenuBar_Share));
 
     // TOOLS MENU
     QMenu *optionsMenu = menuBar()->addMenu(tr("&Tools"));
@@ -632,16 +664,9 @@ MainWindow::MainWindow(const QDir &home)
     optionsMenu->addSeparator();
     optionsMenu->addAction(tr("Create a new workout..."), this, SLOT(showWorkoutWizard()));
     optionsMenu->addAction(tr("Download workouts from ErgDB..."), this, SLOT(downloadErgDB()));
-    optionsMenu->addAction(tr("Import workouts or videos..."), this, SLOT(importWorkout()));
-    optionsMenu->addAction(tr("Scan disk for videos and workouts..."), this, SLOT(manageLibrary()));
+    optionsMenu->addAction(tr("Import workouts, videos, videoSyncs..."), this, SLOT(importWorkout()));
+    optionsMenu->addAction(tr("Scan disk for workouts, videos, videoSyncs..."), this, SLOT(manageLibrary()));
 
-#ifdef GC_HAVE_ICAL
-    optionsMenu->addSeparator();
-    optionsMenu->addAction(tr("Upload Activity to Calendar"), this, SLOT(uploadCalendar()), tr (""));
-    //optionsMenu->addAction(tr("Import Calendar..."), this, SLOT(importCalendar()), tr ("")); // planned for v3.1
-    //optionsMenu->addAction(tr("Export Calendar..."), this, SLOT(exportCalendar()), tr ("")); // planned for v3.1
-    optionsMenu->addAction(tr("Refresh Calendar"), this, SLOT(refreshCalendar()), tr (""));
-#endif
     optionsMenu->addAction(tr("Create Heat Map..."), this, SLOT(generateHeatMap()), tr(""));
     optionsMenu->addAction(tr("Export Metrics as CSV..."), this, SLOT(exportMetrics()), tr(""));
     optionsMenu->addSeparator();
@@ -993,20 +1018,32 @@ MainWindow::closeEvent(QCloseEvent* event)
 {
     QList<Tab*> closing = tabList;
     bool needtosave = false;
+    bool importrunning = false;
 
     // close all the tabs .. if any refuse we need to ignore
     //                       the close event
     foreach(Tab *tab, closing) {
 
-        // do we need to save?
-        if (tab->context->mainWindow->saveRideExitDialog(tab->context) == true)
-            removeTab(tab);
-        else
-            needtosave = true;
+        // check for if RideImport is is process and let it finalize / or be stopped by the user
+        if (tab->context->athlete->autoImport) {
+            if (tab->context->athlete->autoImport->importInProcess() ) {
+                importrunning = true;
+                QMessageBox::information(this, tr("Activity Import"), tr("Closing of athlete window not possible while background activity import is in progress..."));
+            }
+        }
+
+        // only check for unsaved if autoimport is not running any more
+        if (!importrunning) {
+            // do we need to save?
+            if (tab->context->mainWindow->saveRideExitDialog(tab->context) == true)
+                removeTab(tab);
+            else
+                needtosave = true;
+        }
     }
 
-    // were any left hanging around?
-    if (needtosave) event->ignore();
+    // were any left hanging around? or autoimport in action on any windows, then don't close any
+    if (needtosave || importrunning) event->ignore();
     else {
 
         // finish off the job and leave
@@ -1422,7 +1459,7 @@ MainWindow::saveRide()
     currentTab->context->ride->notifyRideMetadataChanged();
 
     // nothing to do if not dirty
-    if (currentTab->context->ride->isDirty() == false) return;
+    //XXX FORCE A SAVE if (currentTab->context->ride->isDirty() == false) return;
 
     // save
     if (currentTab->context->ride) {
@@ -1532,9 +1569,11 @@ MainWindow::openWindow(QString name)
 {
     // open window...
     QDir home(gcroot);
+    appsettings->initializeQSettingsGlobal(gcroot);
     home.cd(name);
 
     if (!home.exists()) return;
+    appsettings->initializeQSettingsAthlete(gcroot, name);
 
     GcUpgrade v3;
     if (!v3.upgradeConfirmedByUser(home)) return;
@@ -1549,6 +1588,7 @@ void
 MainWindow::closeWindow()
 {
     // just call close, we might do more later
+    appsettings->syncQSettings();
     close();
 }
 
@@ -1556,9 +1596,11 @@ void
 MainWindow::openTab(QString name)
 {
     QDir home(gcroot);
+    appsettings->initializeQSettingsGlobal(gcroot);
     home.cd(name);
 
     if (!home.exists()) return;
+    appsettings->initializeQSettingsAthlete(gcroot, name);
 
     GcUpgrade v3;
     if (!v3.upgradeConfirmedByUser(home)) return;
@@ -1604,7 +1646,17 @@ MainWindow::openTab(QString name)
 void
 MainWindow::closeTabClicked(int index)
 {
+
     Tab *tab = tabList[index];
+
+    // check for autoimport and let it finalize
+    if (tab->context->athlete->autoImport) {
+        if (tab->context->athlete->autoImport->importInProcess() ) {
+            QMessageBox::information(this, tr("Activity Import"), tr("Closing of athlete window not possible while background activity import is in progress..."));
+            return;
+        }
+    }
+
     if (saveRideExitDialog(tab->context) == false) return;
 
     // lets wipe it
@@ -1614,6 +1666,14 @@ MainWindow::closeTabClicked(int index)
 bool
 MainWindow::closeTab()
 {
+  // check for autoimport and let it finalize
+    if (currentTab->context->athlete->autoImport) {
+        if (currentTab->context->athlete->autoImport->importInProcess() ) {
+            QMessageBox::information(this, tr("Activity Import"), tr("Closing of athlete window not possible while background activity import is in progress..."));
+            return false;
+        }
+    }
+
     // wipe it down ...
     if (saveRideExitDialog(currentTab->context) == false) return false;
 
@@ -1623,7 +1683,7 @@ MainWindow::closeTab()
     else {
         removeTab(currentTab);
     }
-
+    appsettings->syncQSettings();
     // we did it
     return true;
 }
@@ -1760,6 +1820,43 @@ MainWindow::setOpenTabMenu()
     // add create new option
     openTabMenu->addSeparator();
     openTabMenu->addAction(tr("&New Athlete..."), this, SLOT(newCyclistTab()), tr("Ctrl+N"));
+}
+
+void
+MainWindow::setBackupAthleteMenu()
+{
+    // wipe existing
+    backupAthleteMenu->clear();
+
+    // get a list of all cyclists
+    QStringListIterator i(QDir(gcroot).entryList(QDir::Dirs | QDir::NoDotAndDotDot));
+    while (i.hasNext()) {
+
+        QString name = i.next();
+
+        // new action
+        QAction *action = new QAction(QString("%1").arg(name), this);
+
+        // get the config directory
+        AthleteDirectoryStructure subDirs(name);
+        // icon / mugshot ?
+        QString icon = QString("%1/%2/%3/avatar.png").arg(gcroot).arg(name).arg(subDirs.config().dirName());
+        if (QFile(icon).exists()) action->setIcon(QIcon(icon));
+
+        // add to menu
+        backupAthleteMenu->addAction(action);
+        connect(action, SIGNAL(triggered()), backupMapper, SLOT(map()));
+        backupMapper->setMapping(action, name);
+    }
+
+}
+
+void
+MainWindow::backupAthlete(QString name)
+{
+    AthleteBackup *backup = new AthleteBackup(QDir(gcroot+"/"+name));
+    backup->backupImmediate();
+    delete backup;
 }
 
 void
@@ -1927,9 +2024,8 @@ MainWindow::downloadErgDB()
         d->exec();
     } else{
         QMessageBox::critical(this, tr("Workout Directory Invalid"),
-        "The workout directory is not configured, or the directory"
-        " selected no longer exists.\n\n"
-        "Please check your preference settings.");
+        tr("The workout directory is not configured, or the directory selected no longer exists.\n\n"
+        "Please check your preference settings."));
     }
 }
 
@@ -1942,6 +2038,54 @@ MainWindow::manageLibrary()
     LibrarySearchDialog *search = new LibrarySearchDialog(currentTab->context);
     search->exec();
 }
+
+/*----------------------------------------------------------------------
+ * Dropbox.com
+ *--------------------------------------------------------------------*/
+#if QT_VERSION > 0x050000
+void
+MainWindow::uploadDropbox()
+{
+    // upload current ride, if we have one
+    if (currentTab->context->ride) {
+        Dropbox db(currentTab->context);
+        FileStore::upload(this, &db, currentTab->context->ride);
+    }
+}
+
+void
+MainWindow::syncDropbox()
+{
+    // upload current ride, if we have one
+    Dropbox db(currentTab->context);
+    FileStoreSyncDialog upload(currentTab->context, &db);
+    upload.exec();
+}
+
+#endif
+
+/*----------------------------------------------------------------------
+ * Network File Share (e.g. a mounted WebDAV folder)
+ *--------------------------------------------------------------------*/
+void
+MainWindow::uploadLocalFileStore()
+{
+    // upload current ride, if we have one
+    if (currentTab->context->ride) {
+        LocalFileStore db(currentTab->context);
+        FileStore::upload(this, &db, currentTab->context->ride);
+    }
+}
+
+void
+MainWindow::syncLocalFileStore()
+{
+    // upload current ride, if we have one
+    LocalFileStore db(currentTab->context);
+    FileStoreSyncDialog upload(currentTab->context, &db);
+    upload.exec();
+}
+
 
 /*----------------------------------------------------------------------
  * TrainingPeaks.com

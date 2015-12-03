@@ -23,6 +23,7 @@
 #include <QSqlDatabase>
 #include <QTreeWidget>
 #include <QtGui>
+#include <QUuid>
 #include <QNetworkReply>
 #include <QHeaderView>
 
@@ -51,6 +52,7 @@ class PMCData;
 class LTMSettings;
 class Routes;
 class AthleteDirectoryStructure;
+class RideImportWizard;
 class RideAutoImportConfig;
 class RideCache;
 class IntervalCache;
@@ -58,6 +60,8 @@ class Context;
 class ColorEngine;
 class AnalysisSidebar;
 class Tab;
+class Leaf;
+class DataFilter;
 
 class Athlete : public QObject
 {
@@ -70,6 +74,7 @@ class Athlete : public QObject
 
         // basic athlete info
         QString cyclist; // the cyclist name
+        QUuid id; // unique identifier
         bool useMetricUnits;
         AthleteDirectoryStructure *home;
         const AthleteDirectoryStructure *directoryStructure() const {return home; }
@@ -95,8 +100,12 @@ class Athlete : public QObject
         RideCache *rideCache;
         QList<WithingsReading> withings_;
 
+        // Estimates
+        PDEstimate getPDEstimateFor(QDate, QString model, bool wpk);
+
         // PMC Data
         PMCData *getPMCFor(QString metricName, int stsDays = -1, int ltsDays = -1); // no Specification used!
+        PMCData *getPMCFor(Leaf *expr, DataFilter *df, int stsDays = -1, int ltsDays = -1); // no Specification used!
         QMap<QString, PMCData*> pmcData; // all the different PMC series
 
         // athlete measures
@@ -112,7 +121,8 @@ class Athlete : public QObject
         CalDAV *davCalendar;
 #endif
 
-        // Athlete's autoimport configuration
+        // Athlete's autoimport handling
+        RideImportWizard *autoImport;
         RideAutoImportConfig *autoImportConfig;
 
         // ride metadata definitions

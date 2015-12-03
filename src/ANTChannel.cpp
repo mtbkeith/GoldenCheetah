@@ -19,6 +19,7 @@
 
 #include "ANT.h"
 #include <QDebug>
+#include <QTime>
 
 static float timeout_blanking=2.0;  // time before reporting stale data, seconds
 static float timeout_drop=2.0; // time before reporting dropped message
@@ -37,6 +38,7 @@ ANTChannel::init()
     channel_type_flags=0;
     is_kickr=false;
     is_moxy=false;
+    is_fec=false;
     is_cinqo=0;
     is_old_cinqo=0;
     is_alt=0;
@@ -54,6 +56,9 @@ ANTChannel::init()
     burstInit();
     value2=value=0;
     status = Closed;
+    fecPrevRawDistance=0;
+    fecCapabilities=0;
+    lastMessageTimestamp = lastMessageTimestamp2 = QTime::currentTime();
 }
 
 //
@@ -100,7 +105,7 @@ void ANTChannel::open(int device, int chan_type)
     qDebug()<<"** OPENING CHANNEL"<<number<<"**";
     status = Opening;
 
-    // start the transition process 
+    // start the transition process
     attemptTransition(TRANSITION_START);
 }
 
@@ -384,7 +389,7 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
                             }
                             break;
 
-                        default: 
+                        default:
                             break;
                     }
 
@@ -469,6 +474,18 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
                 //                        updated with this message and instead we
                 //                        store in a special lastStdPwrMessage
                 //
+                // The Garmin Vector issues a ANT_STANDARD_POWER event
+                // once every 2 seconds.  Interspersed between that event
+                // are typically three ANT_CRANKTORQUE_POWER events
+                // and one ANT_TE_AND_PS_POWER event i.e.
+                //   ANT_STANDARD_POWER eventCount=1
+                //   ANT_CRANKTORQUE_POWER eventCount=1
+                //   ANT_CRANKTORQUE_POWER eventCount=2
+                //   ANT_CRANKTORQUE_POWER eventCount=3
+                //   ANT_TE_AND_PS_POWER eventCount=3
+                // The eventCount of the ANT_TE_AND_PS_POWER event will match
+                // against the latest power reading from with the ANT_STANDARD_POWER
+                // or the ANT_CRANKTORQUE_POWER.
                 case ANT_STANDARD_POWER: // 0x10 - standard power
                 {
                     uint8_t events = antMessage.eventCount - lastStdPwrMessage.eventCount;
@@ -490,15 +507,21 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
                        }
                     }
                     lastStdPwrMessage = antMessage;
+                    // Mark power event for possible match-up against a future
+                    // ANT_TE_AND_PS_POWER event.
+                    lastPwrForTePsMessage = lastStdPwrMessage;
                     savemessage = false;
                 }
                 break;
 
-                case ANT_TE_AND_PS_POWER: // 0x13 - optional extension to standard power / event Count is defined to be in sync with 0x10 - so not separate calculation
-                                          // and just take whatever is delivered - data may not be sent for every power reading - but minimum every 5th pwr message
+                case ANT_TE_AND_PS_POWER:
                 {
-                    uint8_t events = antMessage.eventCount - lastStdPwrMessage.eventCount;
-                    if (events) {
+                    // 0x13 - optional extension to standard power.
+                    // eventCount is defined to be in sync with ANT_STANDARD_POWER or
+                    // ANT_CRANKTORQUE_POWER so not a separate calculation.
+                    // Just take whatever is delivered.  Data may not be sent for every
+                    // power reading - but minimum every 5th pwr message
+                    if (antMessage.eventCount == lastPwrForTePsMessage.eventCount) {
                         // provide valid values only
                         if (antMessage.leftTorqueEffectiveness != 0xFF && antMessage.rightTorqueEffectiveness != 0xFF) {
                             parent->setTE((antMessage.leftTorqueEffectiveness / 2),(antMessage.rightTorqueEffectiveness / 2));  // values are given in 1/2 %
@@ -519,15 +542,20 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
                 break;
 
                 //
-                // Quarq - Crank torque
+                // Crank Torque (0x12) - Quarq and Garmin Vector
+                // The Garmin Vector will typically send three ANT_CRANKTORQUE_POWER
+                // events for between each ANT_STANDARD_POWER event.
+                // Since these messages are interleaved with other broadcast messages,
+                // we need to make sure that lastMessage is not updated and instead
+                // use lastCrankTorquePwrMessage.
                 //
-                case ANT_CRANKTORQUE_POWER: // 0x12 - crank torque (Quarq)
+                case ANT_CRANKTORQUE_POWER:
                 {
-                    uint8_t events = antMessage.eventCount - lastMessage.eventCount;
-                    uint16_t period = antMessage.period - lastMessage.period;
-                    uint16_t torque = antMessage.torque - lastMessage.torque;
+                    uint8_t events = antMessage.eventCount - lastCrankTorquePwrMessage.eventCount;
+                    uint16_t period = antMessage.period - lastCrankTorquePwrMessage.period;
+                    uint16_t torque = antMessage.torque - lastCrankTorquePwrMessage.torque;
 
-                    if (events && period && lastMessage.period) {
+                    if (events && period && lastCrankTorquePwrMessage.period) {
                         nullCount = 0;
 
                         float nm_torque = torque / (32.0 * events);
@@ -546,6 +574,10 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
                             value2 = value = 0;
                         }
                     }
+                    lastCrankTorquePwrMessage = antMessage;
+                    // Mark power event for possible match-up against a future
+                    // ANT_TE_AND_PS_POWER event.
+                    lastPwrForTePsMessage = antMessage;
                 }
                 break;
 
@@ -557,7 +589,7 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
            // HR
            case CHANNEL_TYPE_HR:
            {
-               // cadence first...
+               // Heart rate
                uint16_t time = antMessage.measurementTime - lastMessage.measurementTime;
                if (time) {
                    nullCount = 0;
@@ -580,81 +612,89 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
            // Cadence
            case CHANNEL_TYPE_CADENCE:
            {
+               float rpm;
+               static float last_measured_rpm;
                uint16_t time = antMessage.crankMeasurementTime - lastMessage.crankMeasurementTime;
                uint16_t revs = antMessage.crankRevolutions - lastMessage.crankRevolutions;
                if (time) {
-                   nullCount = 0;
-                   float cadence = 1024*60*revs / time;
-                   parent->setCadence(cadence);
-                   value2 = value = cadence;
+                   rpm = 1024*60*revs / time;
+                   last_measured_rpm = rpm;
+                   lastMessageTimestamp = QTime::currentTime();
                } else {
-                   nullCount++;
-                   if (nullCount >= 12) { parent->setCadence(0);
-                                          value = 0;
-                   }
+                   int ms = lastMessageTimestamp.msecsTo(QTime::currentTime());
+                   rpm = qMin((float)(1000.0*60.0*1.0) / ms, parent->getCadence());
+                   // If we received a message but timestamp remain unchanged then we know that sensor have not detected magnet thus we deduct that rpm cannot be higher than this
+                   if (rpm < last_measured_rpm / 2.0)
+                       rpm = 0.0; // if rpm is less than half previous cadence we consider that we are stopped
                }
+               parent->setCadence(rpm);
+               value2 = value = rpm;
            }
            break;
 
            // Speed and Cadence
            case CHANNEL_TYPE_SandC:
            {
+               float rpm;
+               static float last_measured_rpm;
                // cadence first...
                uint16_t time = antMessage.crankMeasurementTime - lastMessage.crankMeasurementTime;
                uint16_t revs = antMessage.crankRevolutions - lastMessage.crankRevolutions;
                if (time) {
-                   nullCount = 0;
-                   float cadence = 1024*60*revs / time;
+                   rpm = 1024*60*revs / time;
+                   last_measured_rpm = rpm;
 
                    if (is_moxy) /* do nothing for now */ ; //XXX fixme when moxy arrives XXX
-                   else parent->setCadence(cadence);
-                   value = cadence;
-
+                   else parent->setCadence(rpm);
+                   lastMessageTimestamp = QTime::currentTime();
                } else {
-
-                   nullCount++;
-                   if (!is_moxy && nullCount >= 12) { parent->setCadence(0);
-                        value = 0;
-                   }
+                   int ms = lastMessageTimestamp.msecsTo(QTime::currentTime());
+                   rpm = qMin((float)(1000.0*60.0*1.0) / ms, parent->getCadence());
+                   // If we received a message but timestamp remain unchanged then we know that sensor have not detected magnet thus we deduct that rpm cannot be higher than this
+                   if (rpm < last_measured_rpm / 2.0)
+                       rpm = 0.0; // if rpm is less than half previous cadence we consider that we are stopped
+                   parent->setCadence(rpm);
                }
+               value = rpm;
 
                // now speed ...
                time = antMessage.wheelMeasurementTime - lastMessage.wheelMeasurementTime;
                revs = antMessage.wheelRevolutions - lastMessage.wheelRevolutions;
                if (time) {
-                   dualNullCount = 0;
-
-                   float rpm = 1024*60*revs / time;
+                   rpm = 1024*60*revs / time;
                    if (is_moxy) /* do nothing for now */ ; //XXX fixme when moxy arrives XXX
                    else parent->setWheelRpm(rpm);
-                   value2 = rpm;
-
+                   lastMessageTimestamp2 = QTime::currentTime();
                } else {
-
-                    dualNullCount++;
-                    if (!is_moxy && dualNullCount >= 12) {
-                        parent->setWheelRpm(0);
-                        value2 = 0;
-                    }
+                   int ms = lastMessageTimestamp2.msecsTo(QTime::currentTime());
+                   rpm = qMin((float)(1000.0*60.0*1.0) / ms, parent->getWheelRpm());
+                   // If we received a message but timestamp remain unchanged then we know that sensor have not detected magnet thus we deduct that rpm cannot be higher than this
+                   if (rpm < (float) 15.0)
+                       rpm = 0.0; // if rpm is less than 15rpm (=4s) then we consider that we are stopped
+                   parent->setWheelRpm(rpm);
                }
+               value2 = rpm;
            }
            break;
 
            // Speed
            case CHANNEL_TYPE_SPEED:
            {
+               float rpm;
                uint16_t time = antMessage.wheelMeasurementTime - lastMessage.wheelMeasurementTime;
                uint16_t revs = antMessage.wheelRevolutions - lastMessage.wheelRevolutions;
                if (time) {
-                   nullCount=0;
-                   float rpm = 1024*60*revs / time;
-                   parent->setWheelRpm(rpm);
-                   value2=value=rpm;
+                   rpm = 1024*60*revs / time;
+                   lastMessageTimestamp = QTime::currentTime();
                } else {
-                   nullCount++;
-                   if (nullCount >= 12) parent->setWheelRpm(0);
-                   value2=value=0;
+                   int ms = lastMessageTimestamp.msecsTo(QTime::currentTime());
+                   rpm = qMin((float)(1000.0*60.0*1.0) / ms, parent->getWheelRpm());
+                   // If we received a message but timestamp remain unchanged then we know that sensor have not detected magnet thus we deduct that rpm cannot be higher than this
+                   if (rpm < (float) 15.0)
+                       rpm = 0.0; // if rpm is less than 15 (4s) then we consider that we are stopped
                }
+               parent->setWheelRpm(rpm);
+               value2=value=rpm;
            }
            break;
 
@@ -666,6 +706,91 @@ void ANTChannel::broadcastEvent(unsigned char *ant_message)
                 parent->setHb(value2, value);
             }
             break;
+
+
+           case CHANNEL_TYPE_FITNESS_EQUIPMENT:
+           {
+               static int fecRefreshCounter = 1;
+
+               parent->setFecChannel(number);
+               // we don't seem to receive ACK messages, so use this workaround
+               // to ensure load/gradient is always set correctly
+               // TODO : use acknowledge sent by FE-C devices, see FITNESS_EQUIPMENT_GENERAL_PAGE below
+               if ((fecRefreshCounter++ % 10) == 0)
+               {
+                   if  (parent->modeERGO())
+                       parent->refreshFecLoad();
+                   else if (parent->modeSLOPE())
+                        parent->refreshFecGradient();
+               }
+
+               if (antMessage.data_page == FITNESS_EQUIPMENT_TRAINER_SPECIFIC_PAGE)
+               {
+                   if (antMessage.fecInstantPower != 0xFFF)
+                       is_alt ? parent->setAltWatts(antMessage.fecInstantPower) : parent->setWatts(antMessage.fecInstantPower);
+                   // TODO : as per ANT specification instantaneous power is to be used for display purpose only
+                   //        but shall not be taken into account for records and calculations as it will not be accurate in case of transmission loss
+                   //        accumulated power to be used instead as it is not affected by any transmission loss
+                   if (antMessage.fecCadence != 0xFF)
+                       parent->setSecondaryCadence(antMessage.fecCadence);
+                   parent->setTrainerStatusAvailable(true);
+                   // temporarily disabled until calibration included in the code / TODO : remove && false
+                   parent->setTrainerCalibRequired((antMessage.fecPowerCalibRequired || antMessage.fecResisCalibRequired) && false);
+                   if (antMessage.fecPowerCalibRequired)
+                        qDebug() << "Trainer calibration required (power)";
+                   if (antMessage.fecResisCalibRequired)
+                        qDebug() << "Trainer calibration required (resistance)";
+                   // temporarily disabled until calibration included in the code / TODO : remove && false
+                   parent->setTrainerConfigRequired(antMessage.fecUserConfigRequired && false);
+                   if (antMessage.fecUserConfigRequired)
+                        qDebug() << "Trainer configuration required";
+                   parent->setTrainerBrakeFault(antMessage.fecPowerOverLimits==FITNESS_EQUIPMENT_POWER_NOK_LOWSPEED
+                                            ||  antMessage.fecPowerOverLimits==FITNESS_EQUIPMENT_POWER_NOK_HIGHSPEED
+                                            ||  antMessage.fecPowerOverLimits==FITNESS_EQUIPMENT_POWER_NOK);
+                   parent->setTrainerReady(antMessage.fecState==FITNESS_EQUIPMENT_READY);
+                   parent->setTrainerRunning(antMessage.fecState==FITNESS_EQUIPMENT_IN_USE);
+               }
+               else if (antMessage.data_page == FITNESS_EQUIPMENT_TRAINER_TORQUE_PAGE)
+               {
+                   // TODO: Manage "wheelRevolutions" information
+                   // TODO: Manage "wheelAccumulatedPeriod" information
+                   // Note : accumulatedTorque information available but not used
+               }
+               else if (antMessage.data_page == FITNESS_EQUIPMENT_GENERAL_PAGE)
+               {
+                   // Note: fecEqtType information available but not used
+                   if (antMessage.fecSpeed != 0xFFFF)
+                   {
+                       // FEC speed is in 0.001m/s, telemetry speed is km/h
+                       parent->setSpeed(antMessage.fecSpeed * 0.0036);
+                   }
+
+                   // FEC distance is in m, telemetry is km
+                   parent->incAltDistance((antMessage.fecRawDistance - fecPrevRawDistance
+                                          + (fecPrevRawDistance > antMessage.fecRawDistance ? 256 : 0)) * 0.001);
+                   fecPrevRawDistance = antMessage.fecRawDistance;
+               }
+               else if (antMessage.data_page == FITNESS_EQUIPMENT_GENERAL_PAGE)
+               {
+                   // TODO: Manage "fecLastCommandReceived" information
+                   // TODO: Manage "fecLastCommandSeq" information
+                   // TODO: Manage "fecLastCommandStatus" information
+                   // TODO: Manage "fecSetResistanceAck" information
+                   // TODO: Manage "fecSetTargetPowerAck" information
+                   // TODO: Manage "fecSetWindResistanceAck" information
+                   // TODO: Manage "fecSetWindSpeedAck" information
+                   // TODO: Manage "fecSetDraftingFactorAck" information
+                   // TODO: Manage "fecSetGradeAck" information
+                   // TODO: Manage "fecSetRollResistanceAck" information
+               }
+               else if (antMessage.data_page == FITNESS_EQUIPMENT_TRAINER_CAPABILITIES_PAGE)
+               {
+                   // Note : fecMaxResistance information available but not used
+                   fecCapabilities = antMessage.fecCapabilities;
+                   qDebug() << "Capabilities received from ANT FEC Device:" << fecCapabilities;
+               }
+               break;
+           }
 
             // Tacx Vortex trainer
             case CHANNEL_TYPE_TACX_VORTEX:
@@ -725,6 +850,12 @@ void ANTChannel::channelId(unsigned char *ant_message) {
 
     if (is_kickr) {
         qDebug()<<number<<"KICKR DETECTED VIA CHANNEL ID EVENT";
+    }
+
+    is_fec = (device_id == ANT_SPORT_FITNESS_EQUIPMENT_TYPE);
+
+    if (is_fec) {
+        qDebug()<<number<<"ANT FE-C DETECTED VIA CHANNEL ID EVENT";
     }
 
     // tell controller we got a new channel id
@@ -800,8 +931,10 @@ void ANTChannel::attemptTransition(int message_id)
     const ant_sensor_type_t *st;
     int previous_state=state;
     st=&(parent->ant_sensor_types[channel_type]);
+    device_id=st->device_id;
+    setId();
 
-    //qDebug()<<number<<"type="<<channel_type<<"device type="<<device_id<<"freq="<<st->frequency;
+    qDebug()<<number<<"type="<<channel_type<<"device type="<<device_id<<"freq="<<st->frequency;
 
     // update state
     state=message_id;
@@ -823,11 +956,10 @@ void ANTChannel::attemptTransition(int message_id)
     case ANT_UNASSIGN_CHANNEL:
         //qDebug()<<number<<"TRANSITION from unassigned";
 
+        qDebug()<<number<<"assign channel type RX";
+
         // assign and set channel id all in one
         parent->sendMessage(ANTMessage::assignChannel(number, CHANNEL_TYPE_RX, st->network)); // receive channel on network 1
-
-        device_id=st->device_id;
-        setId();
         break;
 
     case ANT_ASSIGN_CHANNEL:
@@ -892,6 +1024,20 @@ void ANTChannel::attemptTransition(int message_id)
     default:
         break;
     }
+}
+
+uint8_t ANTChannel::capabilities()
+{
+    if (!is_fec)
+        return 0;
+
+    if (fecCapabilities)
+        return fecCapabilities;
+
+    // if we do not know device capabilities, request it
+    qDebug() << qPrintable("Ask for capabilities");
+    parent->requestFecCapabilities();
+    return 0;
 }
 
 // Calibrate... needs fixing in version 3.1

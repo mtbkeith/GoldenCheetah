@@ -719,7 +719,7 @@ class TotalWork : public RideMetric {
         }
         setValue(joules/1000);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new TotalWork(*this); }
 };
 
@@ -952,7 +952,7 @@ struct AvgPower : public RideMetric {
         setValue(count > 0 ? total / count : 0);
         setCount(count);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new AvgPower(*this); }
 };
 
@@ -1078,7 +1078,7 @@ struct AAvgPower : public RideMetric {
         setValue(count > 0 ? total / count : 0);
         setCount(count);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new AAvgPower(*this); }
 };
 
@@ -1119,7 +1119,7 @@ struct NonZeroPower : public RideMetric {
         setValue(count > 0 ? total / count : 0);
         setCount(count);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new NonZeroPower(*this); }
 };
 
@@ -1282,7 +1282,7 @@ class HrPw : public RideMetric {
             setValue(0);
         }
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new HrPw(*this); }
 };
 
@@ -1325,7 +1325,7 @@ class Workbeat : public RideMetric {
 
         setValue((work->value() * hb->value()) / 100000.00f);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new Workbeat(*this); }
 };
 
@@ -1372,7 +1372,7 @@ class WattsRPE : public RideMetric {
         }
         setValue(ratio);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new WattsRPE(*this); }
 };
 
@@ -1419,7 +1419,7 @@ class APPercent : public RideMetric {
         }
         setValue(percent);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new APPercent(*this); }
 };
 
@@ -1466,7 +1466,7 @@ class HrNp : public RideMetric {
             setValue(0);
         }
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new HrNp(*this); }
 };
 
@@ -1610,7 +1610,7 @@ class MaxPower : public RideMetric {
         }
         setValue(max);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new MaxPower(*this); }
 };
 
@@ -1788,6 +1788,46 @@ class MaxHr : public RideMetric {
 
 static bool maxHrAdded =
     RideMetricFactory::instance().addMetric(MaxHr());
+
+//////////////////////////////////////////////////////////////////////////////
+
+class MinHr : public RideMetric {
+    Q_DECLARE_TR_FUNCTIONS(MinHr)
+    double min;
+    public:
+    MinHr() : min(0.0)
+    {
+        setSymbol("min_heartrate");
+        setInternalName("Min Heartrate");
+    }
+    void initialize() {
+        setName(tr("Min Heartrate"));
+        setMetricUnits(tr("bpm"));
+        setImperialUnits(tr("bpm"));
+        setType(RideMetric::Peak);
+    }
+    void compute(const RideFile *ride, const Zones *, int,
+                 const HrZones *, int,
+                 const QHash<QString,RideMetric*> &,
+                 const Context *) {
+        bool notset = true;
+        min = 0;
+        foreach (const RideFilePoint *point, ride->dataPoints()) {
+            if (point->hr > 0 && (notset || point->hr < min)) {
+                min = point->hr;
+                notset = false;
+            }
+        }
+        setValue(min);
+    }
+
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("H"); }
+
+    RideMetric *clone() const { return new MinHr(*this); }
+};
+
+static bool minHrAdded =
+    RideMetricFactory::instance().addMetric(MinHr());
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -2077,7 +2117,7 @@ class EOA : public RideMetric {
         AvgPower *ap = dynamic_cast<AvgPower*>(deps.value("average_power"));
         setValue(((aap->value(true)-ap->value(true))/aap->value(true)) * 100.00f);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new EOA(*this); }
 };
 
@@ -2180,7 +2220,7 @@ class MeanPowerVariance : public RideMetric {
             topRank = outliers.getYForRank(0);
         }
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new MeanPowerVariance(*this); }
 };
 
@@ -2221,7 +2261,7 @@ class MaxPowerVariance : public RideMetric {
         else
             setValue(mean->topRank);
     }
-    bool isRelevantForRide(const RideItem *ride) const { return !ride->isSwim && !ride->isRun; }
+    bool isRelevantForRide(const RideItem *ride) const { return ride->present.contains("P") || (!ride->isSwim && !ride->isRun); }
     RideMetric *clone() const { return new MaxPowerVariance(*this); }
 };
 

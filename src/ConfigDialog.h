@@ -62,6 +62,8 @@ class AthleteConfig : public QWidget
 
     public:
         AthleteConfig(QDir home, Zones *zones, Context *context);
+        AboutRiderPage *athletePage;
+        RiderPhysPage *athletePhysPage;
 
     public slots:
         qint32 saveClicked();
@@ -72,7 +74,6 @@ class AthleteConfig : public QWidget
         Context *context;
 
         // about me, power ones and hr zones
-        RiderPage *athletePage;
         ZonePage *zonePage;
         HrZonePage *hrZonePage;
         PaceZonePage *paceZonePage;

@@ -56,7 +56,13 @@
 // 3107 - V3.2 RC4 (lost due to push fail by Mark)
 // 3108 - V3.2 RC4X (some problems with tagging)
 // 3200 - V3.2 RELEASE (August 12 2015)
-// 3900 - V4.0 DEVELOPMENT STARTS
+// 3900 - V3.3 DEVELOPMENT STARTS
+// 3901 - V3.3 PUBLIC DEVELOPMENT BUILD
+// 3902 - V3.3 RC1
+// 3903 - V3.3 RC2
+// 3904 - V3.3 RC3
+// 3933 - V3.3 RELEASE (November 29 2015)
+// 3940 - V4.0 DEVELOPMENT STARTS
 
 #define VERSION3_BUILD    3010 // released
 #define VERSION3_SP1      3030 // released
@@ -64,18 +70,18 @@
 #define VERSION31_UPG     3100 // first build with 3.1 upgrade process
 #define VERSION311_BUILD  3101 // first build with 3.1 upgrade process
 #define VERSION32_BUILD   3200 // released
-#define VERSION40_BUILD   3900 // development release
+#define VERSION33_BUILD   3933 // development release
+#define VERSION40_BUILD   3940 // development release
 
 // will keep changing during testing and before final release
 #define VERSION31_BUILD VERSION31_UPG
 
 // these three will change until we release
-#define VERSION_LATEST 3900
+#define VERSION_LATEST 3940
 #define VERSION_STRING "V4.0 DEV"
 
 // default config for this release is available and maintained here:
-// not updated for v4.0 *yet*
-#define VERSION_CONFIG_PREFIX "http://www.goldencheetah.org/defaults/3.2"
+#define VERSION_CONFIG_PREFIX "http://www.goldencheetah.org/defaults/3.3"
 
 class GcUpgradeLogDialog : public QDialog
 {

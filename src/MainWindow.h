@@ -116,6 +116,10 @@ class MainWindow : public QMainWindow
 
         void switchTab(int index); // for switching between one tab and another
 
+        // Athlete Backup
+        void setBackupAthleteMenu();
+        void backupAthlete(QString name);
+
         // Search / Filter
         void setFilter(QStringList);
         void clearFilter();
@@ -184,6 +188,12 @@ class MainWindow : public QMainWindow
         void uploadTP();
         void downloadTP();
 #endif
+#if QT_VERSION > 0x050000
+        void uploadDropbox();
+        void syncDropbox();
+#endif
+        void uploadLocalFileStore();
+        void syncLocalFileStore();
         void importFile();
         void splitRide();
         void mergeRide();
@@ -235,6 +245,10 @@ class MainWindow : public QMainWindow
         // window and tab menu
         QMenu *openWindowMenu, *openTabMenu;
         QSignalMapper *windowMapper, *tabMapper;
+
+        // backup
+        QMenu *backupAthleteMenu;
+        QSignalMapper *backupMapper;
 
         // chart menus
         QMenu *chartMenu;

@@ -26,6 +26,8 @@
 #include <QtSql>
 
 class ErgFile;
+class VideoSyncFile;
+
 class TrainDB : public QObject
 {
 
@@ -56,6 +58,12 @@ class TrainDB : public QObject
     bool importVideo(QString pathname);
     bool deleteVideo(QString pathname);
 
+    bool importVideoSync(QString pathname, VideoSyncFile *videosyncFile);
+    bool deleteVideoSync(QString pathname);
+
+    // for 3.3
+    bool upgradeDefaultEntriesWorkout();
+
     // drop and recreate tables
     void rebuildDB();
 
@@ -74,6 +82,11 @@ class TrainDB : public QObject
         bool dropWorkoutTable();
         bool createVideoTable();
         bool dropVideoTable();
+        bool createVideoSyncTable();
+        bool dropVideoSyncTable();
+
+        bool createDefaultEntriesWorkout();
+        bool createDefaultEntriesVideosync();
 };
 
 extern TrainDB *trainDB;

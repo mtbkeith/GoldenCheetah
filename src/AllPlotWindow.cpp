@@ -111,6 +111,73 @@ AllPlotWindow::AllPlotWindow(Context *context) :
     HelpWhatsThis *seriesHelp = new HelpWhatsThis(series);
     series->setWhatsThis(seriesHelp->getWhatsThisText(HelpWhatsThis::ChartRides_Performance_Config_Series));
 
+    // user data widget
+    custom = new QWidget(this);
+    st->addTab(custom, tr("User Data"));
+    custom->setContentsMargins(20,20,20,20);
+    //HelpWhatsThis *curvesHelp = new HelpWhatsThis(custom);
+    //custom->setWhatsThis(curvesHelp->getWhatsThisText(HelpWhatsThis::ChartTrends_MetricTrends_Config_Curves));
+    QVBoxLayout *customLayout = new QVBoxLayout(custom);
+    customLayout->setContentsMargins(0,0,0,0);
+    customLayout->setSpacing(5);
+
+    // custom table
+    customTable = new QTableWidget(this);
+#ifdef Q_OS_MAX
+    customTable->setAttribute(Qt::WA_MacShowFocusRect, 0);
+#endif
+    customTable->setColumnCount(2);
+    customTable->horizontalHeader()->setStretchLastSection(true);
+    QStringList headings;
+    headings << tr("Name");
+    headings << tr("Formula");
+    customTable->setHorizontalHeaderLabels(headings);
+    customTable->setSortingEnabled(false);
+    customTable->verticalHeader()->hide();
+    customTable->setShowGrid(false);
+    customTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    customTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    customLayout->addWidget(customTable);
+    connect(customTable, SIGNAL(cellDoubleClicked(int, int)), this, SLOT(doubleClicked(int, int)));
+
+    // custom buttons
+    editCustomButton = new QPushButton(tr("Edit"));
+    connect(editCustomButton, SIGNAL(clicked()), this, SLOT(editUserData()));
+
+    addCustomButton = new QPushButton("+");
+    connect(addCustomButton, SIGNAL(clicked()), this, SLOT(addUserData()));
+
+    deleteCustomButton = new QPushButton("-");
+    connect(deleteCustomButton, SIGNAL(clicked()), this, SLOT(deleteUserData()));
+
+#ifndef Q_OS_MAC
+    upCustomButton = new QToolButton(this);
+    downCustomButton = new QToolButton(this);
+    upCustomButton->setArrowType(Qt::UpArrow);
+    downCustomButton->setArrowType(Qt::DownArrow);
+    upCustomButton->setFixedSize(20,20);
+    downCustomButton->setFixedSize(20,20);
+    addCustomButton->setFixedSize(20,20);
+    deleteCustomButton->setFixedSize(20,20);
+#else
+    upCustomButton = new QPushButton(tr("Up"));
+    downCustomButton = new QPushButton(tr("Down"));
+#endif
+    connect(upCustomButton, SIGNAL(clicked()), this, SLOT(moveUserDataUp()));
+    connect(downCustomButton, SIGNAL(clicked()), this, SLOT(moveUserDataDown()));
+
+
+    QHBoxLayout *customButtons = new QHBoxLayout;
+    customButtons->setSpacing(2);
+    customButtons->addWidget(upCustomButton);
+    customButtons->addWidget(downCustomButton);
+    customButtons->addStretch();
+    customButtons->addWidget(editCustomButton);
+    customButtons->addStretch();
+    customButtons->addWidget(addCustomButton);
+    customButtons->addWidget(deleteCustomButton);
+    customLayout->addLayout(customButtons);
+
     // Main layout
     //QGridLayout *mainLayout = new QGridLayout();
     //mainLayout->setContentsMargins(2,2,2,2);
@@ -868,9 +935,265 @@ AllPlotWindow::configChanged(qint32 state)
         redrawStackPlot();
     }
 
-    // just force a replot if wbal changed
-    // and we are actually plotting wbal !
-    if (state & CONFIG_WBAL && showW->isChecked()) forceReplot();
+    // just force a replot if (a) units changed (e.g. temp, speed etc are now in different units
+    // or the wbal formula changed and we are actually plotting wbal !
+    if (state & CONFIG_UNITS || (state & CONFIG_WBAL && showW->isChecked())) forceReplot();
+}
+
+QString
+AllPlotWindow::getUserData() const
+{
+    QString returning;
+    foreach(UserData *x, userDataSeries)
+        returning += x->settings();
+
+    return returning;
+}
+
+void
+AllPlotWindow::setUserData(QString settings)
+{
+    // wipe whats there
+    foreach(UserData *x, userDataSeries) delete x;
+    userDataSeries.clear();
+
+    // snip into discrete user data xml snippets
+    QRegExp snippet("(\\<userdata .*\\<\\/userdata\\>)");
+    snippet.setMinimal(true); // don't match too much
+    QStringList snips;
+    int pos = 0;
+
+    while ((pos = snippet.indexIn(settings, pos)) != -1) {
+        snips << snippet.cap(1);
+        pos += snippet.matchedLength();
+    }
+
+    // now create and add each series
+    foreach(QString set, snips)
+        userDataSeries << new UserData(set);
+
+    // fill with the current rideItem
+    setRideForUserData();
+    
+    // tell full plot we have some and get allplot
+    // to match too, since it sets from fullplot
+    fullPlot->standard->setUserData(userDataSeries);
+    allPlot->standard->setUserData(userDataSeries);
+
+    // and update table
+    refreshCustomTable();
+
+    // replot
+    forceReplot();
+}
+
+void 
+AllPlotWindow::setRideForUserData()
+{
+    if (!current) return;
+
+    // user data needs refreshing
+    foreach(UserData *x, userDataSeries) x->setRideItem(current);
+}
+
+//
+// configuring user data series
+//
+void
+AllPlotWindow::refreshCustomTable(int indexSelectedItem)
+{
+    // clear then repopulate custom table settings to reflect
+    // the current LTMSettings.
+    customTable->clear();
+
+    // get headers back
+    QStringList header;
+    header << tr("Name") << tr("Formula"); 
+    customTable->setHorizontalHeaderLabels(header);
+
+    QTableWidgetItem *selected = new QTableWidgetItem();
+    // now lets add a row for each metric
+    customTable->setRowCount(userDataSeries.count());
+    int i=0;
+    foreach (UserData *x, userDataSeries) {
+
+        QTableWidgetItem *t = new QTableWidgetItem();
+        t->setText(x->name); // only metrics .. for now ..
+        t->setFlags(t->flags() & (~Qt::ItemIsEditable));
+        customTable->setItem(i,0,t);
+
+        t = new QTableWidgetItem();
+        t->setText(x->formula);
+        t->setFlags(t->flags() & (~Qt::ItemIsEditable));
+        customTable->setItem(i,1,t);
+
+        // keep the selected item from previous step (relevant for moving up/down)
+        if (indexSelectedItem == i) {
+            selected = t;
+        }
+
+        i++;
+    }
+
+    if (selected) {
+      customTable->setCurrentItem(selected);
+    }
+}
+
+void
+AllPlotWindow::editUserData()
+{
+    QList<QTableWidgetItem*> items = customTable->selectedItems();
+    if (items.count() < 1) return;
+
+    int index = customTable->row(items.first());
+
+    UserData edit(userDataSeries[index]->name,
+                  userDataSeries[index]->units,
+                  userDataSeries[index]->formula,
+                  userDataSeries[index]->color);
+
+    EditUserDataDialog dialog(context, &edit);
+
+    if (dialog.exec()) {
+
+        // apply!
+        userDataSeries[index]->formula = edit.formula;
+        userDataSeries[index]->name = edit.name;
+        userDataSeries[index]->units = edit.units;
+        userDataSeries[index]->color = edit.color;
+
+        // update
+        refreshCustomTable();
+
+        // tell full plot we have some.
+        fullPlot->standard->setUserData(userDataSeries);
+        allPlot->standard->setUserData(userDataSeries);
+
+        // replot
+        forceReplot();
+
+    }
+}
+
+void
+AllPlotWindow::doubleClicked( int row, int )
+{
+    UserData edit(userDataSeries[row]->name,
+                  userDataSeries[row]->units,
+                  userDataSeries[row]->formula,
+                  userDataSeries[row]->color);
+
+    EditUserDataDialog dialog(context, &edit);
+
+    if (dialog.exec()) {
+
+        // apply!
+        userDataSeries[row]->formula = edit.formula;
+        userDataSeries[row]->name = edit.name;
+        userDataSeries[row]->units = edit.units;
+        userDataSeries[row]->color = edit.color;
+
+        // update
+        refreshCustomTable();
+
+        // tell full plot we have some.
+        fullPlot->standard->setUserData(userDataSeries);
+        allPlot->standard->setUserData(userDataSeries);
+
+        // replot
+        forceReplot();
+    }
+}
+
+void
+AllPlotWindow::deleteUserData()
+{
+    QList<QTableWidgetItem*> items = customTable->selectedItems();
+    if (items.count() < 1) return;
+    
+    int index = customTable->row(items.first());
+    UserData *deleteme = userDataSeries[index];
+
+    // wipe
+    userDataSeries.removeAt(index);
+    delete deleteme;
+
+    // refresh
+    refreshCustomTable();
+
+    // tell full plot we have some.
+    fullPlot->standard->setUserData(userDataSeries);
+    allPlot->standard->setUserData(userDataSeries);
+
+    // replot
+    forceReplot();
+}
+
+void
+AllPlotWindow::addUserData()
+{
+    UserData add;
+    EditUserDataDialog dialog(context, &add);
+
+    if (dialog.exec()) {
+        // apply
+        userDataSeries.append(new UserData(add.name, add.units, add.formula, add.color));
+
+        // refresh
+        refreshCustomTable();
+
+        // tell full plot we have some.
+        fullPlot->standard->setUserData(userDataSeries);
+        allPlot->standard->setUserData(userDataSeries);
+
+        // replot
+        forceReplot();
+    }
+}
+
+void
+AllPlotWindow::moveUserDataUp()
+{
+    QList<QTableWidgetItem*> items = customTable->selectedItems();
+    if (items.count() < 1) return;
+
+    int index = customTable->row(items.first());
+
+    if (index > 0) {
+        userDataSeries.swap(index, index-1);
+         // refresh
+        refreshCustomTable(index-1);
+
+        // tell full plot we have some.
+        fullPlot->standard->setUserData(userDataSeries);
+        allPlot->standard->setUserData(userDataSeries);
+
+        // replot
+        forceReplot();
+    }
+}
+
+void
+AllPlotWindow::moveUserDataDown()
+{
+    QList<QTableWidgetItem*> items = customTable->selectedItems();
+    if (items.count() < 1) return;
+
+    int index = customTable->row(items.first());
+
+    if (index+1 <  userDataSeries.size()) {
+        userDataSeries.swap(index, index+1);
+         // refresh
+        refreshCustomTable(index+1);
+
+        // tell full plot we have some.
+        fullPlot->standard->setUserData(userDataSeries);
+        allPlot->standard->setUserData(userDataSeries);
+
+        // replot
+        forceReplot();
+    }
 }
 
 bool
@@ -915,12 +1238,30 @@ AllPlotWindow::compareChanged()
     foreach(AllPlotObject *p, compareIntervalCurves) delete p;
     compareIntervalCurves.clear();
 
+    // clean away old compare user data
+    foreach(QList<UserData*>user, compareUserDataSeries) {
+        foreach(UserData *p, user)
+            delete p;
+    }
+    compareUserDataSeries.clear();
+
     // new ones ..
     if (context->isCompareIntervals) {
 
+        // generate the user data series for each interval
+        foreach(CompareInterval ci, context->compareIntervals) {
+            QList<UserData*> list;
+            foreach(UserData *u, userDataSeries) {
+                UserData *p = new UserData(u->name, u->units, u->formula, ci.color); // use context for interval
+                p->setRideItem(ci.rideItem);
+                list << p;
+            }
+            compareUserDataSeries << list;
+        }
+
         // first, lets init fullPlot, just in case its never
         // been set (ie, switched to us before ever plotting a ride
-        if (myRideItem) fullPlot->setDataFromRide(myRideItem);
+        if (myRideItem) fullPlot->setDataFromRide(myRideItem, QList<UserData*>());
 
         // and even if the current ride is blank, we're not
         // going to be blank !!
@@ -939,10 +1280,11 @@ AllPlotWindow::compareChanged()
 
         fullPlot->standard->setVisible(false);
         if (fullPlot->smooth < 1) fullPlot->smooth = 1;
+        int k=0;
         foreach(CompareInterval ci, context->compareIntervals) {
 
-            AllPlotObject *po = new AllPlotObject(fullPlot);
-            if (ci.isChecked()) fullPlot->setDataFromRideFile(ci.data, po);
+            AllPlotObject *po = new AllPlotObject(fullPlot, compareUserDataSeries[k]);
+            if (ci.isChecked()) fullPlot->setDataFromRideFile(ci.data, po, compareUserDataSeries[k]);
 
             // what was the maximum x value?
             if (po->maxKM > maxKM) maxKM = po->maxKM;
@@ -954,6 +1296,9 @@ AllPlotWindow::compareChanged()
 
             // remember
             compareIntervalCurves << po;
+
+            // next
+            k++;
         }
 
         // what is the longest compareInterval?
@@ -961,10 +1306,12 @@ AllPlotWindow::compareChanged()
         else fullPlot->setAxisScale(QwtPlot::xBottom, 0, maxSECS/60);
 
         // now set it it in all the compare objects so they all get set
-        // to the same time / duration
+        // to the same time / duration and all the data is set too
+        k=0;
         foreach (AllPlotObject *po, compareIntervalCurves) {
             po->maxKM = maxKM;
             po->maxSECS = maxSECS;
+            k++;
         }
 
         if (fullPlot->bydist == false) {
@@ -1002,6 +1349,8 @@ AllPlotWindow::compareChanged()
             AllPlot *ap = new AllPlot(this, this, context);
             ap->bydist = fullPlot->bydist;
             ap->setShadeZones(showPower->currentIndex() == 0);
+
+            // user data series needs setting up
             ap->setDataFromObject(compareIntervalCurves[i], fullPlot);
 
             // simpler to keep the indexes aligned
@@ -1084,6 +1433,13 @@ AllPlotWindow::compareChanged()
         if (showAP->isChecked()) { s.one = RideFile::aPower; s.two = RideFile::none; wanted << s;};
         if (showBalance->isChecked()) { s.one = RideFile::lrbalance; s.two = RideFile::none; wanted << s;};
 
+        // and the user series
+        for(int k=0; k<userDataSeries.count(); k++) {
+            s.one = static_cast<RideFile::SeriesType>(RideFile::none + 1 + k);
+            s.two = RideFile::none;
+            wanted << s;
+        }
+
         /*
         if (showTE->isChecked()) {
             s.one = RideFile::lte; s.two = RideFile::none; wanted << s;
@@ -1141,24 +1497,44 @@ AllPlotWindow::compareChanged()
             plot->enableAxis(QwtPlot::xBottom, true);
             plot->setAxisTitle(QwtPlot::xBottom,NULL);
 
+            // get rid of the User Data axis
+            for(int k=0; k<userDataSeries.count(); k++) 
+                plot->setAxisVisible(QwtAxisId(QwtAxis::yRight,4 + k), false);
+
             // common y axis
             QwtScaleDraw *sd = new QwtScaleDraw;
             sd->setTickLength(QwtScaleDiv::MajorTick, 3);
             sd->enableComponent(QwtScaleDraw::Ticks, false);
             sd->enableComponent(QwtScaleDraw::Backbone, false);
             plot->setAxisScaleDraw(QwtPlot::yLeft, sd);
-    
-            // y-axis title and colour
-            if (x.one == RideFile::alt && x.two == RideFile::slope) {
-                plot->setAxisTitle(QwtPlot::yLeft, tr("Alt/Slope"));
-                plot->showAltSlopeState = allPlot->showAltSlopeState;
-                plot->setAltSlopePlotStyle(allPlot->standard->altSlopeCurve);
-               } else {
-                plot->setAxisTitle(QwtPlot::yLeft, RideFile::seriesName(x.one));
-            }
+   
+            // default paletter override below if needed 
             QPalette pal;
             pal.setColor(QPalette::WindowText, RideFile::colorFor(x.one));
             pal.setColor(QPalette::Text, RideFile::colorFor(x.one));
+
+            // y-axis title and colour
+            if (x.one == RideFile::alt && x.two == RideFile::slope) {
+
+                // alt/slope special case
+                plot->setAxisTitle(QwtPlot::yLeft, tr("Alt/Slope"));
+                plot->showAltSlopeState = allPlot->showAltSlopeState;
+                plot->setAltSlopePlotStyle(allPlot->standard->altSlopeCurve);
+
+            } else {
+
+                // user defined series
+                if (x.one > RideFile::none) {
+                    int index = (int)(x.one) - (RideFile::none + 1);
+                    plot->setAxisTitle(QwtPlot::yLeft, userDataSeries[index]->name);
+                    pal.setColor(QPalette::WindowText, userDataSeries[index]->color);
+                    pal.setColor(QPalette::Text, userDataSeries[index]->color);
+                } else {
+                    // everything else
+                    plot->setAxisTitle(QwtPlot::yLeft, RideFile::seriesName(x.one));
+                }
+            }
+
             plot->axisWidget(QwtPlot::yLeft)->setPalette(pal);
 
             // remember them
@@ -1444,6 +1820,9 @@ AllPlotWindow::rideSelected()
     // ok, its now the current ride
     current = ride;
 
+    // setup user data if needed
+    setRideForUserData();
+
     // clear any previous selections
     clearSelection();
 
@@ -1453,7 +1832,7 @@ AllPlotWindow::rideSelected()
     setAllPlotWidgets(ride);
 
     // setup the charts to reflect current ride selection
-    fullPlot->setDataFromRide(ride);
+    fullPlot->setDataFromRide(ride, userDataSeries);
     intervalPlot->setDataFromRide(ride);
 
 
@@ -1466,14 +1845,13 @@ AllPlotWindow::rideSelected()
         startidx = ride->ride()->timeIndex( spanSlider->lowerValue() );
         stopidx = ride->ride()->timeIndex( spanSlider->upperValue() );
     }
-    allPlot->setDataFromPlot( fullPlot, startidx, stopidx );
 
     // redraw all the plots, they will check
     // to see if they are currently visible
     // and only redraw if neccessary
     redrawFullPlot();
-    redrawIntervalPlot();
     redrawAllPlot();
+    redrawIntervalPlot();
 
     // we need to reset the stacks as the ride has changed
     // but it may ignore if not in stacked mode.
@@ -1496,7 +1874,7 @@ AllPlotWindow::rideDeleted(RideItem *ride)
         // they will try and reference AllPlot::rideItem
         if (!isCompare()) {
             setAllPlotWidgets(NULL);
-            fullPlot->setDataFromRide(NULL);
+            fullPlot->setDataFromRide(NULL,QList<UserData*>());
         }
     }
 }
@@ -3042,7 +3420,7 @@ AllPlotWindow::resetSeriesStackedDatas()
 void
 AllPlotWindow::resetStackedDatas()
 {
-    if (!current) return;
+    if (!allPlot->rideItem || !allPlot->rideItem->ride() || !current) return;
 
     int _stackWidth = stackWidth;
     if (allPlot->bydist)
@@ -3289,6 +3667,13 @@ AllPlotWindow::setupSeriesStackPlots()
          s.one = RideFile::rppb; s.two = RideFile::rppe; serieslist << s; }
     if (showPPP->isChecked() && rideItem->ride()->areDataPresent()->lpppb) { s.one = RideFile::lpppb; s.two = RideFile::lpppe; serieslist << s;
          s.one = RideFile::rpppb; s.two = RideFile::rpppe; serieslist << s; }
+
+    // and the user series
+    for(int k=0; k<userDataSeries.count(); k++) {
+        s.one = static_cast<RideFile::SeriesType>(RideFile::none + 1 + k);
+        s.two = RideFile::none;
+        serieslist << s;
+    }
 
     bool first = true;
     foreach(SeriesWanted x, serieslist) {

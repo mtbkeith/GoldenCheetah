@@ -26,6 +26,7 @@
 #include "Units.h"
 #include "VeloHeroUploader.h"
 #include "TrainingstagebuchUploader.h"
+#include "SportPlusHealthUploader.h"
 #include "HelpWhatsThis.h"
 
 // access to metrics
@@ -89,7 +90,7 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
 {
     setWindowTitle(tr("Share your activity"));
     HelpWhatsThis *help = new HelpWhatsThis(this);
-    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Activity_Share));
+    this->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Share_Online));
 
     // make the dialog a resonable size
     setMinimumWidth(550);
@@ -158,6 +159,15 @@ ShareDialog::ShareDialog(Context *context, RideItem *item) :
         trainingstagebuchChk->setChecked( true );
     }
     vbox1->addWidget(trainingstagebuchChk,0,col++);
+
+    sportplushealthUploader = new SportPlusHealthUploader(context, ride, this);
+    sportplushealthChk = new QCheckBox(tr("SportPlusHealth"));
+    if( ! sportplushealthUploader->canUpload( err ) ){
+        sportplushealthChk->setEnabled( false );
+    } else if( ! sportplushealthUploader->wasUploaded() ){
+        sportplushealthChk->setChecked( true );
+    }
+    vbox1->addWidget(sportplushealthChk,0,col++);
 
     //garminUploader = new GarminUploader(context, ride, this); // not in 3.1
     //garminChk = new QCheckBox(tr("Garmin Connect"));
@@ -274,7 +284,7 @@ ShareDialog::upload()
     if ( !rideWithGPSChk->isChecked() && !selfLoopsChk->isChecked()
         && !veloHeroChk->isChecked() && !trainingstagebuchChk->isChecked()
         && !stravaChk->isChecked() && !cyclingAnalyticsChk->isChecked()
-        //&& !garminChk->isChecked()
+        && !sportplushealthChk->isChecked() //&& !garminChk->isChecked()
         ) {
         QMessageBox aMsgBox;
         aMsgBox.setText(tr("No share site selected !"));
@@ -307,6 +317,9 @@ ShareDialog::upload()
     if (trainingstagebuchChk->isChecked()) {
         shareSiteCount ++;
     }
+    if (sportplushealthChk->isChecked()) {
+        shareSiteCount ++;
+    }
     //if (garminChk->isChecked()) {
     //    shareSiteCount ++;
     //}
@@ -328,6 +341,10 @@ ShareDialog::upload()
     }
     if (trainingstagebuchChk->isEnabled() && trainingstagebuchChk->isChecked()) {
         doUploader( trainingstagebuchUploader );
+    }
+    if (sportplushealthChk->isEnabled() && sportplushealthChk->isChecked()) {
+        sportplushealthUploader->insertedName = QString(titleEdit->text()).toLatin1();
+        doUploader( sportplushealthUploader );
     }
     //if (garminChk->isEnabled() && garminChk->isChecked()) {
     //    doUploader( garminUploader );
@@ -482,7 +499,12 @@ StravaUploader::requestUploadStrava()
 
     QHttpPart activityTypePart;
     activityTypePart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"activity_type\""));
-    activityTypePart.setBody("ride");
+    if (ride->isRun)
+      activityTypePart.setBody("run");
+    else if (ride->isSwim)
+      activityTypePart.setBody("swim");
+    else
+      activityTypePart.setBody("ride");
 
     QHttpPart activityNamePart;
     activityNamePart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"activity_name\""));
@@ -541,19 +563,23 @@ StravaUploader::requestUploadStravaFinished(QNetworkReply *reply)
         MVJSONReader jsonResponse(string(response.toLatin1()));
 
         // get error field
-        if (jsonResponse.root->hasField("error")) {
-            uploadError = jsonResponse.root->getFieldString("error").c_str();
-        } else {
-            uploadError = ""; // no error
-        }
+        if (jsonResponse.root) {
+            if (jsonResponse.root->hasField("error")) {
+                uploadError = jsonResponse.root->getFieldString("error").c_str();
+            } else {
+                uploadError = ""; // no error
+            }
 
-        // get upload_id, but if not available use id
-        if (jsonResponse.root->hasField("upload_id")) {
-            stravaUploadId = jsonResponse.root->getFieldInt("upload_id");
-        } else if (jsonResponse.root->hasField("id")) {
-            stravaUploadId = jsonResponse.root->getFieldInt("id");
+            // get upload_id, but if not available use id
+            if (jsonResponse.root->hasField("upload_id")) {
+                stravaUploadId = jsonResponse.root->getFieldInt("upload_id");
+            } else if (jsonResponse.root->hasField("id")) {
+                stravaUploadId = jsonResponse.root->getFieldInt("id");
+            } else {
+                stravaUploadId = 0;
+            }
         } else {
-            stravaUploadId = 0;
+            uploadError = "no connection";
         }
     } catch(...) { // not really sure what exceptions to expect so do them all (bad, sorry)
         uploadError=tr("invalid response or parser exception.");

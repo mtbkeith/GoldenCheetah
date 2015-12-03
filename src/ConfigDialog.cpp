@@ -131,6 +131,9 @@ ConfigDialog::ConfigDialog(QDir _home, Zones *_zones, Context *context) :
     athlete->setWhatsThis(athleteHelp->getWhatsThisText(HelpWhatsThis::Preferences_Athlete_About));
     pagesWidget->addWidget(athlete);
 
+    // units change on general affects units used on entry in athlete pages
+    connect (general->generalPage->unitCombo, SIGNAL(currentIndexChanged(int)), athlete->athletePhysPage, SLOT(unitChanged(int)));
+
     password = new PasswordConfig(_home, _zones, context);
     HelpWhatsThis *passwordHelp = new HelpWhatsThis(password);
     password->setWhatsThis(passwordHelp->getWhatsThisText(HelpWhatsThis::Preferences_Passwords));
@@ -152,8 +155,8 @@ ConfigDialog::ConfigDialog(QDir _home, Zones *_zones, Context *context) :
     pagesWidget->addWidget(metric);
 
     interval = new IntervalConfig(_home, _zones, context);
-    //HelpWhatsThis *intervalHelp = new HelpWhatsThis(interval);
-    //interval->setWhatsThis(intervalHelp->getWhatsThisText(HelpWhatsThis::Preferences_Intervals));
+    HelpWhatsThis *intervalHelp = new HelpWhatsThis(interval);
+    interval->setWhatsThis(intervalHelp->getWhatsThisText(HelpWhatsThis::Preferences_Intervals));
     pagesWidget->addWidget(interval);
 
     device = new DeviceConfig(_home, _zones, context);
@@ -251,6 +254,9 @@ void ConfigDialog::saveClicked()
             // lets restart
             restarting = true;
 
+            // save all setttings to disk
+            appsettings->syncQSettings();
+
             // close all the mainwindows
             foreach(MainWindow *m, mainwindows) m->byebye();
 
@@ -295,9 +301,13 @@ AthleteConfig::AthleteConfig(QDir home, Zones *zones, Context *context) :
     home(home), zones(zones), context(context)
 {
     // the widgets
-    athletePage = new RiderPage(this, context);
+    athletePage = new AboutRiderPage(this, context);
     HelpWhatsThis *athleteHelp = new HelpWhatsThis(athletePage);
     athletePage->setWhatsThis(athleteHelp->getWhatsThisText(HelpWhatsThis::Preferences_Athlete_About));
+
+    athletePhysPage = new RiderPhysPage(this, context);
+    HelpWhatsThis *athletePhysHelp = new HelpWhatsThis(athletePhysPage);
+    athletePhysPage->setWhatsThis(athletePhysHelp->getWhatsThisText(HelpWhatsThis::Preferences_Athlete_About_Phys));
 
     zonePage = new ZonePage(context);
     HelpWhatsThis *zoneHelp = new HelpWhatsThis(zonePage);
@@ -322,6 +332,7 @@ AthleteConfig::AthleteConfig(QDir home, Zones *zones, Context *context) :
 
     QTabWidget *tabs = new QTabWidget(this);
     tabs->addTab(athletePage, tr("About"));
+    tabs->addTab(athletePhysPage, tr("Measures"));
     tabs->addTab(zonePage, tr("Power Zones"));
     tabs->addTab(hrZonePage, tr("Heartrate Zones"));
     tabs->addTab(paceZonePage, tr("Pace Zones"));
@@ -335,6 +346,7 @@ qint32 AthleteConfig::saveClicked()
     qint32 state = 0;
 
     state |= athletePage->saveClicked();
+    state |= athletePhysPage->saveClicked();
     state |= zonePage->saveClicked();
     state |= hrZonePage->saveClicked();
     state |= paceZonePage->saveClicked();

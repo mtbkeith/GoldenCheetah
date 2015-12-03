@@ -23,6 +23,7 @@
 #include "RideNavigator.h"
 #include "RideFileCache.h"
 #include "PMCData.h"
+#include "VDOTCalculator.h"
 #include <QDebug>
 
 #include "Zones.h"
@@ -78,9 +79,42 @@ static struct {
     { "min", 0 },
     { "count", 0 },
 
+    // PMC functions
+    { "lts", 1 },
+    { "sts", 1 },
+    { "sb", 1 },
+    { "rr", 1 },
+
+    // estimate
+    { "estimate", 2 }, // estimate(model, (cp|ftp|w'|pmax|x))
+
+    // more vector operations
+    { "which", 0 }, // which(expr, ...) - create vector contain values that pass expr
+
+    // set
+    { "set", 3 }, // set(symbol, value, filter)
+    { "unset", 2 }, // unset(symbol, filter)
+    { "isset", 1 }, // isset(symbol) - is the metric or metadata overridden/defined
+
+    // VDOT functions
+    { "vdottime", 2 }, // vdottime(VDOT, distance[km]) - result is seconds
+
     // add new ones above this line
     { "", -1 }
 };
+
+static QStringList pdmodels()
+{
+    QStringList returning;
+
+    returning << "2p";
+    returning << "3p";
+    returning << "ext";
+    returning << "ws";
+    returning << "velo";
+
+    return returning;
+}
 
 QStringList
 DataFilter::functions()
@@ -88,13 +122,27 @@ DataFilter::functions()
     QStringList returning;
 
     for(int i=0; DataFilterFunctions[i].parameters != -1; i++) {
-        QString function = DataFilterFunctions[i].name + "(";
-        for(int j=0; j<DataFilterFunctions[i].parameters; j++) {
-            if (j) function += ", ";
-             function += QString("p%1").arg(j+1);
+
+        QString function;
+
+        if (i == 30) { // special case 'estimate' we describe it
+
+            foreach(QString model, pdmodels())
+                returning << "estimate(" + model + ", x)";
+        } else if (i == 31) { // which example
+            returning << "which(x>0, ...)";
+
+        } else if (i == 32) { // set example
+            returning <<"set(field, value, expr)";
+        } else {
+            function = DataFilterFunctions[i].name + "(";
+            for(int j=0; j<DataFilterFunctions[i].parameters; j++) {
+                if (j) function += ", ";
+                function += QString("p%1").arg(j+1);
+            }
+            if (DataFilterFunctions[i].parameters) function += ")";
+            else function += "...)";
         }
-        if (DataFilterFunctions[i].parameters) function += ")";
-        else function += "...)";
         returning << function;
     }
     return returning;
@@ -112,7 +160,7 @@ extern void DataFilter_clearString();
 QStringList DataFiltererrors;
 extern int DataFilterparse();
 
-Leaf *root; // root node for parsed statement
+Leaf *DataFilterroot; // root node for parsed statement
 
 static RideFile::SeriesType nameToSeries(QString name)
 {
@@ -151,7 +199,7 @@ Leaf::isDynamic(Leaf *leaf)
                     return leaf->isDynamic(leaf->lvalue.l) || leaf->isDynamic(leaf->rvalue.l);
                     break;
     case Leaf::Function :
-                    if (leaf->lvalue.l) return leaf->isDynamic(leaf->lvalue.l);
+                    if (leaf->series && leaf->lvalue.l) return leaf->isDynamic(leaf->lvalue.l);
                     else return leaf->dynamic;
                     break;
         break;
@@ -194,7 +242,6 @@ DataFilter::setSignature(QString &query)
 
         // keep anything that isn't whitespace, or a comment
         if (instring || (!incomment && !query[i].isSpace())) sig += query[i];
-    
     }
 }
 
@@ -262,6 +309,9 @@ DataFilter::colorSyntax(QTextDocument *document, int pos)
         if (!insymbol && !incomment && !instring && string[i].isLetter()) {
             insymbol = true;
             symbolstart = i;
+
+            // it starts with numbers but ends with letters - number becomes symbol
+            if (innumber) { symbolstart=numberstart; innumber=false; }
         }
 
         // end of symbol ?
@@ -282,18 +332,17 @@ DataFilter::colorSyntax(QTextDocument *document, int pos)
                     !sym.compare("const", Qt::CaseInsensitive) ||
                     !sym.compare("config", Qt::CaseInsensitive) ||
                     !sym.compare("ctl", Qt::CaseInsensitive) ||
-                    !sym.compare("lts", Qt::CaseInsensitive) ||
                     !sym.compare("tsb", Qt::CaseInsensitive) ||
-                    !sym.compare("sb", Qt::CaseInsensitive) ||
                     !sym.compare("atl", Qt::CaseInsensitive) ||
-                    !sym.compare("sts", Qt::CaseInsensitive) ||
-                    !sym.compare("rr", Qt::CaseInsensitive) ||
                     !sym.compare("daterange", Qt::CaseInsensitive) ||
                     !sym.compare("Today", Qt::CaseInsensitive) ||
                     !sym.compare("Current", Qt::CaseInsensitive) ||
                     sym == "isSwim" || sym == "isRun") {
                     isfunction = found = true;
                 }
+
+                // ride sample symbol
+                if (dataSeriesSymbols.contains(sym)) found = true;
 
                 // still not found ?
                 // is it a function then ?
@@ -590,6 +639,77 @@ void Leaf::color(Leaf *leaf, QTextDocument *document)
     }
 }
 
+// convert expression to string, without white space
+// this can be used as a signature when caching values etc
+
+QString
+Leaf::toString()
+{
+    switch(type) {
+    case Leaf::Float : return QString("%1").arg(lvalue.f); break;
+    case Leaf::Integer : return QString("%1").arg(lvalue.i); break;
+    case Leaf::String : return *lvalue.s; break;
+    case Leaf::Symbol : return *lvalue.n; break;
+    case Leaf::Logical  :
+    case Leaf::Operation :
+    case Leaf::BinaryOperation :
+                    return QString("%1%2%3")
+                    .arg(lvalue.l->toString())
+                    .arg(op)
+                    .arg(op ? rvalue.l->toString() : "");
+                    break;
+    case Leaf::UnaryOperation :
+                    return QString("-%1").arg(lvalue.l->toString());
+                    break;
+    case Leaf::Function :
+                    if (series) {
+
+                        if (lvalue.l) {
+                            return QString("%1(%2,%3)")
+                                       .arg(function)
+                                       .arg(*(series->lvalue.n))
+                                       .arg(lvalue.l->toString());
+                        } else {
+                            return QString("%1(%2)")
+                                       .arg(function)
+                                       .arg(*(series->lvalue.n));
+                        }
+
+                    } else {
+                        QString f= function + "(";
+                        bool first=true;
+                        foreach(Leaf*l, fparms) {
+                            f+= (first ? "," : "") + l->toString();
+                            first = false;
+                        }
+                        f += ")";
+                        return f;
+                    }
+                    break;
+    case Leaf::Vector :
+                    return QString("%1[%2:%3]")
+                        .arg(lvalue.l->toString())
+                        .arg(fparms[0]->toString())
+                        .arg(fparms[1]->toString());
+
+    case Leaf::Conditional : qDebug()<<"cond";
+        {
+                    return QString("%1?%2:%3")
+                    .arg(cond.l->toString())
+                    .arg(lvalue.l->toString())
+                    .arg(rvalue.l->toString());
+        }
+        break;
+    case Leaf::Parameters :
+        break;
+
+    default:
+        break;
+
+    }
+    return "";
+}
+
 void Leaf::print(Leaf *leaf, int level)
 {
     qDebug()<<"LEVEL"<<level;
@@ -680,11 +800,13 @@ bool Leaf::isNumber(DataFilter *df, Leaf *leaf)
         {
             QString symbol = *(leaf->lvalue.n);
             if (symbol == "isRun") return true;
+            if (symbol == "x") return true;
             else if (symbol == "isSwim") return true;
             else if (!symbol.compare("Date", Qt::CaseInsensitive)) return true;
             else if (!symbol.compare("Today", Qt::CaseInsensitive)) return true;
             else if (!symbol.compare("Current", Qt::CaseInsensitive)) return true;
             else if (isCoggan(symbol)) return true;
+            else if (df->dataSeriesSymbols.contains(symbol)) return true;
             else return df->lookupType.value(symbol, false);
         }
         break;
@@ -748,10 +870,12 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
 
                 // isRun isa special, we may add more later (e.g. date)
                 if (symbol.compare("Date", Qt::CaseInsensitive) &&
+                    symbol.compare("x", Qt::CaseInsensitive) && // used by which
                     symbol.compare("Today", Qt::CaseInsensitive) &&
                     symbol.compare("Current", Qt::CaseInsensitive) &&
+                    !df->dataSeriesSymbols.contains(symbol) &&
                     symbol != "isSwim" && symbol != "isRun" && !isCoggan(symbol)) {
-                    DataFiltererrors << QString(QObject::tr("%1 is unknown")).arg(symbol);
+                    DataFiltererrors << QString(tr("%1 is unknown")).arg(symbol);
                     leaf->inerror = true;
                 }
 
@@ -774,7 +898,7 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
             // is the symbol valid?
             QRegExp bestValidSymbols("^(apower|power|hr|cadence|speed|torque|vam|xpower|np|wpk)$", Qt::CaseInsensitive);
             QRegExp tizValidSymbols("^(power|hr)$", Qt::CaseInsensitive);
-            QRegExp configValidSymbols("^(cp|w\\'|pmax|cv|d\\'|scv|sd\\'|height|weight|lthr|maxhr|rhr|units)$", Qt::CaseInsensitive);
+            QRegExp configValidSymbols("^(cranklength|cp|w\\'|pmax|cv|d\\'|scv|sd\\'|height|weight|lthr|maxhr|rhr|units)$", Qt::CaseInsensitive);
             QRegExp constValidSymbols("^(e|pi)$", Qt::CaseInsensitive); // just do basics for now
             QRegExp dateRangeValidSymbols("^(start|stop)$", Qt::CaseInsensitive); // date range
 
@@ -782,73 +906,158 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
 
                 QString symbol = leaf->series->lvalue.n->toLower();
 
-                if (leaf->function == "sts" || leaf->function == "lts" || leaf->function == "sb" || leaf->function == "rr") {
+                if (leaf->function == "best" && !bestValidSymbols.exactMatch(symbol)) {
+                    DataFiltererrors << QString(tr("invalid data series for best(): %1")).arg(symbol);
+                    leaf->inerror = true;
+                }
 
-                    // does the symbol exist though ?
-                    QString lookup = df->lookupMap.value(symbol, "");
-                    if (lookup == "") {
-                        DataFiltererrors << QString(QObject::tr("%1 is unknown")).arg(symbol);
+                if (leaf->function == "tiz" && !tizValidSymbols.exactMatch(symbol)) {
+                    DataFiltererrors << QString(tr("invalid data series for tiz(): %1")).arg(symbol);
+                    leaf->inerror = true;
+                }
+
+                if (leaf->function == "daterange") {
+
+                    if (!dateRangeValidSymbols.exactMatch(symbol)) {
+                        DataFiltererrors << QString(tr("invalid literal for daterange(): %1")).arg(symbol);
                         leaf->inerror = true;
-                    }
 
-                } else {
-
-                    if (leaf->function == "best" && !bestValidSymbols.exactMatch(symbol)) {
-                        DataFiltererrors << QString(QObject::tr("invalid data series for best(): %1")).arg(symbol);
-                        leaf->inerror = true;
-                    }
-
-                    if (leaf->function == "tiz" && !tizValidSymbols.exactMatch(symbol)) {
-                        DataFiltererrors << QString(QObject::tr("invalid data series for tiz(): %1")).arg(symbol);
-                        leaf->inerror = true;
-                    }
-
-                    if (leaf->function == "daterange") {
-
-                        if (!dateRangeValidSymbols.exactMatch(symbol)) {
-                            DataFiltererrors << QString(QObject::tr("invalid literal for daterange(): %1")).arg(symbol);
-                            leaf->inerror = true;
-
-                        } else {
-                            // convert to int days since using current date range config
-                            // should be able to get from parent somehow
-                            leaf->type = Leaf::Integer;
-                            if (symbol == "start") leaf->lvalue.i = QDate(1900,01,01).daysTo(df->context->currentDateRange().from);
-                            else if (symbol == "stop") leaf->lvalue.i = QDate(1900,01,01).daysTo(df->context->currentDateRange().to);
-                            else leaf->lvalue.i = 0;
-                        }
-                    }
-
-                    if (leaf->function == "config" && !configValidSymbols.exactMatch(symbol)) {
-                        DataFiltererrors << QString(QObject::tr("invalid literal for config(): %1")).arg(symbol);
-                        leaf->inerror = true;
-                    }
-
-                    if (leaf->function == "const") {
-                        if (!constValidSymbols.exactMatch(symbol)) {
-                            DataFiltererrors << QString(QObject::tr("invalid literal for const(): %1")).arg(symbol);
-                            leaf->inerror = true;
-                        } else {
-
-                            // convert to a float
-                            leaf->type = Leaf::Float;
-                            leaf->lvalue.f = 0.0L;
-                            if (symbol == "e") leaf->lvalue.f = MATHCONST_E;
-                            if (symbol == "pi") leaf->lvalue.f = MATHCONST_PI;
-                        }
-                    }
-
-                    if (leaf->function == "best" || leaf->function == "tiz") {
-                        // now set the series type used as parameter 1 to best/tiz
-                        leaf->seriesType = nameToSeries(symbol);
+                    } else {
+                        // convert to int days since using current date range config
+                        // should be able to get from parent somehow
+                        leaf->type = Leaf::Integer;
+                        if (symbol == "start") leaf->lvalue.i = QDate(1900,01,01).daysTo(df->context->currentDateRange().from);
+                        else if (symbol == "stop") leaf->lvalue.i = QDate(1900,01,01).daysTo(df->context->currentDateRange().to);
+                        else leaf->lvalue.i = 0;
                     }
                 }
+
+                if (leaf->function == "config" && !configValidSymbols.exactMatch(symbol)) {
+                    DataFiltererrors << QString(tr("invalid literal for config(): %1")).arg(symbol);
+                    leaf->inerror = true;
+                }
+
+                if (leaf->function == "const") {
+                    if (!constValidSymbols.exactMatch(symbol)) {
+                        DataFiltererrors << QString(tr("invalid literal for const(): %1")).arg(symbol);
+                        leaf->inerror = true;
+                    } else {
+
+                        // convert to a float
+                        leaf->type = Leaf::Float;
+                        leaf->lvalue.f = 0.0L;
+                        if (symbol == "e") leaf->lvalue.f = MATHCONST_E;
+                        if (symbol == "pi") leaf->lvalue.f = MATHCONST_PI;
+                    }
+                }
+
+                if (leaf->function == "best" || leaf->function == "tiz") {
+                    // now set the series type used as parameter 1 to best/tiz
+                    leaf->seriesType = nameToSeries(symbol);
+                }
+
             } else { // generic functions, math etc
 
                 bool found=false;
 
                 // are the parameters well formed ?
-                foreach(Leaf *p, leaf->fparms) validateFilter(df, p);
+                if (leaf->function == "which") {
+
+                    // 2 or more
+                    if (leaf->fparms.count() < 2) {
+                        leaf->inerror = true;
+                        DataFiltererrors << QString(tr("which function has at least 2 parameters."));
+                    }
+
+                    // still normal parm check !
+                    foreach(Leaf *p, leaf->fparms) validateFilter(df, p);
+
+                } else if (leaf->function == "isset" || leaf->function == "set" || leaf->function == "unset") {
+
+                    // don't run it everytime a ride is selected!
+                    leaf->dynamic = false;
+
+                    // is the first a symbol ?
+                    if (leaf->fparms.count() > 0) {
+                        if (leaf->fparms[0]->type != Leaf::Symbol) {
+                            leaf->inerror = true;
+                            DataFiltererrors << QString(tr("isset/set/unset function first parameter is field/metric to set."));
+                        } else {
+                            QString symbol = *(leaf->fparms[0]->lvalue.n);
+
+                            //  some specials are not allowed
+                            if (!symbol.compare("Date", Qt::CaseInsensitive) ||
+                                !symbol.compare("x", Qt::CaseInsensitive) || // used by which
+                                !symbol.compare("Today", Qt::CaseInsensitive) ||
+                                !symbol.compare("Current", Qt::CaseInsensitive) ||
+                                df->dataSeriesSymbols.contains(symbol) ||
+                                symbol == "isSwim" || symbol == "isRun" || isCoggan(symbol)) {
+                                DataFiltererrors << QString(tr("%1 is not supported in isset/set/unset operations")).arg(symbol);
+                                leaf->inerror = true;
+                            }
+                        }
+                    }
+
+                    // make sure we have the right parameters though!
+                    if (leaf->function == "issset" && leaf->fparms.count() != 1) {
+
+                        leaf->inerror = true;
+                        DataFiltererrors << QString(tr("isset has one parameter, a symbol to check."));
+
+                    } else if ((leaf->function == "set" && leaf->fparms.count() != 3) ||
+                        (leaf->function == "unset" && leaf->fparms.count() != 2)) {
+
+                        leaf->inerror = true;
+                        DataFiltererrors << (leaf->function == "set" ? 
+                            QString(tr("set function needs 3 paramaters; symbol, value and expression.")) : 
+                            QString(tr("unset function needs 2 paramaters; symbol and expression.")));
+
+                    } else {
+
+                        // still normal parm check !
+                        foreach(Leaf *p, leaf->fparms) validateFilter(df, p);
+                    }
+
+                } else if (leaf->function == "estimate") {
+
+                    // we only want two parameters and they must be
+                    // a model name and then either ftp, cp, pmax, w'
+                    // or a duration
+                    if (leaf->fparms.count() > 0) {
+                        // check the model name
+                        if (leaf->fparms[0]->type != Leaf::Symbol) {
+
+                            leaf->fparms[0]->inerror = true;
+                            DataFiltererrors << QString(tr("estimate function expects model name as first parameter."));
+
+                        } else {
+
+                            if (!pdmodels().contains(*(leaf->fparms[0]->lvalue.n))) {
+                                leaf->inerror = leaf->fparms[0]->inerror = true;
+                                DataFiltererrors << QString(tr("estimate function expects model name as first parameter"));
+                            }
+                        }
+
+                        if (leaf->fparms.count() > 1) {
+
+                            // check symbol name if it is a symbol
+                            if (leaf->fparms[1]->type == Leaf::Symbol) {
+                                QRegExp estimateValidSymbols("^(cp|ftp|pmax|w')$", Qt::CaseInsensitive);
+                                if (!estimateValidSymbols.exactMatch(*(leaf->fparms[1]->lvalue.n))) {
+                                    leaf->inerror = leaf->fparms[1]->inerror = true;
+                                    DataFiltererrors << QString(tr("estimate function expects parameter or duration as second parameter"));
+                                }
+                            } else {
+                                validateFilter(df, leaf->fparms[1]);
+                            }
+                        }
+                    }
+
+                } else {
+
+                    // normal parm check !
+                    foreach(Leaf *p, leaf->fparms) validateFilter(df, p);
+                }
 
                 // does it exist?
                 for(int i=0; DataFilterFunctions[i].parameters != -1; i++) {
@@ -856,7 +1065,7 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
 
                         // with the right number of parameters?
                         if (DataFilterFunctions[i].parameters && leaf->fparms.count() != DataFilterFunctions[i].parameters) {
-                            DataFiltererrors << QString(QObject::tr("function '%1' expects %2 parameter(s) not %3")).arg(leaf->function)
+                            DataFiltererrors << QString(tr("function '%1' expects %2 parameter(s) not %3")).arg(leaf->function)
                                                 .arg(DataFilterFunctions[i].parameters).arg(fparms.count());
                             leaf->inerror = true;
                         }
@@ -867,7 +1076,7 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
 
                 // not known!
                 if (!found) {
-                    DataFiltererrors << QString(QObject::tr("unknown function %1")).arg(leaf->function);
+                    DataFiltererrors << QString(tr("unknown function %1")).arg(leaf->function);
                     leaf->inerror=true;
                 }
             }
@@ -877,7 +1086,7 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
     case Leaf::UnaryOperation :
         { // only 1 at present, unary minus return the value * -1
             if (!Leaf::isNumber(df, leaf->lvalue.l)) {
-                DataFiltererrors << QString(QObject::tr("unary negation on a string!"));
+                DataFiltererrors << QString(tr("unary negation on a string!"));
                 leaf->inerror = true;
             }
         }
@@ -889,14 +1098,14 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
             bool lhsType = Leaf::isNumber(df, leaf->lvalue.l);
             bool rhsType = Leaf::isNumber(df, leaf->rvalue.l);
             if (lhsType != rhsType) {
-                DataFiltererrors << QString(QObject::tr("comparing strings with numbers"));
+                DataFiltererrors << QString(tr("comparing strings with numbers"));
                 leaf->inerror = true;
             }
 
             // what about using string operations on a lhs/rhs that
             // are numeric?
             if ((lhsType || rhsType) && leaf->op >= MATCHES && leaf->op <= CONTAINS) {
-                DataFiltererrors << QObject::tr("using a string operations with a number");
+                DataFiltererrors << tr("using a string operations with a number");
                 leaf->inerror = true;
             }
 
@@ -924,7 +1133,7 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
     case Leaf::Parameters :
         {
             // should never get here !
-            DataFiltererrors << QObject::tr("internal parser error: parms");
+            DataFiltererrors << tr("internal parser error: parms");
             leaf->inerror = true;
         }
         break;
@@ -936,6 +1145,13 @@ void Leaf::validateFilter(DataFilter *df, Leaf *leaf)
 
 DataFilter::DataFilter(QObject *parent, Context *context) : QObject(parent), context(context), isdynamic(false), treeRoot(NULL)
 {
+    // set up the models we support
+    models << new CP2Model(context);
+    models << new CP3Model(context);
+    models << new MultiModel(context);
+    models << new ExtendedModel(context);
+    models << new WSModel(context);
+
     configChanged(CONFIG_FIELDS);
     connect(context, SIGNAL(configChanged(qint32)), this, SLOT(configChanged(qint32)));
     connect(context, SIGNAL(rideSelected(RideItem*)), this, SLOT(dynamicParse()));
@@ -943,6 +1159,13 @@ DataFilter::DataFilter(QObject *parent, Context *context) : QObject(parent), con
 
 DataFilter::DataFilter(QObject *parent, Context *context, QString formula) : QObject(parent), context(context), isdynamic(false), treeRoot(NULL)
 {
+    // set up the models we support
+    models << new CP2Model(context);
+    models << new CP3Model(context);
+    models << new MultiModel(context);
+    models << new ExtendedModel(context);
+    models << new WSModel(context);
+
     configChanged(CONFIG_FIELDS);
 
     // regardless of success or failure set signature
@@ -952,7 +1175,7 @@ DataFilter::DataFilter(QObject *parent, Context *context, QString formula) : QOb
     DataFilter_setString(formula);
     DataFilterparse();
     DataFilter_clearString();
-    treeRoot = root;
+    treeRoot = DataFilterroot;
 
     // if it parsed (syntax) then check logic (semantics)
     if (treeRoot && DataFiltererrors.count() == 0)
@@ -966,11 +1189,11 @@ DataFilter::DataFilter(QObject *parent, Context *context, QString formula) : QOb
 
 }
 
-Result DataFilter::evaluate(RideItem *item)
+Result DataFilter::evaluate(RideItem *item, RideFilePoint *p)
 {
     if (!item || !treeRoot || DataFiltererrors.count()) return Result(0);
 
-    Result res = treeRoot->eval(context, this, treeRoot, item);
+    Result res = treeRoot->eval(context, this, treeRoot, 0, item, p);
     return res;
 }
 
@@ -989,7 +1212,7 @@ QStringList DataFilter::check(QString query)
     DataFilter_clearString();
 
     // save away the results
-    treeRoot = root;
+    treeRoot = DataFilterroot;
 
     // if it passed syntax lets check semantics
     if (treeRoot && DataFiltererrors.count() == 0) treeRoot->validateFilter(this, treeRoot);
@@ -1011,12 +1234,13 @@ QStringList DataFilter::parseFilter(QString query, QStringList *list)
     // remember where we apply
     this->list = list;
     isdynamic=false;
+    snips.clear();
 
     // regardless of fail/pass set the signature
     setSignature(query);
 
     //DataFilterdebug = 2; // no debug -- needs bison -t in src.pro
-    root = NULL;
+    DataFilterroot = NULL;
 
     // if something was left behind clear it up now
     clearFilter();
@@ -1028,7 +1252,7 @@ QStringList DataFilter::parseFilter(QString query, QStringList *list)
     DataFilter_clearString();
 
     // save away the results
-    treeRoot = root;
+    treeRoot = DataFilterroot;
 
     // if it passed syntax lets check semantics
     if (treeRoot && DataFiltererrors.count() == 0) treeRoot->validateFilter(this, treeRoot);
@@ -1058,7 +1282,7 @@ QStringList DataFilter::parseFilter(QString query, QStringList *list)
         foreach(RideItem *item, context->athlete->rideCache->rides()) {
 
             // evaluate each ride...
-            Result result = treeRoot->eval(context, this, treeRoot, item);
+            Result result = treeRoot->eval(context, this, treeRoot, 0, item, NULL);
             if (result.isNumber && result.number) {
                 filenames << item->fileName;
             }
@@ -1084,7 +1308,7 @@ DataFilter::dynamicParse()
         foreach(RideItem *item, context->athlete->rideCache->rides()) {
 
             // evaluate each ride...
-            Result result = treeRoot->eval(context, this, treeRoot, item);
+            Result result = treeRoot->eval(context, this, treeRoot, 0, item, NULL);
             if (result.isNumber && result.number)
                 filenames << item->fileName;
         }
@@ -1133,10 +1357,15 @@ void DataFilter::configChanged(qint32)
             }
     }
 
+    // sample date series
+    dataSeriesSymbols = RideFile::symbols();
 }
 
-Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
+Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, float x, RideItem *m, RideFilePoint *p)
 {
+    // if error state all bets are off
+    if (inerror) return Result(0);
+
     switch(leaf->type) {
 
     //
@@ -1147,26 +1376,26 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
         switch (leaf->op) {
             case AND :
             {
-                Result left = eval(context, df, leaf->lvalue.l, m);
+                Result left = eval(context, df, leaf->lvalue.l, x, m, p);
                 if (left.isNumber && left.number) {
-                    Result right = eval(context, df, leaf->rvalue.l, m);
+                    Result right = eval(context, df, leaf->rvalue.l, x, m, p);
                     if (right.isNumber && right.number) return Result(true);
                 }
                 return Result(false);
             }
             case OR :
             {
-                Result left = eval(context, df, leaf->lvalue.l, m);
+                Result left = eval(context, df, leaf->lvalue.l, x, m, p);
                 if (left.isNumber && left.number) return Result(true);
 
-                Result right = eval(context, df, leaf->rvalue.l, m);
+                Result right = eval(context, df, leaf->rvalue.l, x, m, p);
                 if (right.isNumber && right.number) return Result(true);
 
                 return Result(false);
             }
 
             default : // parenthesis
-                return (eval(context, df, leaf->lvalue.l, m));
+                return (eval(context, df, leaf->lvalue.l, x, m, p));
         }
     }
     break;
@@ -1177,20 +1406,6 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
     case Leaf::Function :
     {
         double duration;
-
-        // pmc data ...
-        if (leaf->function == "sts" || leaf->function == "lts" || leaf->function == "sb" || leaf->function == "rr") {
-
-                // get metric technical name
-                QString symbol = *(leaf->series->lvalue.n);
-                QString lookup = df->lookupMap.value(symbol, "");
-                PMCData *pmcData = context->athlete->getPMCFor(lookup);
-
-                if (leaf->function == "sts") return Result(pmcData->sts(m->dateTime.date()));
-                if (leaf->function == "lts") return Result(pmcData->lts(m->dateTime.date()));
-                if (leaf->function == "sb") return Result(pmcData->sb(m->dateTime.date()));
-                if (leaf->function == "rr") return Result(pmcData->rr(m->dateTime.date()));
-        }
 
         if (leaf->function == "config") {
 
@@ -1255,6 +1470,10 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
 
             QString symbol = leaf->series->lvalue.n->toLower();
 
+            if (symbol == "cranklength") {
+                return Result(appsettings->cvalue(context->athlete->cyclist, GC_CRANKLENGTH, 175.00f).toDouble() / 1000.0);
+            }
+
             if (symbol == "cp") {
                 return Result(CP);
             }
@@ -1304,7 +1523,7 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
                 default:
                 case Leaf::Function :
                 {
-                    duration = eval(context, df, leaf->lvalue.l, m).number; // duration will be zero if string
+                    duration = eval(context, df, leaf->lvalue.l, x, m, p).number; // duration will be zero if string
                 }
                 break;
 
@@ -1315,6 +1534,8 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
                     if (df->lookupType.value(*(leaf->lvalue.l->lvalue.n)) == true) {
                         // numeric
                         duration = m->getForSymbol(rename=df->lookupMap.value(*(leaf->lvalue.l->lvalue.n),""));
+                    } else if (*(leaf->lvalue.l->lvalue.n) == "x") {
+                        duration = x;
                     } else {
                         duration = 0;
                     }
@@ -1363,36 +1584,36 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
         if (fnum < 0) return Result(0);
 
         switch (fnum) {
-        case 0 : { return Result(cos(eval(context, df, leaf->fparms[0], m).number)); } // COS(x)
-        case 1 : { return Result(tan(eval(context, df, leaf->fparms[0], m).number)); } // TAN(x)
-        case 2 : { return Result(sin(eval(context, df, leaf->fparms[0], m).number)); } // SIN(x)
-        case 3 : { return Result(acos(eval(context, df, leaf->fparms[0], m).number)); } // ACOS(x)
-        case 4 : { return Result(atan(eval(context, df, leaf->fparms[0], m).number)); } // ATAN(x)
-        case 5 : { return Result(asin(eval(context, df, leaf->fparms[0], m).number)); } // ASIN(x)
-        case 6 : { return Result(cosh(eval(context, df, leaf->fparms[0], m).number)); } // COSH(x)
-        case 7 : { return Result(tanh(eval(context, df, leaf->fparms[0], m).number)); } // TANH(x)
-        case 8 : { return Result(sinh(eval(context, df, leaf->fparms[0], m).number)); } // SINH(x)
-        case 9 : { return Result(acosh(eval(context, df, leaf->fparms[0], m).number)); } // ACOSH(x)
-        case 10 : { return Result(atanh(eval(context, df, leaf->fparms[0], m).number)); } // ATANH(x)
-        case 11 : { return Result(asinh(eval(context, df, leaf->fparms[0], m).number)); } // ASINH(x)
+        case 0 : { return Result(cos(eval(context, df, leaf->fparms[0], x, m, p).number)); } // COS(x)
+        case 1 : { return Result(tan(eval(context, df, leaf->fparms[0], x, m, p).number)); } // TAN(x)
+        case 2 : { return Result(sin(eval(context, df, leaf->fparms[0], x, m, p).number)); } // SIN(x)
+        case 3 : { return Result(acos(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ACOS(x)
+        case 4 : { return Result(atan(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ATAN(x)
+        case 5 : { return Result(asin(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ASIN(x)
+        case 6 : { return Result(cosh(eval(context, df, leaf->fparms[0], x, m, p).number)); } // COSH(x)
+        case 7 : { return Result(tanh(eval(context, df, leaf->fparms[0], x, m, p).number)); } // TANH(x)
+        case 8 : { return Result(sinh(eval(context, df, leaf->fparms[0], x, m, p).number)); } // SINH(x)
+        case 9 : { return Result(acosh(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ACOSH(x)
+        case 10 : { return Result(atanh(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ATANH(x)
+        case 11 : { return Result(asinh(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ASINH(x)
 
-        case 12 : { return Result(exp(eval(context, df, leaf->fparms[0], m).number)); } // EXP(x)
-        case 13 : { return Result(log(eval(context, df, leaf->fparms[0], m).number)); } // LOG(x)
-        case 14 : { return Result(log10(eval(context, df, leaf->fparms[0], m).number)); } // LOG10(x)
+        case 12 : { return Result(exp(eval(context, df, leaf->fparms[0], x, m, p).number)); } // EXP(x)
+        case 13 : { return Result(log(eval(context, df, leaf->fparms[0], x, m, p).number)); } // LOG(x)
+        case 14 : { return Result(log10(eval(context, df, leaf->fparms[0], x, m, p).number)); } // LOG10(x)
 
-        case 15 : { return Result(ceil(eval(context, df, leaf->fparms[0], m).number)); } // CEIL(x)
-        case 16 : { return Result(floor(eval(context, df, leaf->fparms[0], m).number)); } // FLOOR(x)
-        case 17 : { return Result(round(eval(context, df, leaf->fparms[0], m).number)); } // ROUND(x)
+        case 15 : { return Result(ceil(eval(context, df, leaf->fparms[0], x, m, p).number)); } // CEIL(x)
+        case 16 : { return Result(floor(eval(context, df, leaf->fparms[0], x, m, p).number)); } // FLOOR(x)
+        case 17 : { return Result(round(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ROUND(x)
 
-        case 18 : { return Result(fabs(eval(context, df, leaf->fparms[0], m).number)); } // FABS(x)
-        case 19 : { return Result(std::isinf(eval(context, df, leaf->fparms[0], m).number)); } // ISINF(x)
-        case 20 : { return Result(std::isnan(eval(context, df, leaf->fparms[0], m).number)); } // ISNAN(x)
+        case 18 : { return Result(fabs(eval(context, df, leaf->fparms[0], x, m, p).number)); } // FABS(x)
+        case 19 : { return Result(std::isinf(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ISINF(x)
+        case 20 : { return Result(std::isnan(eval(context, df, leaf->fparms[0], x, m, p).number)); } // ISNAN(x)
 
         case 21 : { /* SUM( ... ) */
                     double sum=0;
 
                     foreach(Leaf *l, leaf->fparms) {
-                        sum += eval(context, df, l, m).number; // for vectors number is sum
+                        sum += eval(context, df, l, x, m, p).number; // for vectors number is sum
                     }
                     return Result(sum);
                   }
@@ -1403,7 +1624,7 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
                     int count=0;
 
                     foreach(Leaf *l, leaf->fparms) {
-                        Result res = eval(context, df, l, m); // for vectors number is sum
+                        Result res = eval(context, df, l, x, m, p); // for vectors number is sum
                         sum += res.number;
                         if (res.vector.count()) count += res.vector.count();
                         else count++;
@@ -1417,7 +1638,7 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
                     bool set=false;
 
                     foreach(Leaf *l, leaf->fparms) {
-                        Result res = eval(context, df, l, m);
+                        Result res = eval(context, df, l, x, m, p);
                         if (res.vector.count()) {
                             foreach(double x, res.vector) {
                                 if (set && x>max) max=x;
@@ -1438,7 +1659,7 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
                     bool set=false;
 
                     foreach(Leaf *l, leaf->fparms) {
-                        Result res = eval(context, df, l, m);
+                        Result res = eval(context, df, l, x, m, p);
                         if (res.vector.count()) {
                             foreach(double x, res.vector) {
                                 if (set && x<min) min=x;
@@ -1458,13 +1679,295 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
 
                     int count = 0;
                     foreach(Leaf *l, leaf->fparms) {
-                        Result res = eval(context, df, l, m);
+                        Result res = eval(context, df, l, x, m, p);
                         if (res.vector.count()) count += res.vector.count();
                         else count++;
                     }
                     return Result(count);
                   }
                   break;
+
+        case 26 : { /* LTS (expr) */
+                    PMCData *pmcData = context->athlete->getPMCFor(leaf->fparms[0], df);
+                    return Result(pmcData->lts(m->dateTime.date()));
+                  }
+                  break;
+
+        case 27 : { /* STS (expr) */
+                    PMCData *pmcData = context->athlete->getPMCFor(leaf->fparms[0], df);
+                    return Result(pmcData->sts(m->dateTime.date()));
+                  }
+                  break;
+
+        case 28 : { /* SB (expr) */
+                    PMCData *pmcData = context->athlete->getPMCFor(leaf->fparms[0], df);
+                    return Result(pmcData->sb(m->dateTime.date()));
+                  }
+                  break;
+
+        case 29 : { /* RR (expr) */
+                    PMCData *pmcData = context->athlete->getPMCFor(leaf->fparms[0], df);
+                    return Result(pmcData->rr(m->dateTime.date()));
+                  }
+                  break;
+
+        case 30 :
+                { /* ESTIMATE( model, CP | FTP | W' | PMAX | duration ) */
+
+                    // which model ?
+                    QString model = *leaf->fparms[0]->lvalue.n;
+                    if (model == "2p") model = "2 Parm";
+                    if (model == "3p") model = "3 Parm";
+                    if (model == "ws") model = "WS";
+                    if (model == "velo") model = "Velo";
+                    if (model == "ext") model = "Ext";
+
+                    // what we looking for ?
+                    QString parm = leaf->fparms[1]->type == Leaf::Symbol ? *leaf->fparms[1]->lvalue.n : "";
+                    bool toDuration = parm == "" ? true : false;
+                    double duration = toDuration ? eval(context, df, leaf->fparms[1], x, m, p).number : 0;
+
+                    // get the PD Estimate for this date - note we always work with the absolulte
+                    // power estimates in formulas, since the user can just divide by config(weight)
+                    // or Athlete_Weight (which takes into account values stored in ride files.
+                    PDEstimate pde = context->athlete->getPDEstimateFor(m->dateTime.date(), model, false);
+
+                    // no model estimate for this date
+                    if (pde.parameters.count() == 0) return Result(0);
+
+                    // get a duration
+                    if (toDuration == true) {
+
+                        double value = 0;
+
+                        // we need to find the model
+                        foreach(PDModel *pdm, df->models) {
+
+                            // not the one we want
+                            if (pdm->code() != model) continue;
+
+                            // set the parameters previously derived
+                            pdm->loadParameters(pde.parameters);
+
+                            // use seconds
+                            pdm->setMinutes(false);
+
+                            // get the model estimate for our duration
+                            value = pdm->y(duration);
+
+                            // our work here is done
+                            return Result(value);
+                        }
+
+                    } else {
+                        if (parm == "cp") return Result(pde.CP);
+                        if (parm == "w'") return Result(pde.WPrime);
+                        if (parm == "ftp") return Result(pde.FTP);
+                        if (parm == "pmax") return Result(pde.PMax);
+                    }
+                    return Result(0);
+                }
+                break;
+
+        case 31 :
+                {   // WHICH ( expr, ... )
+                    Result returning(0);
+
+                    // runs through all parameters, evaluating expression
+                    // in first param, and if true, adding to the results
+                    // this is a select statement.
+                    // e.g. which(x > 0, 1,2,3,-5,-6,-7) would return
+                    //      (1,2,3). More meaningfully it is used when
+                    //      working with vectors
+                    if (leaf->fparms.count() < 2) return returning;
+
+                    for(int i=1; i< leaf->fparms.count(); i++) {
+
+                        // evaluate the parameter
+                        Result ex = eval(context, df, leaf->fparms[i], x, m, p);
+
+                        if (ex.vector.count()) {
+
+                            // tiz a vector
+                            foreach(double x, ex.vector) {
+
+                                // did it get selected?
+                                Result which = eval(context, df, leaf->fparms[0], x, m, p);
+                                if (which.number) {
+                                    returning.vector << x;
+                                    returning.number += x;
+                                }
+                            }
+
+                        } else {
+
+                            // does the parameter get selected ?
+                            Result which = eval(context, df, leaf->fparms[0], ex.number, m, p);
+                            if (which.number) {
+                                returning.vector << ex.number;
+                                returning.number += ex.number;
+                            }
+                        }
+                    }
+                    return Result(returning);
+                }
+                break;
+
+        case 32 :
+                {   // SET (field, value, expression ) returns expression evaluated
+                    Result returning(0);
+
+                    if (leaf->fparms.count() < 3) return returning;
+                    else returning = eval(context, df, leaf->fparms[2], x, m, p);
+
+                    if (returning.number) {
+
+                        // symbol we are setting
+                        QString symbol = *(leaf->fparms[0]->lvalue.n);
+
+                        // lookup metrics (we override them)
+                        QString o_symbol = df->lookupMap.value(symbol,"");
+                        RideMetricFactory &factory = RideMetricFactory::instance();
+                        const RideMetric *e = factory.rideMetric(o_symbol);
+
+                        // ack ! we need to set, so open the ride
+                        RideFile *f = m->ride();
+
+                        if (!f) return Result(0); // eek!
+
+                        // evaluate second argument, its the value
+                        Result r = eval(context, df, leaf->fparms[1], x, m, p);
+
+                        // now set an override or a tag
+                        if (o_symbol != "" && e) { // METRIC OVERRIDE
+
+                            // lets set the override
+                            QMap<QString,QString> override;
+                            override  = f->metricOverrides.value(o_symbol);
+
+                            // clear and reset override value for this metric
+                            override.insert("value", QString("%1").arg(r.number)); // add metric value
+
+                            // update overrides for this metric in the main QMap
+                            f->metricOverrides.insert(o_symbol, override);
+
+                            // rideFile is now dirty!
+                            m->setDirty(true);
+
+                            // get refresh done, coz overrides state has changed
+                            m->notifyRideMetadataChanged();
+
+                        } else { // METADATA TAG
+
+                            // need to set metadata tag
+                            bool isnumeric = df->lookupType.value(symbol);
+
+                            // are we using the right types ?
+                            if (r.isNumber && isnumeric) {
+                                f->setTag(o_symbol, QString("%1").arg(r.number));
+                            } else if (!r.isNumber && !isnumeric) {
+                                f->setTag(o_symbol, r.string);
+                            } else {
+                                // nope
+                                return Result(0); // not changing it !
+                            }
+
+                            // rideFile is now dirty!
+                            m->setDirty(true);
+
+                            // get refresh done, coz overrides state has changed
+                            m->notifyRideMetadataChanged();
+
+                        }
+                    }
+                    return returning;
+                }
+                break;
+        case 33 :
+                {   // UNSET (field, expression ) remove override or tag
+                    Result returning(0);
+
+                    if (leaf->fparms.count() < 2) return returning;
+                    else returning = eval(context, df, leaf->fparms[1], x, m, p);
+
+                    if (returning.number) {
+
+                        // symbol we are setting
+                        QString symbol = *(leaf->fparms[0]->lvalue.n);
+
+                        // lookup metrics (we override them)
+                        QString o_symbol = df->lookupMap.value(symbol,"");
+                        RideMetricFactory &factory = RideMetricFactory::instance();
+                        const RideMetric *e = factory.rideMetric(o_symbol);
+
+                        // ack ! we need to set, so open the ride
+                        RideFile *f = m->ride();
+
+                        if (!f) return Result(0); // eek!
+
+                        // now remove the override
+                        if (o_symbol != "" && e) { // METRIC OVERRIDE
+
+                            // update overrides for this metric in the main QMap
+                            f->metricOverrides.remove(o_symbol);
+
+                            // rideFile is now dirty!
+                            m->setDirty(true);
+
+                            // get refresh done, coz overrides state has changed
+                            m->notifyRideMetadataChanged();
+
+                        } else { // METADATA TAG
+
+                            // remove the tag
+                            f->removeTag(o_symbol);
+
+                            // rideFile is now dirty!
+                            m->setDirty(true);
+
+                            // get refresh done, coz overrides state has changed
+                            m->notifyRideMetadataChanged();
+
+                        }
+                    }
+                    return returning;
+                }
+                break;
+
+        case 34 :
+                {   // ISSET (field) is the metric overriden or metadata set ?
+
+                    if (leaf->fparms.count() != 1) return Result(0);
+
+                    // symbol we are setting
+                    QString symbol = *(leaf->fparms[0]->lvalue.n);
+
+                    // lookup metrics (we override them)
+                    QString o_symbol = df->lookupMap.value(symbol,"");
+                    RideMetricFactory &factory = RideMetricFactory::instance();
+                    const RideMetric *e = factory.rideMetric(o_symbol);
+
+                    // now remove the override
+                    if (o_symbol != "" && e) { // METRIC OVERRIDE
+
+                        return Result (m->overrides_.contains(o_symbol) == true);
+
+                    } else { // METADATA TAG
+
+                        return Result (m->hasText(o_symbol));
+                    }
+                }
+                break;
+
+        case 35 :
+                {   // VDOTTIME (VDOT, distance[km])
+
+                    if (leaf->fparms.count() != 2) return Result(0);
+
+                    return Result (60*VDOTCalculator::eqvTime(eval(context, df, leaf->fparms[0], x, m, p).number, 1000*eval(context, df, leaf->fparms[1], x, m, p).number));
+                }
+                break;
+
         default:
             return Result(0);
         }
@@ -1483,7 +1986,12 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
         QString symbol = *(leaf->lvalue.n);
 
         // is it isRun ?
-        if (symbol == "isRun") {
+        if (symbol == "x") {
+
+            lhsdouble = x;
+            lhsisNumber = true;
+
+        } else if (symbol == "isRun") {
             lhsdouble = m->isRun ? 1 : 0;
             lhsisNumber = true;
 
@@ -1529,6 +2037,12 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
             lhsisNumber = true;
 
             //qDebug()<<"symbol" << *(lvalue.n) << "is" << lhsdouble << "via" << rename;
+        } else if ((lhsisNumber = df->dataSeriesSymbols.contains(*(leaf->lvalue.n))) == true) {
+
+            // its a ride series symbol !
+            if (p) return Result(p->value(RideFile::seriesForSymbol((*(leaf->lvalue.n)))));
+            else return Result(0); 
+
         } else {
             // string symbol will evaluate to zero as unary expression
             lhsstring = m->getText(rename=df->lookupMap.value(symbol,""), "");
@@ -1572,7 +2086,7 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
     case Leaf::UnaryOperation :
     {
         // get result
-        Result lhs = eval(context, df, leaf->lvalue.l, m);
+        Result lhs = eval(context, df, leaf->lvalue.l, x, m, p);
         return Result(lhs.number * -1);
     }
     break;
@@ -1584,8 +2098,8 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
     case Leaf::Operation :
     {
         // lhs and rhs
-        Result lhs = eval(context, df, leaf->lvalue.l, m);
-        Result rhs = eval(context, df, leaf->rvalue.l, m);
+        Result lhs = eval(context, df, leaf->lvalue.l, x, m, p);
+        Result rhs = eval(context, df, leaf->rvalue.l, x, m, p);
 
         // NOW PERFORM OPERATION
         switch (leaf->op) {
@@ -1695,9 +2209,9 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
 
     case Leaf::Conditional :
     {
-        Result cond = eval(context, df, leaf->cond.l, m);
-        if (cond.isNumber && cond.number) return eval(context, df, leaf->lvalue.l, m);
-        else return eval(context, df, leaf->rvalue.l, m);
+        Result cond = eval(context, df, leaf->cond.l, x, m, p);
+        if (cond.isNumber && cond.number) return eval(context, df, leaf->lvalue.l, x, m, p);
+        else return eval(context, df, leaf->rvalue.l, x, m, p);
     }
     break;
 
@@ -1718,9 +2232,15 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
 
         Specification spec;
 
+        // is this already snipped?
+        Result snipped = df->snips.value(leaf->signature(), Result(0));
+        if (snipped.vector.count() > 0) {
+            return snipped;
+        }
+
         // get date range
-        int fromDS = eval(context, df, leaf->fparms[0], m).number;
-        int toDS = eval(context, df, leaf->fparms[1], m).number;
+        int fromDS = eval(context, df, leaf->fparms[0], x, m, p).number;
+        int toDS = eval(context, df, leaf->fparms[1], x, m, p).number;
 
         // swap dates if needed
         if (toDS < fromDS) {
@@ -1739,11 +2259,16 @@ Result Leaf::eval(Context *context, DataFilter *df, Leaf *leaf, RideItem *m)
             if (!spec.pass(ride)) continue;
 
             // calculate value
-            Result res = eval(context, df, leaf->lvalue.l, ride);
+            Result res = eval(context, df, leaf->lvalue.l, x, ride, p);
             if (res.isNumber) {
                 returning.number += res.number; // sum for easy access
                 returning.vector << res.number;
             }
+        }
+
+        // vectors of more than 100 items need snipping
+        if (returning.vector.count() > 100)  {
+            df->snips.insert(leaf->signature(), returning);
         }
 
         // always return as sum number (for now)

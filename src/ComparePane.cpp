@@ -78,10 +78,9 @@ class CTableWidgetItem : public QTableWidgetItem
 
                 case 2 : return text() < other.text(); // athlete
 
-                case 3 : // the date format in "toString" and "fromString" must be the same !
-                         //: Ensure EQUAL translation for EACH variant of date format used, don't mix
-                         return QDate::fromString(text(), QObject::tr("dd MMM, yyyy")) <
-                                QDate::fromString(other.text(), QObject::tr("dd MMM, yyyy")); // date
+                case 3 : return QDate::fromString(text(), Qt::ISODate) <
+                                QDate::fromString(other.text(), Qt::ISODate); // date
+
                 case 4 : // date or time depending on which view
                          if (text().contains(":")) {
 
@@ -90,9 +89,9 @@ class CTableWidgetItem : public QTableWidgetItem
 
                          } else {
 
-                            return // the date format in "toString" and "fromString" must be the same !
-                                   QDate::fromString(text(), QObject::tr("dd MMM, yyyy")) <
-                                   QDate::fromString(other.text(), QObject::tr("dd MMM, yyyy")); // date
+                            return //
+                                   QDate::fromString(text(), Qt::ISODate) <
+                                   QDate::fromString(other.text(), Qt::ISODate); // date
 
                          }
                 default: // work it out ..
@@ -283,7 +282,7 @@ ComparePane::refreshTable()
 
             // date
             t = new CTableWidgetItem;
-            t->setText(x.data->startTime().date().toString(tr("dd MMM, yyyy")));
+            t->setText(x.data->startTime().date().toString(Qt::ISODate));
             t->setFlags(t->flags() & (~Qt::ItemIsEditable));
             table->setItem(counter, 3, t);
 
@@ -445,13 +444,13 @@ ComparePane::refreshTable()
 
             // date from
             t = new CTableWidgetItem;
-            t->setText(x.start.toString(tr("dd MMM, yyyy")));
+            t->setText(x.start.toString(Qt::ISODate));
             t->setFlags(t->flags() & (~Qt::ItemIsEditable));
             table->setItem(counter, 3, t);
 
             // date to
             t = new CTableWidgetItem;
-            t->setText(x.end.toString(tr("dd MMM, yyyy")));
+            t->setText(x.end.toString(Qt::ISODate));
             t->setFlags(t->flags() & (~Qt::ItemIsEditable));
             table->setItem(counter, 4, t);
 
@@ -712,6 +711,7 @@ ComparePane::dropEvent(QDropEvent *event)
             add.data = new RideFile(ride);
             add.data->context = context;
 
+
             // manage offsets
             bool first = true;
             double offset = 0.0f, offsetKM = 0.0f;
@@ -749,6 +749,32 @@ ComparePane::dropEvent(QDropEvent *event)
             // we will of course repeat, but the user can
             // just edit them using the button
             add.color = standardColors.at((i + context->compareIntervals.count()) % standardColors.count());
+
+            // construct a fake RideItem, slightly hacky need to fix this later XXX fixme
+            //                            mostly cut and paste from RideItem::refresh
+            //                            we do this to support user data series in compare mode
+            //                            so UserData can be generated from this rideItem
+            add.rideItem = new RideItem(add.data, add.data->context);
+            add.rideItem->setFrom(*rideItem);
+            add.rideItem->metadata_ = add.data->tags();
+            add.rideItem->getWeight();
+            add.rideItem->isRun = add.data->isRun();
+            add.rideItem->isSwim = add.data->isSwim();
+            add.rideItem->present = add.data->getTag("Data", "");
+            add.rideItem->samples = add.data->dataPoints().count() > 0;
+            const RideMetricFactory &factory = RideMetricFactory::instance();
+            QHash<QString,RideMetricPtr> computed= RideMetric::computeMetrics(add.data->context, add.data, add.data->context->athlete->zones(), 
+                                               add.data->context->athlete->hrZones(), factory.allMetrics());
+            add.rideItem->metrics_.fill(0, factory.metricCount());
+            QHashIterator<QString, RideMetricPtr> l(computed);
+            while (l.hasNext()) {
+                l.next();
+                add.rideItem->metrics_[l.value()->index()] = l.value()->value();
+            }
+            for(int j=0; j<factory.metricCount(); j++)
+                if (std::isinf(add.rideItem->metrics_[j]) || std::isnan(add.rideItem->metrics_[j]))
+                    add.rideItem->metrics_[j] = 0.00f;
+            // end of fake RideItem hack XXX
 
             // now add but only if not empty
             if (!add.data->dataPoints().empty()) newOnes << add;
@@ -823,8 +849,7 @@ ComparePane::dropEvent(QDropEvent *event)
                             add.context = context;                  // UPDATE COMPARE INTERVAL
                             add.sourceContext = newOnes[0].sourceContext;      // UPDATE COMPARE INTERVAL
 
-                            RideItem *rideItem = matched->rideItem();
-                            RideFile *ride = rideItem->ride();
+                            RideFile *ride = matched->rideItem()->ride();
 
                             add.name = QString("%1/%2 %3").arg(matched->rideItem()->dateTime.date().day())
                                                           .arg(matched->rideItem()->dateTime.date().month())
@@ -868,6 +893,32 @@ ComparePane::dropEvent(QDropEvent *event)
                                 }
                             }
                             add.data->recalculateDerivedSeries();
+
+                            // construct a fake RideItem, slightly hacky need to fix this later XXX fixme
+                            //                            mostly cut and paste from RideItem::refresh
+                            //                            we do this to support user data series in compare mode
+                            //                            so UserData can be generated from this rideItem
+                            add.rideItem = new RideItem(add.data, add.data->context);
+                            add.rideItem->setFrom(*matched->rideItem());
+                            add.rideItem->metadata_ = add.data->tags();
+                            add.rideItem->getWeight();
+                            add.rideItem->isRun = add.data->isRun();
+                            add.rideItem->isSwim = add.data->isSwim();
+                            add.rideItem->present = add.data->getTag("Data", "");
+                            add.rideItem->samples = add.data->dataPoints().count() > 0;
+                            const RideMetricFactory &factory = RideMetricFactory::instance();
+                            QHash<QString,RideMetricPtr> computed= RideMetric::computeMetrics(add.data->context, add.data, add.data->context->athlete->zones(), 
+                                               add.data->context->athlete->hrZones(), factory.allMetrics());
+                            add.rideItem->metrics_.fill(0, factory.metricCount());
+                            QHashIterator<QString, RideMetricPtr> l(computed);
+                            while (l.hasNext()) {
+                                l.next();
+                                add.rideItem->metrics_[l.value()->index()] = l.value()->value();
+                            }
+                            for(int j=0; j<factory.metricCount(); j++)
+                                if (std::isinf(add.rideItem->metrics_[j]) || std::isnan(add.rideItem->metrics_[j]))
+                                    add.rideItem->metrics_[j] = 0.00f;
+                            // end of fake RideItem hack XXX
 
                             // just use standard colors and cycle round
                             // we will of course repeat, but the user can

@@ -1707,8 +1707,10 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     // courier font
     formulaEdit = new DataFilterEdit(this, context);
     QFont courier("Courier", QFont().pointSize());
+    QFontMetrics fm(courier);
 
     formulaEdit->setFont(courier);
+    formulaEdit->setTabStopWidth(4 * fm.width(' ')); // 4 char tabstop
     //formulaEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     formulaType = new QComboBox(this);
     formulaType->addItem(tr("Total"), static_cast<int>(RideMetric::Total));
@@ -1730,8 +1732,7 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
         metricDetail->formula = tr("# type in a formula to use\n" 
                                    "# for e.g. TSS / Duration\n"
                                    "# as you type the available metrics\n"
-                                   "# will be offered by autocomplete\n"
-                                   "# all lines beginning with # are comments.\n");
+                                   "# will be offered by autocomplete\n");
     }
     formulaEdit->setText(metricDetail->formula);
     formulaType->setCurrentIndex(formulaType->findData(metricDetail->formulaType));
@@ -1747,7 +1748,11 @@ EditMetricDetailDialog::EditMetricDetailDialog(Context *context, LTMTool *ltmToo
     // start with just a list of functions
     list = DataFilter::functions();
 
+    // ridefile data series symbols
+    list += RideFile::symbols();
+
     // add special functions (older code needs fixing !)
+    list << "config(cranklength)";
     list << "config(cp)";
     list << "config(w')";
     list << "config(pmax)";
@@ -2397,6 +2402,18 @@ DataFilterEdit::checkErrors()
 
     // need to fixup for errors!
     // XXX next commit
+}
+
+bool
+DataFilterEdit::event(QEvent *e)
+{
+    // intercept all events
+    if (e->type() == QEvent::ToolTip) {
+       // XXX error reporting when mouse over error
+    }
+
+    // call standard event handler
+    return QTextEdit::event(e);
 }
 
 void DataFilterEdit::setCompleter(QCompleter *completer)

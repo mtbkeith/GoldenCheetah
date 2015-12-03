@@ -40,15 +40,15 @@ class FixMoxyConfig : public DataProcessorConfig
     public:
         FixMoxyConfig(QWidget *parent) : DataProcessorConfig(parent) {
 
-            //HelpWhatsThis *help = new HelpWhatsThis(parent);
-            //parent->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Edit_FixMoxy));
+            HelpWhatsThis *help = new HelpWhatsThis(parent);
+            parent->setWhatsThis(help->getWhatsThisText(HelpWhatsThis::MenuBar_Edit_FixMoxy));
         }
 
         //~FixMoxyConfig() {} // deliberately not declared since Qt will delete
                               // the widget and its children when the config pane is deleted
 
         QString explain() {
-            return(QString(tr("When recording from the Moxy in Speed and"
+            return(QString(tr("When recording from the Moxy or BSX Insight in Speed and"
                            " cadence mode the SmO2 and tHb data is sent as"
                            " cadence and speed respectively. This tool will"
                            " update the activity file to move the values from speed"

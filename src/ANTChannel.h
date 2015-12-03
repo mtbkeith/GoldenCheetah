@@ -23,6 +23,7 @@
 #include "ANT.h"
 #include "ANTMessage.h"
 #include <QObject>
+#include <QTime>
 
 #define CHANNEL_TYPE_QUICK_SEARCH 0x10 // or'ed with current channel type
 /* after fast search, wait for slow search.  Otherwise, starting slow
@@ -75,23 +76,35 @@ class ANTChannelInitialisation {
 
 
 class ANTChannel : public QObject {
-
     private:
 
         Q_OBJECT
 
         ANT *parent;
 
-        ANTMessage lastMessage, lastStdPwrMessage;
+        // Stores the last message.
+        ANTMessage lastMessage;
+        // Stores last message for ANT_STANDARD_POWER.
+        ANTMessage lastStdPwrMessage;
+        // Stores last message for ANT_CRANKTORQUE_POWER.
+        ANTMessage lastCrankTorquePwrMessage;
+        // Stores latest ANT_STANDARD_POWER or ANT_CRANKTORQUE_POWER
+        // for use by ANT_TE_AND_PS_POWER.
+        ANTMessage lastPwrForTePsMessage;
         int dualNullCount, nullCount, stdNullCount;
         double last_message_timestamp;
+        uint8_t fecPrevRawDistance;
+        uint8_t  fecCapabilities;
+
         double blanking_timestamp;
         int blanked;
         char id[10]; // short identifier
         ANTChannelInitialisation mi;
 
-        int messages_received; // for signal strength metric
-        int messages_dropped;
+        int   messages_received; // for signal strength metric
+        int   messages_dropped;
+        QTime lastMessageTimestamp;
+        QTime lastMessageTimestamp2;
 
         unsigned char rx_burst_data[RX_BURST_DATA_LEN];
         int           rx_burst_data_index;
@@ -118,6 +131,7 @@ class ANTChannel : public QObject {
             CHANNEL_TYPE_MOXY,
             CHANNEL_TYPE_CONTROL,
             CHANNEL_TYPE_TACX_VORTEX,
+            CHANNEL_TYPE_FITNESS_EQUIPMENT,
             CHANNEL_TYPE_GUARD
         };
         typedef enum channeltype ChannelType;
@@ -143,6 +157,7 @@ class ANTChannel : public QObject {
         bool is_moxy; // bool
         bool is_cinqo; // bool
         bool is_old_cinqo; // bool, set for cinqo needing separate control channel
+        bool is_fec;
         bool is_alt; // is alternative channel for power
 
         int search_type;
@@ -175,6 +190,7 @@ class ANTChannel : public QObject {
         double channelValue() { return value; }
         double channelValue2() { return value2; }
         double value,value2; // used during config, rather than rtData
+        uint8_t capabilities();
 
         // search
         int isSearching();

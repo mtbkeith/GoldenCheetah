@@ -12,7 +12,7 @@ DEPENDPATH += .
 QMAKE_INFO_PLIST = ./mac/Info.plist.app
 
 ## qwt and libz
-INCLUDEPATH += ../qwt/src ../qxt/src $${LIBZ_INCLUDE} ../qtsolutions/json
+INCLUDEPATH += ../qwt/src ../qxt/src $${LIBZ_INCLUDE} ../qtsolutions/json ../qtsolutions/qwtcurve
 LIBS += ../qwt/lib/libqwt.a
 LIBS += -lm $${LIBZ_LIBS}
 
@@ -31,12 +31,20 @@ lessThan(QT_MAJOR_VERSION, 5) {
 } else {
 
     ## QT5 specific modules
-    QT += webkitwidgets widgets concurrent
+    QT += webkitwidgets widgets concurrent serialport
     macx {
-        QT += macextras
+        QT += macextras webenginewidgets
     } else {
         QT += multimedia multimediawidgets
     }
+
+    ## QT5 can support complex JSON documents
+    SOURCES += Dropbox.cpp
+    HEADERS += Dropbox.h
+
+    ## Monark support needs QtSerialPort
+    SOURCES += Monark.cpp MonarkController.cpp MonarkConnection.cpp
+    HEADERS += Monark.h MonarkController.h MonarkConnection.h
 }
 
 # if we are building in debug mode
@@ -48,17 +56,29 @@ CONFIG(debug, debug|release) {
 
 
 # KQOAuth .pro in default creates different libs for release and debug
-!isEmpty( KQOAUTH_INSTALL ) {
-    isEmpty( KQOAUTH_INCLUDE ) { KQOAUTH_INCLUDE += $${KQOAUTH_INSTALL}/src }
-    isEmpty( KQOAUTH_LIBS ) {
-        #KQOAUTH_LIBS = $${KQOAUTH_INSTALL}/lib/libkqoauth0.a
-        KQOAUTH_LIBS = -lkqoauth
-    }
-    INCLUDEPATH += $${KQOAUTH_INCLUDE}
-    LIBS        += $${KQOAUTH_LIBS}
+unix:!macx {
+
+    # build from version in repo for Linux builds since
+    # kqoauth is not packaged for the Debian build
+    INCLUDEPATH += ../kqoauth
+    LIBS        += ../kqoauth/libkqoauth.a
     DEFINES     += GC_HAVE_KQOAUTH
     SOURCES     += TwitterDialog.cpp
     HEADERS     += TwitterDialog.h
+
+} else {
+    !isEmpty( KQOAUTH_INSTALL ) {
+        isEmpty( KQOAUTH_INCLUDE ) { KQOAUTH_INCLUDE += $${KQOAUTH_INSTALL}/src }
+        isEmpty( KQOAUTH_LIBS ) {
+            #KQOAUTH_LIBS = $${KQOAUTH_INSTALL}/lib/libkqoauth0.a
+            KQOAUTH_LIBS = -lkqoauth
+        }
+        INCLUDEPATH += $${KQOAUTH_INCLUDE}
+        LIBS        += $${KQOAUTH_LIBS}
+        DEFINES     += GC_HAVE_KQOAUTH
+        SOURCES     += TwitterDialog.cpp
+        HEADERS     += TwitterDialog.h
+    }
 }
 
 
@@ -166,8 +186,10 @@ CONFIG(debug, debug|release) {
 }
 
 # FreeSearch replaces deprecated lucene
-HEADERS     += DataFilter.h SearchBox.h NamedSearch.h SearchFilterBox.h FreeSearch.h
-SOURCES     += DataFilter.cpp SearchBox.cpp NamedSearch.cpp SearchFilterBox.cpp FreeSearch.cpp
+HEADERS     += DataFilter.h SearchBox.h NamedSearch.h SearchFilterBox.h FreeSearch.h \
+    SportPlusHealthUploader.h
+SOURCES     += DataFilter.cpp SearchBox.cpp NamedSearch.cpp SearchFilterBox.cpp FreeSearch.cpp \
+    SportPlusHealthUploader.cpp
 YACCSOURCES += DataFilter.y
 LEXSOURCES  += DataFilter.l
 
@@ -266,6 +288,52 @@ HEADERS += TPUpload.h TPUploadDialog.h TPDownload.h TPDownloadDialog.h
 SOURCES += TPUpload.cpp TPUploadDialog.cpp TPDownload.cpp TPDownloadDialog.cpp
 DEFINES += GC_HAVE_SOAP
 
+# gapped curve
+HEADERS += ../qtsolutions/qwtcurve/qwt_plot_gapped_curve.h
+SOURCES +=  ../qtsolutions/qwtcurve/qwt_plot_gapped_curve.cpp
+
+# web server to provide web-services for external integration with R
+!isEmpty ( HTPATH ) {
+
+    INCLUDEPATH += $$HTPATH
+    DEPENDPATH += $$HTPATH
+
+    DEFINES += GC_WANT_HTTP
+
+    HEADERS +=  APIWebService.h
+    SOURCES +=  APIWebService.cpp
+
+    HEADERS +=  $$HTPATH/httpglobal.h \
+                $$HTPATH/httplistener.h \
+                $$HTPATH/httpconnectionhandler.h \
+                $$HTPATH/httpconnectionhandlerpool.h \
+                $$HTPATH/httprequest.h \
+                $$HTPATH/httpresponse.h \
+                $$HTPATH/httpcookie.h \
+                $$HTPATH/httprequesthandler.h \
+                $$HTPATH/httpsession.h \
+                $$HTPATH/httpsessionstore.h \
+                $$HTPATH/staticfilecontroller.h
+    SOURCES +=  $$HTPATH/httpglobal.cpp \
+                $$HTPATH/httplistener.cpp \
+                $$HTPATH/httpconnectionhandler.cpp \
+                $$HTPATH/httpconnectionhandlerpool.cpp \
+                $$HTPATH/httprequest.cpp \
+                $$HTPATH/httpresponse.cpp \
+                $$HTPATH/httpcookie.cpp \
+                $$HTPATH/httprequesthandler.cpp \
+                $$HTPATH/httpsession.cpp \
+                $$HTPATH/httpsessionstore.cpp \
+                $$HTPATH/staticfilecontroller.cpp
+}
+
+# qzipreader/qzipwriter always
+HEADERS += ../qzip/zipreader.h \
+           ../qzip/zipwriter.h
+SOURCES += ../qzip/zip.cpp
+
+HEADERS += $${LOCALHEADERS}
+SOURCE += $${LOCALSOURCE}
 HEADERS += \
         AboutDialog.h \
         AddDeviceWizard.h \
@@ -284,6 +352,7 @@ HEADERS += \
         ANTMessages.h \
         ANTlocalController.h \
         Athlete.h \
+        AthleteBackup.h \
         BatchExportDialog.h \
         BestIntervalDialog.h \
         BinRideFile.h \
@@ -322,6 +391,7 @@ HEADERS += \
         ErgDBDownloadDialog.h \
         ErgFilePlot.h \
         ExtendedCriticalPower.h \
+        FileStore.h \
         FitlogRideFile.h \
         FitlogParser.h \
         FitRideFile.h \ 
@@ -376,10 +446,12 @@ HEADERS += \
         ManualRideFile.h \
         MergeActivityWizard.h \
         MetadataWindow.h \
+        MeterWidget.h \
         MoxyDevice.h \
         MUPlot.h \
         MUPool.h \
         MUWidget.h \
+        LocalFileStore.h \
         NewCyclistDialog.h \
         NullController.h \
         OAuthDialog.h \
@@ -426,6 +498,7 @@ HEADERS += \
         ScatterWindow.h \
         Season.h \
         SeasonParser.h \
+        Secrets.h \
         Serial.h \
         Settings.h \
         ShareDialog.h \
@@ -439,6 +512,8 @@ HEADERS += \
         SlfRideFile.h \
         SmfParser.h \
         SmfRideFile.h \
+        SmlParser.h \
+        SmlRideFile.h \
         SrdRideFile.h \
         SrmRideFile.h \
         Statistic.h \
@@ -460,7 +535,10 @@ HEADERS += \
         TreeMapPlot.h \
         TrainingstagebuchUploader.h \
         Units.h \
+        UserData.h \
         VeloHeroUploader.h \
+        VideoLayoutParser.h \
+        VideoSyncFile.h \
         Views.h \
         WithingsDownload.h \
         WkoRideFile.h \
@@ -484,6 +562,7 @@ DEFERRES += RouteWindow.h \
             RouteItem.cpp
 
 SOURCES += \
+        main.cpp \
         AboutDialog.cpp \
         AddDeviceWizard.cpp \
         AddIntervalDialog.cpp \
@@ -501,6 +580,7 @@ SOURCES += \
         ANTMessage.cpp \
         ANTlocalController.cpp \
         Athlete.cpp \
+        AthleteBackup.cpp \
         BasicRideMetrics.cpp \
         BatchExportDialog.cpp \
         BestIntervalDialog.cpp \
@@ -544,16 +624,21 @@ SOURCES += \
         ErgFile.cpp \
         ErgFilePlot.cpp \
         ExtendedCriticalPower.cpp \
+        FileStore.cpp \
         FitlogRideFile.cpp \
         FitlogParser.cpp \
         FitRideFile.cpp \
+        FixDeriveDistance.cpp \
         FixDerivePower.cpp \
         FixDeriveTorque.cpp \
         FixElevation.cpp \
+        FixFreewheeling.cpp \
         FixGaps.cpp \
         FixGPS.cpp \
         FixMoxy.cpp \
         FixPower.cpp \
+        FixSmO2.cpp \
+        FixSpeed.cpp \
         FixSpikes.cpp \
         FixTorque.cpp \
         FixHRSpikes.cpp \
@@ -608,9 +693,11 @@ SOURCES += \
         ManualRideFile.cpp \
         MergeActivityWizard.cpp \
         MetadataWindow.cpp \
+        MeterWidget.cpp \
         MoxyDevice.cpp \
         MUPlot.cpp \
         MUWidget.cpp \
+        LocalFileStore.cpp \
         NewCyclistDialog.cpp \
         NullController.cpp \
         OAuthDialog.cpp \
@@ -672,6 +759,8 @@ SOURCES += \
         SlfRideFile.cpp \
         SmfParser.cpp \
         SmfRideFile.cpp \
+        SmlParser.cpp \
+        SmlRideFile.cpp \
         SrdRideFile.cpp \
         SrmRideFile.cpp \
         Statistic.cpp \
@@ -690,6 +779,7 @@ SOURCES += \
         TimeUtils.cpp \
         ToolsDialog.cpp \
         ToolsRhoEstimator.cpp \
+        VDOT.cpp \
         VDOTCalculator.cpp \
         TrainDB.cpp \
         TrainSidebar.cpp \
@@ -698,7 +788,10 @@ SOURCES += \
         TrainingstagebuchUploader.cpp \
         TRIMPPoints.cpp \
         Units.cpp \
+        UserData.cpp \
         VeloHeroUploader.cpp \
+        VideoLayoutParser.cpp \
+        VideoSyncFile.cpp \
         Views.cpp \
         WattsPerKilogram.cpp \
         WithingsDownload.cpp \
@@ -707,7 +800,6 @@ SOURCES += \
         WorkoutWizard.cpp \
         WPrime.cpp \
         Zones.cpp \
-        main.cpp \
         ../qtsolutions/json/mvjson.cpp
 
 RESOURCES = application.qrc \
@@ -721,7 +813,8 @@ TRANSLATIONS = translations/gc_fr.ts \
                translations/gc_cs.ts \
                translations/gc_es.ts \
                translations/gc_pt.ts \
-               translations/gc_ru.ts
+               translations/gc_ru.ts \
+	       translations/gc_zh-tw.ts
 
 !isEmpty(TRANSLATIONS) {
 
@@ -750,5 +843,3 @@ OTHER_FILES += \
     web/StreetViewWindow.html \
     web/Window.css
 
-HEADERS += $${LOCALHEADERS}
-SOURCE += $${LOCALSOURCE}

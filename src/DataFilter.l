@@ -55,10 +55,6 @@ int DataFiltercolumn = 1;
                                               going to limit us in the future */
 [Bb][Ee][Ss][Tt]                           strcpy(DataFilterlval.function, "best"); return BEST;
 [Tt][Ii][Zz]                               strcpy(DataFilterlval.function, "tiz"); return TIZ;
-[Ll][Tt][Ss]                               strcpy(DataFilterlval.function, "lts"); return LTS;
-[Ss][Tt][Ss]                               strcpy(DataFilterlval.function, "sts"); return STS;
-[Ss][Bb]                                   strcpy(DataFilterlval.function, "sb"); return SB;
-[Rr][Rr]                                   strcpy(DataFilterlval.function, "rr"); return RR;
 [Cc][Oo][Nn][Ff][Ii][Gg]                   strcpy(DataFilterlval.function, "config"); return CONFIG;
 [Dd][Aa][Tt][Ee][Rr][Aa][Nn][Gg][Ee]       strcpy(DataFilterlval.function, "daterange"); return DATERANGE;
 [Cc][Oo][Nn][Ss][Tt]                       strcpy(DataFilterlval.function, "const"); return CONST_;
@@ -86,6 +82,7 @@ int DataFiltercolumn = 1;
 [Dd]\'                                      return SYMBOL; /* special case */
 [Ss][Dd]\'                                  return SYMBOL; /* special case */
 [a-zA-Z0-9][a-zA-Z0-9_%™]+                  return SYMBOL; /* symbols can start with 0-9 */
+"x"                                         return SYMBOL; /* the only 1 char symbol allowed */
 
 
 "+"                                         DataFilterlval.op = ADD; return ADD;

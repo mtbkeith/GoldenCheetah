@@ -119,8 +119,16 @@
 // 113 27  Jun 2015 Mark Liversedge    Added Average/Min/Max tHb
 // 114 17  Jul 2015 Ale Martinez       Added Distance Swim
 // 115 18  Jul 2015 Mark Liversedge    Added Withings Fat, Fat Percent, Lean Body Weight
+// 116 21  Aug 2015 Ale Martinez       TRIMP Zonal Points fallback when Average HR has been entered manually
+// 117 29  Aug 2015 Mark Liversedge    Min non-zero HR
+// 118 16  Sep 2015 Damien Grauser     Use FTP for TSS and IF
+// 119 20  Oct 2015 Ale Martinez       Added VDOT and TPace for Running
+// 120 3   Nov 2015 Mark Liversedge    Added Above CP time in W'bal zones
+// 121 3   Nov 2015 Mark Liversedge    Added Work in W'bal zones
+// 122 7   Nov 2015 Mark Liversedge    Added HR Zones 9 and 10
+// 123 19  Nov 2015 Mark Liversedge    Force recompute of TSS/IF after logic fix
 
-int DBSchemaVersion = 115;
+int DBSchemaVersion = 123;
 
 RideMetricFactory *RideMetricFactory::_instance;
 QVector<QString> RideMetricFactory::noDeps;
