@@ -164,7 +164,7 @@ void
 RideCache::refreshAfterImport()
 {
     model_->beginReset();
-    qSort(rides_.begin(), rides_.end(), ridesCacheLessThan);
+    qSort(rides_.begin(), rides_.end(), rideCacheLessThan);
     model_->endReset();
 
     if (NULL == context->ride)
@@ -174,20 +174,20 @@ RideCache::refreshAfterImport()
         {
             context->notifyRideAdded(last);
             context->ride = last;
-            context->notifyRideSelected();
+            context->notifyRideSelected(last);
         }
     }
 }
 
 // add a new ride
-void
+RideItem*
 RideCache::addRide(QString name, bool dosignal, bool useTempActivities)
 {
     RideItem *prior = context->ride;
 
     // ignore malformed names
     QDateTime dt;
-    if (!RideFile::parseRideFileName(name, &dt)) return;
+    if (!RideFile::parseRideFileName(name, &dt)) return NULL;
 
     // new ride item
     RideItem *last;
@@ -230,6 +230,8 @@ RideCache::addRide(QString name, bool dosignal, bool useTempActivities)
     // notify everyone to select it
     context->ride = last;
     context->notifyRideSelected(last);
+    
+    return last;
 }
 
 void
