@@ -85,6 +85,8 @@ class RideCache : public QObject
         void addRide(QString name, bool dosignal, bool useTempActivities);
         void removeCurrentRide();
 
+        void refreshAfterImport();
+
         // export metrics in CSV format
         void writeAsCSV(QString filename);
 

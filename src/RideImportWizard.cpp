@@ -1123,19 +1123,11 @@ ImportFutureStatus RideImportWizard::processSaveFile(volatile bool *aborted, con
             
 // here we should try to block all the signals that get emitted to only do it once!
             
-
-                // now try adding the Ride to the RideCache - since this may fail due to various reason, the activity file
-                // is stored in tmpActivities during this process to understand which file has create the problem when restarting GC
-                // - only after the step was successful the file is moved
-                // to the "clean" activities folder
-                
-
-
             // now try adding the Ride to the RideCache - since this may fail due to various reason, the activity file
             // is stored in tmpActivities during this process to understand which file has create the problem when restarting GC
             // - only after the step was successful the file is moved
             // to the "clean" activities folder
-            /*RideItem* ride = */context->athlete->addRide(QFileInfo(tmpActivitiesFulltarget).fileName(),
+            RideItem* ride = context->athlete->addRide(QFileInfo(tmpActivitiesFulltarget).fileName(),
                                       false, // don't signal if mass importing
                                       true);                                       // file is available only in /tmpActivities, so use this one please
 
@@ -1147,9 +1139,7 @@ ImportFutureStatus RideImportWizard::processSaveFile(volatile bool *aborted, con
                 // and correct the path locally stored in Ride Item
                 //Q_ASSERT(NULL != ride);
                 
-
-// TODO: can we get the ride from the add?
-				//ride->setFileName(homeActivities.canonicalPath(), activitiesTarget);
+				ride->setFileName(homeActivities.canonicalPath(), activitiesTarget);
             }  else {
                 //tableWidget->item(i,5)->setText(tr("Error - Moving %1 to activities folder").arg(activitiesTarget));
                 status.text[5] = new QString(tr("Error - Moving %1 to activities folder").arg(activitiesTarget));
@@ -1280,6 +1270,8 @@ RideImportWizard::abortClicked()
         Q_ASSERT(0 == synchronizer.futures().size());
 
     }
+
+    context->athlete->refreshAfterImport();
 
     // how did we get on in the end then ...
     int completed = 0;

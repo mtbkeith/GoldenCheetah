@@ -255,10 +255,16 @@ void Athlete::selectRideFile(QString fileName)
     context->notifyRideSelected(context->ride);
 }
 
-void
+RideItem*
 Athlete::addRide(QString name, bool dosignal, bool useTempActivities)
 {
-    rideCache->addRide(name, dosignal, useTempActivities);
+    return rideCache->addRide(name, dosignal, useTempActivities);
+}
+
+void
+Athlete::refreshAfterImport()
+{
+    rideCache->refreshAfterImport();
 }
 
 void
