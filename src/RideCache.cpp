@@ -160,6 +160,25 @@ RideCache::itemChanged()
     }
 }
 
+void
+RideCache::refreshAfterImport()
+{
+    model_->beginReset();
+    qSort(rides_.begin(), rides_.end(), ridesCacheLessThan);
+    model_->endReset();
+
+    if (NULL == context->ride)
+    {
+        RideItem* last = rides_.last();
+        if (NULL != last) 
+        {
+            context->notifyRideAdded(last);
+            context->ride = last;
+            context->notifyRideSelected();
+        }
+    }
+}
+
 // add a new ride
 void
 RideCache::addRide(QString name, bool dosignal, bool useTempActivities)
