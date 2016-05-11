@@ -25,10 +25,6 @@
 #include <QWidget>
 #include <QDialog>
 
-#include <string>
-#include <iostream>
-#include <sstream>
-#include <string>
 #include "RideFile.h"
 #include "IntervalItem.h"
 #include "Context.h"

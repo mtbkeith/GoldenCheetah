@@ -413,6 +413,10 @@ int
 RideImportWizard::process()
 {
 
+    QTime myTimer;
+    myTimer.start();
+    qDebug() << "import process started";
+
     // import process is starting
     _importInProcess = true;
 
@@ -723,6 +727,9 @@ RideImportWizard::process()
        abortButton->setText(tr("Finish"));
        aborted = false;
    }
+
+   int nMilliseconds = myTimer.elapsed();
+   qDebug() << "Import elapsed: " << nMilliseconds;
 
    return 0;
 }

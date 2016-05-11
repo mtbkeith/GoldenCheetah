@@ -31,10 +31,6 @@
 #endif
 
 #include <QDialog>
-#include <string>
-#include <iostream>
-#include <sstream>
-#include <string>
 #include "RideFile.h"
 #include "Context.h"
 
