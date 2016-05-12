@@ -26,6 +26,7 @@
 #include "DeviceConfiguration.h"
 #include "DeviceTypes.h"
 #include "ErgFile.h"
+#include "ErgFileEnums.h"
 #include "VideoSyncFile.h"
 #include "ErgFilePlot.h"
 #include "GcSideBarItem.h"

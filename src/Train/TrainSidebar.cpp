@@ -336,7 +336,7 @@ TrainSidebar::TrainSidebar(Context *context) : GcWindow(context), context(contex
     recordFile = NULL;
     status = 0;
     setStatusFlags(RT_MODE_ERGO);         // ergo mode by default
-    mode = ERG;
+    mode = ErgMode;
     pendingConfigChange = false;
 
     displayWorkoutLap = displayLap = 0;
@@ -753,7 +753,7 @@ TrainSidebar::workoutTreeWidgetSelectionChanged()
         // ergo mode
         context->notifyErgFileSelected(NULL);
         ergFile=NULL;
-        mode = ERG;
+        mode = ErgMode;
         setLabels();
         clearStatusFlags(RT_WORKOUT);
         //ergPlot->setVisible(false);
@@ -761,7 +761,7 @@ TrainSidebar::workoutTreeWidgetSelectionChanged()
         // slope mode
         context->notifyErgFileSelected(NULL);
         ergFile=NULL;
-        mode = CRS;
+        mode = CrsMode;
         setLabels();
         clearStatusFlags(RT_WORKOUT);
         //ergPlot->setVisible(false);
@@ -787,14 +787,14 @@ TrainSidebar::workoutTreeWidgetSelectionChanged()
             ergFile = NULL;
             context->notifyErgFileSelected(NULL);
             removeInvalidWorkout();
-            mode = ERG;
+            mode = ErgMode;
             clearStatusFlags(RT_WORKOUT);
             setLabels();
         }
     }
 
     // set the device to the right mode
-    if (mode == ERG || mode == MRC) {
+    if (mode == ErgMode || mode == MrcMode) {
         setStatusFlags(RT_MODE_ERGO);
         clearStatusFlags(RT_MODE_SPIN);
 
@@ -1026,7 +1026,7 @@ TrainSidebar::videosyncTreeWidgetSelectionChanged()
         // None menu entry
         context->notifyVideoSyncFileSelected(NULL);
     } else {
-        videosyncFile = new VideoSyncFile(filename, mode, context);
+        videosyncFile = new VideoSyncFile(filename, context);
         if (videosyncFile->isValid()) {
             context->notifyVideoSyncFileSelected(videosyncFile);
         } else {
@@ -1131,7 +1131,7 @@ void TrainSidebar::Start()       // when start button is pressed
             setStatusFlags(RT_MODE_SPIN);
             clearStatusFlags(RT_MODE_ERGO);
             foreach(int dev, activeDevices) {
-                
+
                 Devices[dev].controller->setMode(ErgMode::SPIN);
             }
         }
@@ -1468,12 +1468,12 @@ void TrainSidebar::guiUpdate()           // refreshes the telemetry
         // disabling the screen saver on a Mac instead of
         // temporarily adjusting/disabling the user preferences
         // for screen saving and power management. Makes sense.
-        
+
         CFStringRef reasonForActivity = CFSTR("TrainSidebar::guiUpdate");
         IOPMAssertionID assertionID;
         IOReturn suspendSreensaverSuccess = IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep, kIOPMAssertionLevelOn, reasonForActivity, &assertionID);
 #endif
-        
+
         if(calibrating) {
             foreach(int dev, activeDevices) { // Do for selected device only
                 RealtimeData local = rtData;
@@ -1714,7 +1714,7 @@ void TrainSidebar::guiUpdate()           // refreshes the telemetry
                 context->notifySetNow(rtData.getMsecs());
             }
         }
-        
+
 #ifdef Q_OS_MAC
         if (suspendSreensaverSuccess == kIOReturnSuccess)
         {
@@ -2325,7 +2325,7 @@ void TrainSidebar::adjustIntensity(int value)
                     } else {
                         add.y = add.val;
                     }
-                    
+
                     context->currentErgFile()->GetPoints().insert(i, add);
 
                     last = add;

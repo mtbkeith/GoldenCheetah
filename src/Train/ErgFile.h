@@ -32,26 +32,37 @@
 #include <QTextEdit>
 #include <QRegExp>
 #include "Zones.h"      // For zones ... see below vvvv
-
+#include "ErgFileEnums.h"
 
 class ErgFilePoint
 {
     friend class ErgFile;
-    public:
+    friend class ErgFileData;
+    friend class ErgFilePlot;
+    friend class TrainSidebar;
+    friend class WorkoutPlotWindow;
+    friend class WorkoutWidget;
+
+public:
 
         ErgFilePoint() : x(0), y(0), val(0) {}
         ErgFilePoint(double x, double y, double val) : x(x), y(y), val(val) {}
-    double x;     // x axis - time in msecs or distance in meters
-    double y;     // y axis - load in watts or altitude
-    double val;   // the value to send to the device (watts/gradient)
+
+    protected:
+        double x;     // x axis - time in msecs or distance in meters
+        double y;     // y axis - load in watts or altitude
+        double val;   // the value to send to the device (watts/gradient)
 };
 
 class ErgFileSection
 {
     friend class ErgFile;
+    friend class ErgFileData;
+    friend class ErgFilePlot;
     public:
         ErgFileSection() : duration(0), start(0), end(0) {}
         ErgFileSection(int duration, int start, int end) : duration(duration), start(start), end(end) {}
+
     protected:
         int duration;
         double start, end;
@@ -60,9 +71,12 @@ class ErgFileSection
 class ErgFileText
 {
     friend class ErgFile;
+    friend class ErgFileData;
+    friend class ErgFilePlot;
     public:
         ErgFileText() : x(0), pos(0), text("") {}
         ErgFileText(double x, int pos, QString text) : x(x), pos(pos), text(text) {}
+
     protected:
         double x;
         int pos;
@@ -72,46 +86,37 @@ class ErgFileText
 class ErgFileLap
 {
     friend class ErgFile;
+    friend class ErgFileData;
     friend class ErgFilePlot;
-public:
-    long x;     // when does this LAP marker occur? (time in msecs or distance in meters
-    bool selected; // used by the editor
-    int LapNum;     // from 1 - n
-    QString name;
-    QString GetName() const {
-        return name;
-    }
-};
+    friend class WorkoutWidget;
 
-
-enum ErgSection {
-    NomanslandSection,
-    SettingsSection,
-    DataSection,
-    EndSection
-};
-
-enum ErgMode : unsigned int {
-    ERG, // LOAD
-    MRC, // see RT_MODE_SPIN = SPIN SCAN
-    CRS,
-    CALIBRATE, // see RT_MODE_CALIBRATE
-    SPIN,
-
-    NOMODESET = 99
-};
-
-enum class ErgFileFormat : unsigned int {
-    ErgFormat,
-    CrsFormat,
-    MrcFormat
+    protected:
+        long x;     // when does this LAP marker occur? (time in msecs or distance in meters
+        int LapNum;     // from 1 - n
+        bool selected; // used by the editor
+        QString name;
+     public:
+        QString GetName() const {
+            return name;
+        }
 };
 
 class ErgFile
 {
+
+    /** these are offenders to not using public accessors and should change */
+    friend class ErgFilePlot;
+    friend class ErgFileData;
+    friend class NowData;
+    friend class TrainDB;
+    friend class TrainSidebar;
+    friend class WorkoutPlotWindow;
+    friend class WorkoutWidget;
+    friend class WorkoutWindow;
+
     public:
 
-        ErgFile(QString, ErgMode mode, Context *context);       // constructor uses filename
+        ErgFile(QString filenameOnDisk, ErgFileMode mode, Context *context); // constructor uses filename
         ErgFile(Context *context); // no filename, going to use a string
 
         virtual ~ErgFile();             // delete the contents
@@ -139,7 +144,7 @@ class ErgFile
 
         void calculateMetrics(); // calculate NP value for ErgFile
         long GetDuration() const;
-        enum ErgFileFormat GetFormat();
+        ErgFileFormat GetFormat();
         Context* GetContext();
         QList<ErgFileLap> GetLaps() const;
         QList<ErgFilePoint> GetPoints() const;
@@ -150,43 +155,41 @@ class ErgFile
         void ClearPoints();
         void SetLaps(QList<ErgFileLap>);
 
-
-    int     Ftp;            // FTP this file was targetted at
-    QString Version,        // version number / identifer
-        Units,          // units used
-        Filename,       // filename from inside file
-        filename,       // filename on disk
-        Name,           // description in file
-        Description,    // long narrative for workout
-        ErgDBId,        // if downloaded from ergdb
-        Source;         // where did this come from
-        QStringList Tags;       // tagged strings
-    double AP, NP, IF, TSS, VI; // Coggan for erg / mrc
-    double ELE, ELEDIST, GRADE;    // crs
-    long    Duration;       // Duration of this workout in msecs
-    QList<ErgFilePoint> Points;    // points in workout
-    bool valid;             // did it parse ok?
-    double CP;
-
-private:
-        ErgMode mode;
-
-    double Cp;
+        
+    private:
+        double Cp;
+        ErgFileFormat format;             // ERG, CRS or MRC currently supported
+        ErgFileMode mode;
+        long    Duration;       // Duration of this workout in msecs
+        int     Ftp;            // FTP this file was targetted at
         int     MaxWatts;       // maxWatts in this ergfile (scaling)
+        bool valid;             // did it parse ok?
 
 
         int leftPoint, rightPoint;            // current points we are between
 
+        QList<ErgFilePoint> Points;    // points in workout
         QList<ErgFileLap>   Laps;      // interval markers in the file
         QList<ErgFileText>  Texts;     // texts to display
-
-
+        QString Version,        // version number / identifer
+            Units,          // units used
+            filenameInsideFile,       // filename from inside file
+            filenameOnDisk,       // filename on disk
+            Name,           // description in file
+            Description,    // long narrative for workout
+            ErgDBId,        // if downloaded from ergdb
+            Source;         // where did this come from
+        QStringList Tags;       // tagged strings
 
         // Metrics for this workout
+        double maxY;                // maximum Y value
+        double CP;
+        double AP, NP, IF, TSS, VI; // Coggan for erg / mrc
         double XP, RI, BS, SVI; // Skiba for erg / mrc
-
+        double ELE, ELEDIST, GRADE;    // crs
+    
+    protected:
         Context *context;
-
 };
 
 #endif

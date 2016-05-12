@@ -122,7 +122,6 @@ WorkoutWidget::updateErgFile(ErgFile *f)
         f->Points.append(ErgFilePoint(p->x * 1000, p->y, p->y));
         f->Duration = p->x * 1000; // whatever the last is
     }
-
     f->SetLaps(laps_);
 
     // update METADATA too

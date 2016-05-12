@@ -179,7 +179,7 @@ Library::importFiles(Context *context, QStringList files)
             }
 
             // still add it, it may not have been scanned
-            VideoSyncFile file(targetSync, ErgMode::NOMODESET, context);
+            VideoSyncFile file(targetSync, context);
             trainDB->importVideoSync(targetSync, &file);
         }
 
@@ -206,7 +206,7 @@ Library::importFiles(Context *context, QStringList files)
             }
 
             // still add it, it may noit have been scanned...
-            ErgFile file(targetWorkout, ErgMode::ERG, context);
+            ErgFile file(targetWorkout, NoMode, context);
             trainDB->importWorkout(targetWorkout, &file);
 
         }
@@ -640,7 +640,7 @@ LibrarySearchDialog::updateDB()
 
             // is a videosync?
             if (VideoSyncFile::isVideoSync(r)) {
-                VideoSyncFile file(r, ErgMode::ERG, context);
+                VideoSyncFile file(r, context);
                 if (file.isValid()) {
                     trainDB->importVideoSync(r, &file);
                 }
@@ -648,7 +648,7 @@ LibrarySearchDialog::updateDB()
 
             // is a workout?
             if (ErgFile::isWorkout(r)) {
-                ErgFile file(r, ErgMode::ERG, context);
+                ErgFile file(r, NoMode, context);
                 if (file.isValid()) {
                     trainDB->importWorkout(r, &file);
                 }
@@ -722,7 +722,7 @@ WorkoutImportDialog::WorkoutImportDialog(Context *context, QStringList files) :
     setWindowFlags(windowFlags() | Qt::WindowStaysOnTopHint);
 
     setWindowTitle(tr("Import to Library"));
-    setFixedSize(450 *dpiXFactor, 450 *dpiYFactor);
+    setFixedSize(450, 450);
 
     MediaHelper helper;
 
@@ -737,13 +737,13 @@ WorkoutImportDialog::WorkoutImportDialog(Context *context, QStringList files) :
 
         // if it is a workout we parse it to check
         if (ErgFile::isWorkout(file)) {
-            ErgFile *p = new ErgFile(file, ErgMode::ERG, context);
+            ErgFile *p = new ErgFile(file, NoMode, context);
             if (p->isValid()) workouts << file;
             delete p;
         }
         // if it is a videosync we parse it to check
         if (VideoSyncFile::isVideoSync(file)) {
-            VideoSyncFile *p = new VideoSyncFile(file, ErgMode::ERG, context);
+            VideoSyncFile *p = new VideoSyncFile(file, context);
             if (p->isValid()) videosyncs << file;
             delete p;
         }
@@ -820,7 +820,7 @@ WorkoutImportDialog::import()
     foreach(QString video, videos) {
 
         // if we don't already have it, add it
-        if (l && !l->refs.contains(video)) {
+        if (!l->refs.contains(video)) {
             l->refs.append(video);
             trainDB->importVideo(video);
         }
@@ -845,7 +845,7 @@ WorkoutImportDialog::import()
         if (!QFile(workout).exists()) continue;
 
         // cannot read or not valid
-        ErgFile file(workout, ErgMode::ERG, context);
+        ErgFile file(workout, NoMode, context);
         if (!file.isValid()) continue;
 
         // get target name
@@ -880,7 +880,7 @@ WorkoutImportDialog::import()
         if (!QFile(videosync).exists()) continue;
 
         // cannot read or not valid
-        VideoSyncFile file(videosync, ErgMode::ERG, context);
+        VideoSyncFile file(videosync, context);
         if (!file.isValid()) continue;
 
         // get target name

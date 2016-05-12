@@ -52,6 +52,8 @@
 #include "RideItem.h"
 #include "Units.h" // for MILES_PER_KM
 #include "Settings.h" // for GC_WBALFORM
+#include "ErgFile.h"
+#include "ErgFileEnums.h"
 
 #if notyet
 const double WprimeMultConst = 1.0;
@@ -208,7 +210,7 @@ WPrime::setRide(RideFile *input)
     }
 
     // Tau can be set in the ridefile metadata
-    // or in the athlete preferences, but when we have an 
+    // or in the athlete preferences, but when we have an
     // integral formulation it should be computed from data
     if (!TAU || integral) {
         if (countBelowCP > 0)
