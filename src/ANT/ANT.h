@@ -27,6 +27,7 @@
 #include "RealtimeData.h"
 #include "CalibrationData.h"
 #include "DeviceConfiguration.h"
+#include "ErgFileEnums.h"
 
 //
 // QT stuff
