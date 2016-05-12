@@ -467,14 +467,18 @@ RideImportWizard::process()
 
     }
 
+    const long pass1 = myTimer.elapsed();
+    qDebug() << "Pass1: " << pass1;
+
     if (aborted) { done(0); return 0; }
     repaint();
     QApplication::processEvents();
 
     // Pass 2 - Read in with the relevant RideFileReader method
+// this is worth speeding up
 
     phaseLabel->setText(tr("Step 2 of 4: Validating Files"));
-   for (int i=0; i< filenames.count(); i++) {
+    for (int i=0; i< filenames.count(); i++) {
 
 
         // does the status say Queued?
@@ -657,6 +661,10 @@ RideImportWizard::process()
         next:;
     }
 
+    const long pass2 = myTimer.elapsed() - pass1;
+    qDebug() << "Pass2: " << pass2;
+
+
     // Pass 3 - get missing date and times for imported files
     //         Actually allow us to edit date on ANY ride, we
     //         make sure that the ride date/time is set from
@@ -728,8 +736,8 @@ RideImportWizard::process()
        aborted = false;
    }
 
-   int nMilliseconds = myTimer.elapsed();
-   qDebug() << "Import elapsed: " << nMilliseconds;
+   const long pass3 = myTimer.elapsed() - pass2;
+   qDebug() << "Pass3: " << pass3;
 
    return 0;
 }
@@ -896,6 +904,11 @@ struct cpi_file_info {
 void
 RideImportWizard::abortClicked()
 {
+    QTime myTimer;
+    myTimer.start();
+    // this is worth speeding up
+
+
     // NOTE: abort button morphs into save and finish button later - so all 3 variants are processed here
 
     // if done when labelled abort we kill off this dialog
@@ -1082,6 +1095,8 @@ RideImportWizard::abortClicked()
     } else {
         if (!isActiveWindow()) activateWindow();
     }
+
+    qDebug() << "Final Pass: " << myTimer.elapsed();
 }
 
 
