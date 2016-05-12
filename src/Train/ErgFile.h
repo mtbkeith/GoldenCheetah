@@ -97,7 +97,7 @@ enum ErgMode : unsigned int {
     CRS,
     CALIBRATE, // see RT_MODE_CALIBRATE
     SPIN,
-    
+
     NOMODESET = 99
 };
 
@@ -149,8 +149,8 @@ class ErgFile
         ErgMode GetMode() const;
         void ClearPoints();
         void SetLaps(QList<ErgFileLap>);
-    
-    
+
+
     int     Ftp;            // FTP this file was targetted at
     QString Version,        // version number / identifer
         Units,          // units used
@@ -170,7 +170,7 @@ class ErgFile
 
 private:
         ErgMode mode;
-                
+
     double Cp;
         int     MaxWatts;       // maxWatts in this ergfile (scaling)
 
