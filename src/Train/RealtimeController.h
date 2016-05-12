@@ -26,6 +26,8 @@
 #define _GC_RealtimeController_h 1
 #include "GoldenCheetah.h"
 
+enum ErgMode : unsigned int;
+
 #define DEVICE_ERROR 1
 #define DEVICE_OK 0
 
@@ -60,7 +62,7 @@ public:
     // only relevant for Computrainer like devices
     virtual void setLoad(double) { return; }
     virtual void setGradient(double) { return; }
-    virtual void setMode(int) { return; }
+    virtual void setMode(ErgMode) { return; }
 
     virtual uint8_t  getCalibrationType() { return CALIBRATION_TYPE_NOT_SUPPORTED; }
     virtual double   getCalibrationTargetSpeed() { return 0; }

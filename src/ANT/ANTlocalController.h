@@ -26,6 +26,8 @@
 
 #include <QMessageBox>
 
+enum ErgMode : unsigned int;
+
 // Abstract base class for Realtime device controllers
 
 #ifndef _GC_ANTlocalController_h
@@ -62,9 +64,9 @@ public:
     void pushRealtimeData(RealtimeData &rtData);
 
     // now with the kickr we can control trainers
-    void setLoad(double);
-    void setGradient(double);
-    void setMode(int);
+    void setLoad(double) override;
+    void setGradient(double) override;
+    void setMode(ErgMode) override;
 
     // passing calibration state between trainer and TrainSidebar
     uint8_t  getCalibrationType();

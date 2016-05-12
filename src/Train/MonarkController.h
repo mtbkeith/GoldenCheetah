@@ -46,9 +46,9 @@ public:
     void getRealtimeData(RealtimeData &rtData);
     void pushRealtimeData(RealtimeData &rtData);
     
-    void setLoad(double);
-    void setGradient(double);
-    void setMode(int) { return ; }
+    void setLoad(double) override;
+    void setGradient(double) override;
+    void setMode(ErgMode) override { return ; }
 };
 
 #endif // _GC_MonarkController_h

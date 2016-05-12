@@ -21,9 +21,12 @@
 #define _GC_RealtimeData_h 1
 #include "GoldenCheetah.h"
 
+
 #include <stdint.h> // uint8_t
 #include <QString>
 #include <QApplication>
+
+enum ErgMode : unsigned int;
 
 class RealtimeData
 {
@@ -31,7 +34,7 @@ class RealtimeData
 
 public:
 
-    int mode;
+    ErgMode mode;
 
     // abstract to dataseries
     enum dataseries { None=0, Time, LapTime, Distance, Lap,

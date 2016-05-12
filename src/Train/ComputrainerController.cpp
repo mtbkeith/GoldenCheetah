@@ -188,10 +188,10 @@ ComputrainerController::setGradient(double grade)
     myComputrainer->setGradient(grade);
 }
 void
-ComputrainerController::setMode(int mode)
+ComputrainerController::setMode(ErgMode mode)
 {
-    if (mode == RT_MODE_ERGO) mode = CT_ERGOMODE;
-    if (mode == RT_MODE_SPIN) mode = CT_SSMODE;
-    if (mode == RT_MODE_CALIBRATE) mode = CT_CALIBRATE;
+//    if (mode == RT_MODE_ERGO) mode = CT_ERGOMODE;
+//    if (mode == RT_MODE_SPIN) mode = CT_SSMODE;
+//    if (mode == RT_MODE_CALIBRATE) mode = CT_CALIBRATE;
     myComputrainer->setMode(mode);
 }

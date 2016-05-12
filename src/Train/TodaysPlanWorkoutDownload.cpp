@@ -261,8 +261,8 @@ TodaysPlanWorkoutDownload::downloadFiles()
 
             QString filename;
             ErgFile *p = ErgFile::fromContent(content, context);
-            if (p->Filename != "") {
-                filename = workoutDir + "/TP-" + p->Filename.replace("/", "-").simplified();
+            if (p->GetFilename() != "") {
+                filename = workoutDir + "/TP-" + p->GetFilename().replace("/", "-").simplified();
             } else {
                 filename = workoutDir + "/TP-Workout-" + current->text(1).replace(" ", "_") + ".erg";
             }

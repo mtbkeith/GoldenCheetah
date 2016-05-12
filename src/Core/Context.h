@@ -22,6 +22,7 @@
 #include "TimeUtils.h" // for class DateRange
 #include "RealtimeData.h" // for class RealtimeData
 #include "SpecialFields.h" // for class RealtimeData
+#include "ErgFile.h" // for class RealtimeData
 #include "CompareInterval.h" // what intervals are being compared?
 #include "CompareDateRange.h" // what intervals are being compared?
 #include "RideFile.h"
@@ -62,6 +63,7 @@ class RideItem;
 class IntervalItem;
 class ErgFile;
 class VideoSyncFile;
+
 
 class Context;
 class Athlete;

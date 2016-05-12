@@ -768,7 +768,7 @@ TrainSidebar::workoutTreeWidgetSelectionChanged()
     } else {
         // workout mode
         ergFile = new ErgFile(filename, mode, context);
-        mode = ergFile->mode;
+        mode = ergFile->GetMode();
 
         if (ergFile->isValid()) {
 
@@ -799,14 +799,14 @@ TrainSidebar::workoutTreeWidgetSelectionChanged()
         clearStatusFlags(RT_MODE_SPIN);
 
         // update every active device
-        foreach(int dev, activeDevices) Devices[dev].controller->setMode(RT_MODE_ERGO);
+        foreach(int dev, activeDevices) Devices[dev].controller->setMode(ErgMode::ERG);
 
     } else { // SLOPE MODE
         setStatusFlags(RT_MODE_SPIN);
         clearStatusFlags(RT_MODE_ERGO);
 
         // update every active device
-        foreach(int dev, activeDevices) Devices[dev].controller->setMode(RT_MODE_SPIN);
+        foreach(int dev, activeDevices) Devices[dev].controller->setMode(ErgMode::SPIN);
     }
 
     // clean last
@@ -1124,11 +1124,16 @@ void TrainSidebar::Start()       // when start button is pressed
         if (mode == ERG || mode == MRC) {
             setStatusFlags(RT_MODE_ERGO);
             clearStatusFlags(RT_MODE_SPIN);
-            foreach(int dev, activeDevices) Devices[dev].controller->setMode(RT_MODE_ERGO);
+            foreach(int dev, activeDevices) {
+                Devices[dev].controller->setMode(ErgMode::ERG);
+            }
         } else { // SLOPE MODE
             setStatusFlags(RT_MODE_SPIN);
             clearStatusFlags(RT_MODE_ERGO);
-            foreach(int dev, activeDevices) Devices[dev].controller->setMode(RT_MODE_SPIN);
+            foreach(int dev, activeDevices) {
+                
+                Devices[dev].controller->setMode(ErgMode::SPIN);
+            }
         }
 
         // tell the world
@@ -1884,7 +1889,7 @@ void TrainSidebar::toggleCalibration()
             foreach(int dev, activeDevices) {
                 if (calibrationDeviceIndex == dev) {
                     Devices[dev].controller->setCalibrationState(CALIBRATION_STATE_IDLE);
-                    Devices[dev].controller->setMode(RT_MODE_ERGO);
+                    Devices[dev].controller->setMode(ErgMode::ERG);
                     Devices[dev].controller->setLoad(load);
                 }
             }
@@ -1893,7 +1898,7 @@ void TrainSidebar::toggleCalibration()
             foreach(int dev, activeDevices) {
                 if (calibrationDeviceIndex == dev) {
                     Devices[dev].controller->setCalibrationState(CALIBRATION_STATE_IDLE);
-                    Devices[dev].controller->setMode(RT_MODE_SPIN);
+                    Devices[dev].controller->setMode(ErgMode::SPIN);
                     Devices[dev].controller->setGradient(slope);
                 }
             }
@@ -1927,7 +1932,7 @@ void TrainSidebar::toggleCalibration()
                     Devices[dev].controller->setGradient(0);
 
 
-                Devices[dev].controller->setMode(RT_MODE_CALIBRATE);
+                Devices[dev].controller->setMode(ErgMode::CALIBRATE); // RT_MODE_CALIBRATE);
                 Devices[dev].controller->setCalibrationState(CALIBRATION_STATE_PENDING);
             }
         }
@@ -2302,9 +2307,9 @@ void TrainSidebar::adjustIntensity(int value)
 
     // what about gradient courses?
     ErgFilePoint last;
-    for(int i = 0; i < context->currentErgFile()->Points.count(); i++) {
+    for(int i = 0; i < context->currentErgFile()->GetPoints().count(); i++) {
 
-        if (context->currentErgFile()->Points.at(i).x >= starttime) {
+        if (context->currentErgFile()->GetPoints().at(i).x >= starttime) {
 
             if (insertedNow == false) {
 
@@ -2315,10 +2320,13 @@ void TrainSidebar::adjustIntensity(int value)
                     add.val = last.val / from * to;
 
                     // recalibrate altitude if gradient changing
-                    if (context->currentErgFile()->format == CRS) add.y = last.y + ((add.x-last.x) * (add.val/100));
-                    else add.y = add.val;
-
-                    context->currentErgFile()->Points.insert(i, add);
+                    if (context->currentErgFile()->format == ErgFileFormat::CrsFormat) {
+                        add.y = last.y + ((add.x-last.x) * (add.val/100));
+                    } else {
+                        add.y = add.val;
+                    }
+                    
+                    context->currentErgFile()->GetPoints().insert(i, add);
 
                     last = add;
                     i++; // move on to next point (i.e. where we were!)
@@ -2327,18 +2335,19 @@ void TrainSidebar::adjustIntensity(int value)
                 insertedNow = true;
             }
 
-            ErgFilePoint *p = &context->currentErgFile()->Points[i];
+            ErgFilePoint *p = &context->currentErgFile()->GetPoints()[i];
 
             // recalibrate altitude if in CRS mode
             p->val = p->val / from * to;
-            if (context->currentErgFile()->format == CRS) {
+            if (context->currentErgFile()->format == ErgFileFormat::CrsFormat) {
                 if (i) p->y = last.y + ((p->x-last.x) * (last.val/100));
+            } else {
+                p->y = p->val;
             }
-            else p->y = p->val;
         }
 
         // remember last
-        last = context->currentErgFile()->Points.at(i);
+        last = context->currentErgFile()->GetPoints().at(i);
     }
 
     // recalculate metrics

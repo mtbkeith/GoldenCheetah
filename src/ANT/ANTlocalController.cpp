@@ -23,6 +23,7 @@
 #include "ANTLogger.h"
 #include "RealtimeData.h"
 #include "GarminServiceHelper.h"
+#include "ErgFile.h"
 
 ANTlocalController::ANTlocalController(TrainSidebar *parent, DeviceConfiguration *dc) : RealtimeController(parent, dc)
 {
@@ -145,7 +146,7 @@ ANTlocalController::setGradient(double x) {
 }
 
 void
-ANTlocalController::setMode(int mode) {
+ANTlocalController::setMode(ErgMode mode) {
     myANTlocal->setMode(mode);
 }
 

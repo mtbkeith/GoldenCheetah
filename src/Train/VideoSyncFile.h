@@ -32,6 +32,8 @@
 #include <QTextStream>
 #include <QRegExp>
 
+enum ErgMode : unsigned int;
+
 // which section of the file are we in?
 #define NOMANSLAND  0
 #define SETTINGS 1
@@ -67,7 +69,7 @@ class VideoSyncCourseInfo
 class VideoSyncFile
 {
     public:
-        VideoSyncFile(QString, int&, Context *context);       // constructor uses filename
+        VideoSyncFile(QString, ErgMode, Context *context);       // constructor uses filename
         VideoSyncFile(Context *context); // no filename, going to use a string
 
         ~VideoSyncFile();             // delete the contents

@@ -452,7 +452,7 @@ WorkoutWindow::saveAs()
     newergFile->Name = "New Workout";
     newergFile->Ftp = newergFile->CP;
     newergFile->valid = true;
-    newergFile->format = ERG; // default to couse until we know
+    newergFile->format = ErgFileFormat::ErgFormat; // default to couse until we know
 
     // if we're save as from an existing keep all the data
     // EXCEPT filename, which has just been changed!

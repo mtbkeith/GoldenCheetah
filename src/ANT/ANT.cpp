@@ -31,6 +31,7 @@
 #include <QProgressDialog>
 #include <QtDebug>
 #include "RealtimeData.h"
+#include "ErgFile.h"
 
 #ifdef Q_OS_LINUX // to get stat /dev/xxx for major/minor
 #include <sys/types.h>
@@ -113,8 +114,9 @@ ANT::ANT(QObject *parent, DeviceConfiguration *devConf, QString athlete) : QThre
 
     // current and desired modes/load/gradients
     // set so first time through current != desired
-    currentMode = 0;
-    mode = RT_MODE_ERGO;
+    currentMode = ERG;
+    mode = MRC; // RT_MODE_ERGO;
+    
     currentLoad = 0;
     load = 100; // always set to something
     currentGradient = 0;
@@ -404,7 +406,7 @@ ANT::setGradient(double gradient)
 }
 
 void
-ANT::setMode(int mode)
+ANT::setMode(ErgMode mode)
 {
     if (this->mode == mode) return;
 
@@ -421,19 +423,19 @@ ANT::kickrCommand()
     // mode changed ?
     if (currentMode != mode) {
 
-        switch(mode) {
-        case RT_MODE_ERGO : // do nothing, just start sending ergo commands below
+        switch (mode) {
+            case ERG: //RT_MODE_ERGO : // do nothing, just start sending ergo commands below
             {
             }
            break;
 
-        case RT_MODE_SPIN : // need to setup for "sim" mode, so sending lots of
+            case MRC: // RT_MODE_SPIN : // need to setup for "sim" mode, so sending lots of
                             // config to overcome the default values
             {
             }
             break;
 
-        case RT_MODE_CALIBRATE : // ??? maybe ???
+            case CALIBRATE: // RT_MODE_CALIBRATE : // ??? maybe ???
             //qDebug()<<"A: setup calib mode";
             break;
         }
@@ -444,12 +446,13 @@ ANT::kickrCommand()
     }
 
     // load has changed ?
-    if (mode == RT_MODE_ERGO && load != currentLoad) {
+    if (mode == ERG && load != currentLoad) {
         currentLoad = load;
     }
 
     // slope has changed in slope mode
-    if (mode == RT_MODE_SPIN && gradient != currentGradient) {
+    if (mode == SPIN // RT_MODE_SPIN
+        && gradient != currentGradient) {
         currentGradient = gradient;
     }
 

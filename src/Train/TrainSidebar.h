@@ -81,6 +81,8 @@ class RealtimeData;
 class MultiDeviceDialog;
 class TrainBottom;
 
+enum ErgMode : unsigned int;
+
 class TrainSidebar : public GcWindow
 {
     Q_OBJECT
@@ -285,7 +287,7 @@ class TrainSidebar : public GcWindow
         bool pendingConfigChange;
 
     public:
-        int mode;
+        ErgMode mode;
         // everyone else wants this
         QCheckBox   *recordSelector;
         QSharedPointer<QFileSystemWatcher> watcher;

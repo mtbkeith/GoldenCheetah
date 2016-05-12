@@ -45,9 +45,9 @@ public:
     bool doesPush(), doesPull(), doesLoad();
     void getRealtimeData(RealtimeData &rtData);
     void pushRealtimeData(RealtimeData &rtData);
-    void setLoad(double);
-    void setGradient(double);
-    void setMode(int);
+    void setLoad(double) override;
+    void setGradient(double) override;
+    void setMode(ErgMode) override;
 
     // calibration
     uint8_t  getCalibrationType() { return CALIBRATION_TYPE_COMPUTRAINER; }

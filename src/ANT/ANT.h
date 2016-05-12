@@ -90,6 +90,7 @@
 
 class ANTMessage;
 class ANTChannel;
+enum ErgMode : unsigned int;
 
 typedef struct ant_sensor_type {
   bool user; // can user select this when calibrating ?
@@ -467,7 +468,7 @@ public slots:
     // kickr command loading - only ANT device we know about to do this so not generic
     void setLoad(double);
     void setGradient(double);
-    void setMode(int);
+    void setMode(ErgMode);
     void kickrCommand();
 
 public:
@@ -727,8 +728,9 @@ private:
     double currentLoad, load;
     double currentGradient, gradient;
     double currentRollingResistance, rollingResistance;
-    int currentMode, mode;
-
+    //int currentMode, mode;
+    ErgMode currentMode, mode;
+    
     // now kickr specific
     int kickrDeviceID;
     int kickrChannel;

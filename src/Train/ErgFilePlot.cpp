@@ -25,17 +25,17 @@
 // create a separate array for the ergfile data, we plot
 // directly from the ErgFile points array
 double ErgFileData::x(size_t i) const { 
-    if (context->currentErgFile()) return context->currentErgFile()->Points.at(i).x;
+    if (context->currentErgFile()) return context->currentErgFile()->GetPoints().at(i).x;
     else return 0;
 }
 
 double ErgFileData::y(size_t i) const {
-    if (context->currentErgFile()) return context->currentErgFile()->Points.at(i).y;
+    if (context->currentErgFile()) return context->currentErgFile()->GetPoints().at(i).y;
     else return 0;
 }
 
 size_t ErgFileData::size() const {
-    if (context->currentErgFile()) return context->currentErgFile()->Points.count();
+    if (context->currentErgFile()) return context->currentErgFile()->GetPoints().count();
     else return 0;
 }
 
@@ -49,7 +49,7 @@ QRectF ErgFileData::boundingRect() const
     if (context->currentErgFile()) {
         double minX, minY, maxX, maxY;
         minX=minY=maxX=maxY=0.0f;
-        foreach(ErgFilePoint x, context->currentErgFile()->Points) {
+        foreach(ErgFilePoint x, context->currentErgFile()->GetPoints()) {
             if (x.y > maxY) maxY = x.y;
             if (x.x > maxX) maxX = x.x;
             if (x.y < minY) minY = x.y;
@@ -310,7 +310,8 @@ ErgFilePlot::setData(ErgFile *ergfile)
     if (ergfile) {
 
         // is this by distance or time?
-        bydist = (ergfile->format == CRS) ? true : false;
+        // TODO: review CRS = 2, MrcFormat = 2
+        bydist = (ergfile->format == ErgFileFormat::MrcFormat) ? true : false;
 
         if (bydist == true) {
 
@@ -347,10 +348,11 @@ ErgFilePlot::setData(ErgFile *ergfile)
         }
 
         // set up again
-        for(int i=0; i < ergFile->Laps.count(); i++) {
+        const QList<ErgFileLap> laps = ergFile->GetLaps();
+        for(int i=0; i < laps.count(); i++) {
 
             // Show Lap Number
-            QwtText text(ergFile->Laps.at(i).name != "" ? ergFile->Laps.at(i).name : QString::number(ergFile->Laps.at(i).LapNum));
+            QwtText text(laps.at(i).GetName() != "" ? laps.at(i).GetName() : QString::number(laps.at(i).LapNum));
             text.setFont(QFont("Helvetica", 10, QFont::Bold));
             text.setColor(GColor(CPLOTMARKER));
 
@@ -359,7 +361,7 @@ ErgFilePlot::setData(ErgFile *ergfile)
             add->setLineStyle(QwtPlotMarker::VLine);
             add->setLinePen(QPen(GColor(CPLOTMARKER), 0, Qt::DashDotLine));
             add->setLabelAlignment(Qt::AlignRight | Qt::AlignTop);
-            add->setValue(ergFile->Laps.at(i).x, 0.0);
+            add->setValue(laps.at(i).x, 0.0);
             add->setLabel(text);
             add->attach(this);
 
@@ -367,8 +369,8 @@ ErgFilePlot::setData(ErgFile *ergfile)
         }
 
         // set the axis so we use all the screen estate
-        if (context->currentErgFile() && context->currentErgFile()->Points.count()) {
-            double maxX = (double)context->currentErgFile()->Points.last().x;
+        if (context->currentErgFile() && context->currentErgFile()->GetPoints().count()) {
+            double maxX = (double)context->currentErgFile()->GetPoints().last().x;
 
             if (bydist) {
 
