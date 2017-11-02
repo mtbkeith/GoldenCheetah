@@ -313,7 +313,7 @@ WebPageWindow::downloadFinished()
     // now try and import it (if download failed file won't exist)
     // dialog is self deleting
     RideImportWizard *dialog = new RideImportWizard(filenames, context);
-    dialog->process(); // do it!
+    dialog->process_single_threaded();
 }
 
 void
@@ -396,7 +396,7 @@ WebPageWindow::readFileCompleted()
 
         // now process it
         RideImportWizard *dialog = new RideImportWizard(filenames, context);
-        dialog->process(); // do it!
+        dialog->process_single_threaded();
     }
 
     // clean up

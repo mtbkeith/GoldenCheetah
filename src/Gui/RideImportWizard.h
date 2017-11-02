@@ -30,17 +30,17 @@
 #include <QList>
 #include <QListIterator>
 #include <QItemDelegate>
+#include <QThreadPool>
+
 #include "Context.h"
 #include "RideAutoImportConfig.h"
 
 // Dialog class to show filenames, import progress and to capture user input
 // of ride date and time
-
 class RideImportWizard : public QDialog
 {
     Q_OBJECT
     G_OBJECT
-
 
 public:
     RideImportWizard(QList<QUrl> *urls, Context *context, QWidget *parent = 0);
@@ -54,21 +54,37 @@ public:
     // explicitly only expand archives like .zip or .gz that contain >1 file
     QList<QString> expandFiles(QList<QString>);
 
+    // this is the pre-import of a file
+    void longRunningFunction(Context *context, const QObject *m_receiver, const QString &filename, const int index);
+
     int getNumberOfFiles();  // get the number of files selected for processing
-    int process();
-    bool importInProcess() { return _importInProcess; }
-    bool isAutoImport() { return autoImportMode;}
+    int process_single_threaded();
+    int process_async();
+    bool importInProcess();
+    bool isAutoImport();
 
 private slots:
     void abortClicked();
     void cancelClicked();
+    void save_single_threaded(int index);
+    void save_async(Context *context, const QObject *m_receiver, const QString &filename, const int index);
+
     void todayClicked(int index);
     // void overClicked(); // deprecate for this release... XXX
     void activateSave();
 
+    void announceProgress(int index, bool valid, const QString &message);
+    void setRideDateTime(int index, QDateTime startTime);
+    void setRideDuration(int index, int secs, double km);
+    void futurePreProcessFinished();
+    void futureSaveFinished();
+
 private:
     void init(QList<QString> files, Context *context);
     bool moveFile(const QString &source, const QString &target);
+
+
+    std::atomic<int> futureCount;
 
     QList <QString> filenames; // list of filenames passed
     int numberOfFiles; // number of files to be processed
@@ -76,7 +92,6 @@ private:
     QDir homeImports; // target directory for source files
     QDir homeActivities; // target directory for .JSON
     QDir tmpActivities; // activitiy .JSON is stored here until rideCache() update was successfull
-    bool aborted;
     bool autoImportMode;
     bool autoImportStealth;
     bool _importInProcess;
@@ -93,7 +108,7 @@ private:
     RideAutoImportConfig *importConfig;
 
     QStringList deleteMe; // list of temp files created during import
-
+    //QThreadPool *pool;
 
 };
 

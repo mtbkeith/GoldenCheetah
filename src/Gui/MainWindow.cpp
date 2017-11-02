@@ -1263,7 +1263,7 @@ MainWindow::dropEvent(QDropEvent *event)
 
             // We have something to process then
             RideImportWizard *dialog = new RideImportWizard (filenames, currentTab->context);
-            dialog->process(); // do it!
+            dialog->process_single_threaded();
 
         } else {
             Library::importFiles(currentTab->context, filenames);
@@ -1418,7 +1418,7 @@ MainWindow::importFile()
         appsettings->setValue(GC_SETTINGS_LAST_IMPORT_PATH, lastDir);
         QStringList fileNamesCopy = fileNames; // QT doc says iterate over a copy
         RideImportWizard *import = new RideImportWizard(fileNamesCopy, currentTab->context);
-        import->process();
+        import->process_async();
     }
 }
 

@@ -218,8 +218,12 @@ RideCache::addRide(QString name, bool dosignal, bool select, bool useTempActivit
 
     // ignore malformed names
     QDateTime dt;
-    if (!RideFile::parseRideFileName(name, &dt)) return;
-
+    if (!RideFile::parseRideFileName(name, &dt))
+    {
+        qCritical() << "Failed to parse ride filename: " << name;
+        return;
+    }
+    
     // new ride item
     RideItem *last;
     if (useTempActivities)
@@ -232,39 +236,52 @@ RideCache::addRide(QString name, bool dosignal, bool select, bool useTempActivit
     connect(last, SIGNAL(rideDataChanged()), this, SLOT(itemChanged()));
     connect(last, SIGNAL(rideMetadataChanged()), this, SLOT(itemChanged()));
 
-    // now add to the list, or replace if already there
-    bool added = false;
-    for (int index=0; index < rides_.count(); index++) {
-        if (rides_[index]->fileName == last->fileName) {
-            rides_[index] = last;
-            added = true;
-            break;
+    // prevent multiple threads from adding to the cache
+    {
+    QMutexLocker locker(&addRideMutex);
+    
+        // now add to the list, or replace if already there
+        bool added = false;
+        for (int index=0; index < rides_.count(); index++) {
+            if (rides_[index]->fileName == last->fileName) {
+                rides_[index] = last;
+                added = true;
+                break;
+            }
         }
-    }
 
-    // add and sort, model needs to know !
-    if (!added) {
-        model_->beginReset();
-        rides_ << last;
-        qSort(rides_.begin(), rides_.end(), rideCacheLessThan);
-        model_->endReset();
-    }
+        // add and sort, model needs to know !
+        if (!added) {
+            model_->beginReset();
+            rides_ << last;
+            qSort(rides_.begin(), rides_.end(), rideCacheLessThan);
+            model_->endReset();
+        }
+    
+        // TODO: This is the part that takes all the time - do it outside the mutex so multiple threads can cooperate
+        // refresh metrics for *this ride only*
+        last->refresh();
 
-    // refresh metrics for *this ride only*
-    last->refresh();
+        if (dosignal)
+        {
+            context->notifyRideAdded(last); // here so emitted BEFORE rideSelected is emitted!
+        }
 
-    if (dosignal) context->notifyRideAdded(last); // here so emitted BEFORE rideSelected is emitted!
+    } //- close the mutex
 
     // free up memory from last one, which is no biggie when importing
     // a single ride, but means we don't exhaust memory when we import
     // hundreds/thousands of rides in a batch import.
-    if (prior) prior->close();
-
+    if (prior)
+    {
+        prior->close();
+    }
+// TODO: move this selection to after the save finish?
     // notify everyone to select it
     if (select) {
         context->ride = last;
         context->notifyRideSelected(last);
-    } else{
+    } else {
         // notify everyone to select the one we were already on
         context->notifyRideSelected(prior);
     }

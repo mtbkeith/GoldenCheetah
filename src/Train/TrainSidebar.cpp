@@ -1309,7 +1309,7 @@ void TrainSidebar::Stop(int deviceStatus)        // when stop button is pressed
             list.append(name);
 
             RideImportWizard *dialog = new RideImportWizard (list, context);
-            dialog->process(); // do it!
+            dialog->process_single_threaded();
         }
     }
 

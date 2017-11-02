@@ -433,7 +433,10 @@ RideItem::close()
     // ride data
     if (ride_) {
         // break link to ride file
-        foreach(IntervalItem *x, intervals()) x->rideInterval = NULL;
+        foreach(IntervalItem *x, intervals())
+        {
+            x->rideInterval = NULL;
+        }
         delete ride_;
         ride_ = NULL;
     }
@@ -607,7 +610,7 @@ RideItem::refresh()
         count_.fill(0, factory.metricCount());
 
         // we compute all with not specification (not an interval)
-        QHash<QString,RideMetricPtr> computed= RideMetric::computeMetrics(this, Specification(), factory.allMetrics());
+        QHash<QString,RideMetricPtr> computed = RideMetric::computeMetrics(this, Specification(), factory.allMetrics());
 
         // snaffle away all the computed values into the array
         QHashIterator<QString, RideMetricPtr> i(computed);

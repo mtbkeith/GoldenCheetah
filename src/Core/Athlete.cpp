@@ -372,7 +372,7 @@ Athlete::importFilesWhenOpeningAthlete() {
 
         // only process the popup if we have any files available at all
         if ( autoImport->getNumberOfFiles() > 0) {
-           autoImport->process();
+           autoImport->process_single_threaded();
         }
     }
 }

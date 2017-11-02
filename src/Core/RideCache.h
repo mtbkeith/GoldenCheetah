@@ -132,6 +132,9 @@ class RideCache : public QObject
 
         friend class ::RideCacheBackgroundRefresh;
 
+        // mutex to limit adding in cache
+        QMutex addRideMutex;
+    
         Context *context;
         QDir directory, plannedDirectory;
 
