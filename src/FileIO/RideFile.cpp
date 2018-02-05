@@ -614,6 +614,8 @@ RideFile::distanceToTime(double km) const
     QVector<RideFilePoint*>::const_iterator i = std::lower_bound(dataPoints_.begin(), dataPoints_.end(), &p, ComparePointKm());
     return (*i)->secs;
 }
+
+// returns distance in kilometers
 double
 RideFile::timeToDistance(double secs) const
 {

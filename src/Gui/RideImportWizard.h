@@ -62,6 +62,7 @@ private slots:
     void todayClicked(int index);
     // void overClicked(); // deprecate for this release... XXX
     void activateSave();
+    void newRideAdded(RideItem* ride);
 
 private:
     void init(QList<QString> files, Context *context);

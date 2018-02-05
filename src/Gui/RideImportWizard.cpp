@@ -36,6 +36,8 @@
 #include "TcxRideFile.h" // for opening multi-ride file
 #include "DataProcessor.h"
 #include "RideMetadata.h" // for linked defaults processing
+#include "IntervalItem.h"
+#include "FitlogParser.h"
 
 #include <QDebug>
 #include <QWaitCondition>
@@ -276,6 +278,8 @@ RideImportWizard::init(QList<QString> files, Context * /*mainWindow*/)
     connect(cancelButton, SIGNAL(clicked()), this, SLOT(cancelClicked()));
     // connect(overFiles, SIGNAL(clicked()), this, SLOT(overClicked()));  // deprecate for this release... XXX
 
+    connect(context, SIGNAL(rideAdded(RideItem*)), this, SLOT(newRideAdded(RideItem*)));
+    
     // title & headings
     setWindowTitle(tr("Import Files"));
     QTableWidgetItem *filenameHeading = new QTableWidgetItem;
@@ -1064,6 +1068,9 @@ RideImportWizard::abortClicked()
                     tableWidget->item(i,5)->setText(tr("File Saved"));
                     // and correct the path locally stored in Ride Item
                     context->ride->setFileName(homeActivities.canonicalPath(), activitiesTarget);
+                    
+                    
+                    
                 }  else {
                     tableWidget->item(i,5)->setText(tr("Error - Moving %1 to activities folder").arg(activitiesTarget));
                 }
@@ -1150,10 +1157,104 @@ RideImportWizard::done(int rc)
     QDialog::done(rc);
 }
 
+
+QVector<RideItem*> rides;
+
+bool intervalStartTime(const IntervalItem* i1, const IntervalItem* i2)
+{
+    if (i1->start == i2->start) {
+        // 2 level sort if any intervals overlap
+        return i1->stop > i2->stop;
+    }
+    return i1->start > i2->start;
+}
+
+void RideImportWizard::newRideAdded(RideItem* ride)
+{
+    // look through the new rides to see if we have any lap data which is double or triple laps
+    const RideFile* rideFile = ride->ride(true);
+    
+    const RideFilePoint *lastIntervalPoint = NULL;
+    double lastIntervalStart = 0;
+    int numberOfShortIntervals = 0;
+    QList<IntervalItem*> intervals = ride->intervals();
+    
+    qSort(intervals.begin(), intervals.end(), intervalStartTime);
+    
+    if (rideFile && rideFile->areDataPresent()->lat && rideFile->areDataPresent()->lon) {
+        
+        // looking for two consecutive short intervals
+        double lastInterval = 0;
+        double lastKM = 0;
+        foreach (IntervalItem *interval, intervals) {
+            RideFileInterval *rideInterval = interval->rideInterval;
+            double intervalStart = interval->start;
+            double intervalStop = interval->stop;
+            double intervalSeconds = intervalStop - intervalStart;
+            double intervalStartMeters = rideFile->timeToDistance(intervalStart);
+            double intervalStopMeters = rideFile->timeToDistance(intervalStop);
+            double intervalMeters = intervalStopMeters - intervalStartMeters;
+            double current = intervalStop - intervalStart;
+            if (0 != lastKM) {
+                if (std::abs(intervalStartMeters - lastKM) < .1) {
+                    // close
+                    qDebug() << "Very close";
+                }
+            }
+            
+            if (current < 2) {
+                for (int i = rideFile->intervalBegin(*rideInterval); i < rideFile->dataPoints().size(); ++i) {
+                    // start walking the points in this interval
+                    
+                    const RideFilePoint *p = rideFile->dataPoints()[i];
+                    if (p->secs >= interval->stop) {
+                        // point is outside of this interval
+                        break;
+                    }
+                    
+                    if (NULL != lastIntervalPoint && lastInterval < 2) {
+                        double dist = FitlogParser::distanceBetween(p->lat, p->lon, lastIntervalPoint->lat, lastIntervalPoint->lon);
+                        qDebug() << "Distance: " << dist;
+                        // This is the Lat/Lon we want to save as a POI
+                    }
+                    lastIntervalPoint = p;
+                    break;
+                }
+            }
+            lastInterval = current;
+            lastKM = rideFile->timeToDistance(intervalStop);
+        }
+    }
+    
+    if (rideFile && rideFile->areDataPresent()->lat && rideFile->areDataPresent()->lon) {
+        const QList<IntervalItem*> intervals = ride->intervals();
+        foreach(RideFilePoint* point, ride->ride()->dataPoints())
+        {
+            // check to see what interval we are in.
+        }
+    }
+    
+    rides.append(ride);
+}
+
 // clean up files
 RideImportWizard::~RideImportWizard()
 {
     foreach(QString name, deleteMe) QFile(name).remove();
+    
+    // look through the new rides to see if we have any lap data which is double or triple laps
+    for (RideItem* ride : rides)
+    {
+        const QList<IntervalItem*> intervals = ride->intervals();
+        foreach(IntervalItem *interval, intervals) {
+            int start = interval->start;
+            int end = interval->stop;
+            if (end - start < 10) {
+                QUuid route = interval->route;
+                
+            }
+        }
+    }
 }
 
 

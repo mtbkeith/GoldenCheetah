@@ -37,7 +37,7 @@ public:
     bool characters( const QString& );
 
     // for deriving distance from GPS
-    double distanceBetween(double lat1, double lon1, double lat2, double lon2);
+    static double distanceBetween(double lat1, double lon1, double lat2, double lon2);
     double distanceBetween(double lat1, double lon1, double alt1,
                            double lat2, double lon2, double alt2);
 

@@ -124,8 +124,15 @@ RideMapWindow::RideMapWindow(Context *context, int mapType) : GcChartWindow(cont
 #else
     view = new QWebView();
 #endif
-    view->setPage(new mapWebPage());
-    view->setContentsMargins(0,0,0,0);
+    
+    mapWebPage* page = new mapWebPage();
+    
+    
+    view->setPage(page);
+
+
+            
+            view->setContentsMargins(0,0,0,0);
     view->page()->view()->setContentsMargins(0,0,0,0);
     view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     view->setAcceptDrops(false);
@@ -158,6 +165,42 @@ RideMapWindow::RideMapWindow(Context *context, int mapType) : GcChartWindow(cont
 #ifndef NOWEBKIT
     connect(view->page()->mainFrame(), SIGNAL(javaScriptWindowObjectCleared()), this, SLOT(updateFrame()));
 #endif
+    
+    connect(page, &QWebEnginePage::featurePermissionRequested,
+            [this, page](const QUrl &securityOrigin, QWebEnginePage::Feature feature) {
+                if (feature != QWebEnginePage::Geolocation)
+                    return;
+                
+                QMessageBox msgBox(this);
+                msgBox.setText(tr("%1 wants to know your location").arg(securityOrigin.host()));
+                msgBox.setInformativeText(tr("Do you want to send your current location to this website?"));
+                msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+                msgBox.setDefaultButton(QMessageBox::Yes);
+                
+                if (msgBox.exec() == QMessageBox::Yes) {
+                    page->setFeaturePermission(
+                                               securityOrigin, feature, QWebEnginePage::PermissionGrantedByUser);
+                } else {
+                    page->setFeaturePermission(
+                                               securityOrigin, feature, QWebEnginePage::PermissionDeniedByUser);
+                }
+            });
+
+
+    // https://developers.google.com/maps/documentation/javascript/reference#Marker
+    // https://developers.google.com/maps/documentation/javascript/signedin
+    // InfoWindow
+    // 3.27
+            page->load(QUrl(QStringLiteral("https://maps.google.com/3.27")));
+    
+    
+    // maybe get directions to start??
+    // https://www.google.com/maps/place/614+Southern+Cross+Dr,+Colorado+Springs,+CO+80906/@38.8189375,-104.8706257,17z/data=!4m5!3m4!1s0x87135b1fdf5377e1:0x108521a2e6e98fdd!8m2!3d38.8189375!4d-104.8706257
+    // //*[@id="pane"]/div/div[2]/div/div/div[1]/button[2]/div/div
+    
+    
+    // evaluateJavaScript
+    
 
     connect(context, SIGNAL(rideChanged(RideItem*)), this, SLOT(forceReplot()));
     connect(context, SIGNAL(intervalsChanged()), webBridge, SLOT(intervalsChanged()));
@@ -339,9 +382,9 @@ void RideMapWindow::loadRide()
     createHtml();
 
 #ifdef NOWEBKIT
-    view->page()->setHtml(currentPage);
+//    view->page()->setHtml(currentPage);
 #else
-    view->page()->mainFrame()->setHtml(currentPage);
+//    view->page()->mainFrame()->setHtml(currentPage);
 #endif
 }
 

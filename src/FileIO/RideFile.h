@@ -165,6 +165,7 @@ class RideFile : public QObject // QObject to emit signals
         friend class ComparePane;
         friend class Context; // tells us we were saved
         friend class Athlete; // tells us we were saved
+        friend class RideImportWizard;
 
         // file format writers have more access
         friend class RideFileFactory;
